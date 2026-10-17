@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.2"
+const version = "1.8.3"
 const appTitle = "AI 狀態指示燈"
 
 //go:embed monitor.ps1
@@ -495,6 +495,9 @@ func pushFrame(force bool) {
 	lastFrameMu.Lock()
 	changed := string(cb) != lastFrameJSON
 	if changed || force || time.Since(lastFrameSent) > 3*time.Second {
+		if f.AI != lastFrame.AI || f.St != lastFrame.St { // 主燈變化記下來（追查燈號用）
+			logf("frame: %s %s o=%v", f.AI, f.St, f.O)
+		}
 		lastFrameJSON = string(cb)
 		lastFrameSent = time.Now()
 		lastFrame = f

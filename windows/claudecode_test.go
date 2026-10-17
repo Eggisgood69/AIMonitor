@@ -66,6 +66,47 @@ func TestClaudeCodeEvents(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeReviewGrace(t *testing.T) {
+	c := NewClaudeCode()
+	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	ev := func(name string, extra string) {
+		if err := c.Handle([]byte(`{"session_id":"abcdef123456","hook_event_name":"` + name + `"` + extra + `}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev("UserPromptSubmit", "")
+	// 6 秒內就按了允許：沒有通知，7 秒後轉回生成中（長指令還在跑，沒有 PostToolUse）
+	ev("PermissionRequest", "")
+	now = now.Add(5 * time.Second)
+	if it := c.Items()[0]; !it.Review {
+		t.Fatalf("5s: %+v", it)
+	}
+	now = now.Add(3 * time.Second)
+	if it := c.Items()[0]; it.Review || !it.Gen {
+		t.Fatalf("8s without notification: %+v", it)
+	}
+	// 沒按：6 秒時收到通知，就一直維持需審核
+	ev("PermissionRequest", "")
+	now = now.Add(6 * time.Second)
+	ev("Notification", `,"notification_type":"permission_prompt"`)
+	now = now.Add(time.Minute)
+	if it := c.Items()[0]; !it.Review {
+		t.Fatalf("waiting 1m: %+v", it)
+	}
+	// 按了允許、工具跑完
+	ev("PostToolUse", "")
+	if it := c.Items()[0]; it.Review {
+		t.Fatalf("post: %+v", it)
+	}
+	// 下一個提示重新計時（不會沿用上次的「還在等你」）
+	ev("PermissionRequest", "")
+	now = now.Add(8 * time.Second)
+	if it := c.Items()[0]; it.Review {
+		t.Fatalf("next prompt: %+v", it)
+	}
+}
+
 func TestClaudeCodeStopFailure(t *testing.T) {
 	c := NewClaudeCode()
 	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)

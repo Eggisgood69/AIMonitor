@@ -18,12 +18,19 @@ import (
 const ccPort = "47322"
 const ccURL = "http://127.0.0.1:" + ccPort + "/cc"
 
+// 你按下允許時 Claude Code 不會送任何事件（要等工具跑完才有 PostToolUse）。
+// 但提示等了約 6 秒還沒人回答時，一定會送 permission_prompt 通知；
+// 所以 7 秒內沒收到通知 = 你已經回答了，黃燈轉回綠燈，不用等長指令跑完。
+const ccReviewGrace = 7 * time.Second
+
 type ccSession struct {
 	ID          string
 	Cwd         string
 	Gen, Review bool
 	GenSince    int64
 	ReviewSince int64
+	AskAt       int64 // 最近一次 PermissionRequest
+	Waiting     bool  // 收到 permission_prompt 通知：確定還在等你
 	FinishedAt  int64
 	Failed      bool   // 上一次是因為 API 錯誤結束（StopFailure）
 	ErrMsg      string // 螢幕上的短字，例如 RATE LIMIT
@@ -115,6 +122,7 @@ func (c *ClaudeCode) Handle(body []byte) error {
 		if !s.Review {
 			s.Review, s.ReviewSince = true, ms
 		}
+		s.AskAt, s.Waiting = ms, false
 	case "Notification":
 		// 只有「等你允許」的通知才算需審核（idle_prompt 等其他通知不理）
 		if e.NotificationType == "permission_prompt" || (e.NotificationType == "" && strings.Contains(strings.ToLower(e.Message), "permission")) {
@@ -122,6 +130,7 @@ func (c *ClaudeCode) Handle(body []byte) error {
 			if !s.Review {
 				s.Review, s.ReviewSince = true, ms
 			}
+			s.Waiting = true
 		}
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionDenied", "SubagentStop":
 		if s.Gen { // 你按了允許（或拒絕）之後，它繼續工作
@@ -151,6 +160,9 @@ func (c *ClaudeCode) Items() []Item {
 	now := c.now()
 	var out []Item
 	for id, s := range c.sessions {
+		if s.Review && !s.Waiting && s.AskAt != 0 && now.UnixMilli()-s.AskAt > ccReviewGrace.Milliseconds() {
+			s.Review = false // 沒收到「還在等你」的通知：你已經按了允許，工具正在跑
+		}
 		idle := !s.Gen && !s.Review
 		// 很久沒動靜的工作階段就移除（終端機直接關掉時不一定有 SessionEnd）
 		if (idle && now.Sub(s.Last) > 15*time.Minute) || now.Sub(s.Last) > 3*time.Hour {

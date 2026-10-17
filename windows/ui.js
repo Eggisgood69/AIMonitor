@@ -254,7 +254,7 @@
       $("fw").innerHTML = `${dev ? dev : "舊版"} <span class="muted">→ 可更新到 ${fw.bundled}</span>
         <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="fwupdate">更新螢幕韌體</button></div>`;
     } else {
-      $("fw").innerHTML = `${dev} <span class="muted">· 已是最新</span>`;
+      $("fw").innerHTML = `${dev} <span class="muted">· 已是最新 · <a href="#" data-cmd="fwupdate" style="color:inherit">重新寫入</a></span>`;
     }
     const bri = $("bri");
     if (document.activeElement !== bri) bri.value = s.brightness || 160;

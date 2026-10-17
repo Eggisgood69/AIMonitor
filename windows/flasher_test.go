@@ -26,6 +26,8 @@ type fakeROM struct {
 	baud      int
 	ended     bool
 	resets    int
+	bootedApp bool
+	wrote     bool // 收過 FLASH_DATA
 	t         *testing.T
 }
 
@@ -50,6 +52,9 @@ func (f *fakeROM) SetRTS(on bool) error {
 	// 傳統電路：RTS 高 + DTR 低 → EN 低（重置），接著 DTR 高 + RTS 低 → IO0 低、EN 高 → 燒錄模式
 	if f.rts && !on {
 		f.resets++
+		if f.wrote && !f.dtr {
+			f.bootedApp = true // 寫完資料後、DTR 放開時重置 → 正常開機
+		}
 	}
 	prev := f.rts
 	f.rts = on
@@ -148,6 +153,7 @@ func (f *fakeROM) Write(b []byte) error {
 				ok = false
 			}
 			if ok {
+				f.wrote = true
 				copy(f.flash[f.beginOff+seq*flashBlockSize:], payload)
 				f.seq++
 			}
@@ -189,11 +195,23 @@ func TestFlashUSBJTAG(t *testing.T) {
 	if rom.flash[appOffset+len(img)] != 0xFF {
 		t.Fatal("padding should be 0xFF")
 	}
-	if !rom.ended || last != (len(img)+flashBlockSize-1)/flashBlockSize {
-		t.Fatalf("ended=%v last=%d", rom.ended, last)
+	// 不能送 FLASH_END（參數 1 會讓 ROM 直接跳進韌體，螢幕卡住），寫完要重開機
+	if rom.ended || !rom.bootedApp || last != (len(img)+flashBlockSize-1)/flashBlockSize {
+		t.Fatalf("ended=%v booted=%v last=%d", rom.ended, rom.bootedApp, last)
 	}
 	if rom.flash[0] != 0xFF {
 		t.Fatal("bootloader area must not be touched")
+	}
+}
+
+func TestFlashEndsWithReset(t *testing.T) {
+	rom := newFakeROM(t, false)
+	if err := FlashApp(rom, false, testImage(8*1024), nil, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+	// 結束時重置一次，並放開 DTR / RTS（正常開機，不是燒錄模式）
+	if !rom.bootedApp || rom.dtr || rom.rts {
+		t.Fatalf("should end with a reset and DTR/RTS released: booted=%v dtr=%v rts=%v", rom.bootedApp, rom.dtr, rom.rts)
 	}
 }
 

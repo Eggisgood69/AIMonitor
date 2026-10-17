@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.5"
+const version = "1.8.7"
 const appTitle = "AI 狀態指示燈"
 
 //go:embed monitor.ps1
@@ -324,6 +324,7 @@ var (
 	skipPort     = map[string]time.Time{}
 	openErr      = map[string]string{} // 每個埠上次開啟失敗的原因（一樣的錯誤只記一次）
 	lastGoodPort string                // 上次成功連上螢幕的埠：優先嘗試
+	stuckCount   int                   // 連續幾次「一連上就寫入逾時」
 )
 
 func serialLoop() {
@@ -434,6 +435,27 @@ func serialLoop() {
 		}
 		sp.Close()
 		logf("disconnected %s after %s (%s)", sp.name, time.Since(openedAt).Round(time.Second), why)
+		// 一連上就寫入逾時 = 螢幕上沒有程式在讀（卡在燒錄模式或當機，畫面全黑）：連續 3 次就自動重置
+		if strings.HasPrefix(why, "write:") && time.Since(openedAt) < 5*time.Second {
+			stuckCount++
+		} else {
+			stuckCount = 0
+		}
+		if stuckCount >= 3 {
+			stuckCount = 0
+			logf("%s is not reading, resetting the screen", sp.name)
+			if s, err := openSerial(sp.name); err == nil {
+				usbJTAG := true
+				for _, p := range findDisplayPortInfos() {
+					if p.Name == sp.name {
+						usbJTAG = p.VID == "VID_303A"
+					}
+				}
+				rebootToApp(s, usbJTAG)
+				s.Close()
+			}
+			time.Sleep(3 * time.Second) // 等螢幕開機
+		}
 		serMu.Lock()
 		serStat = serialStatus{}
 		serMu.Unlock()

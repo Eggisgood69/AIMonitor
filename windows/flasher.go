@@ -227,10 +227,7 @@ type FlashProgress func(done, total int)
 func FlashApp(p flashPort, usbJTAG bool, image []byte, progress FlashProgress, logf func(string, ...interface{})) (err error) {
 	defer func() {
 		if err != nil { // 失敗時也把晶片重新開機回一般模式，螢幕不會停在空白
-			p.SetDTR(false)
-			p.SetRTS(true)
-			time.Sleep(120 * time.Millisecond)
-			p.SetRTS(false)
+			rebootToApp(p, usbJTAG)
 		}
 	}()
 	if logf == nil {
@@ -313,13 +310,27 @@ func FlashApp(p flashPort, usbJTAG bool, image []byte, progress FlashProgress, l
 	}
 	logf("flash: verified %s", got)
 
-	// 結束（留在燒錄模式），再用 RTS 重置開機
-	e.command(cmdFlashEnd, le32(1), 0, 2*time.Second)
+	// 不送 FLASH_END：參數 1 會讓 ROM 直接跳進韌體（沒經過正常開機），螢幕卡在全黑。
+	// 留在燒錄模式，用已驗證的流程重開機
+	rebootToApp(p, usbJTAG)
+	logf("flash: rebooted")
+	return nil
+}
+
+// 讓螢幕正常開機：先進燒錄模式（讓 ROM 接手），再用 RTS 重置。
+// 實測：韌體卡住時單純 RTS 重置救不回來，先進燒錄模式再重置才行（esptool 也是這樣救回）
+func rebootToApp(p flashPort, usbJTAG bool) {
+	(&esp{p: p}).enterBootloader(usbJTAG)
+	time.Sleep(200 * time.Millisecond)
+	resetChip(p)
+}
+
+// 用 RTS 讓晶片重開機（DTR 放開 → 不會進燒錄模式，正常開機）
+func resetChip(p flashPort) {
 	p.SetDTR(false)
 	p.SetRTS(true)
 	time.Sleep(120 * time.Millisecond)
 	p.SetRTS(false)
-	return nil
 }
 
 func le32(v ...uint32) []byte {

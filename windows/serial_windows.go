@@ -91,6 +91,7 @@ func findDisplayPortInfos() []portInfo {
 type serialPort struct {
 	h    windows.Handle
 	name string
+	dtr  bool // 目前的 DTR（SetRTS 要用同樣的值再送一次）
 }
 
 func openSerial(name string) (*serialPort, error) {
@@ -127,7 +128,7 @@ func openSerial(name string) (*serialPort, error) {
 		windows.CloseHandle(h)
 		return nil, err
 	}
-	return &serialPort{h: h, name: name}, nil
+	return &serialPort{h: h, name: name, dtr: true}, nil
 }
 
 func (s *serialPort) Write(b []byte) error {
@@ -151,6 +152,7 @@ func (s *serialPort) Close() { windows.CloseHandle(s.h) }
 
 // ---- 燒錄用（flashPort 介面）----
 func (s *serialPort) SetDTR(on bool) error {
+	s.dtr = on
 	f := uint32(windows.CLRDTR)
 	if on {
 		f = windows.SETDTR
@@ -163,7 +165,12 @@ func (s *serialPort) SetRTS(on bool) error {
 	if on {
 		f = windows.SETRTS
 	}
-	return windows.EscapeCommFunction(s.h, f)
+	if err := windows.EscapeCommFunction(s.h, f); err != nil {
+		return err
+	}
+	// Windows 的 usbser.sys 只改 RTS 不會送給裝置，要再設一次 DTR（同樣的值）才會連同 RTS 一起送出
+	// （與 esptool 的做法相同）。少了這步，燒錄後的 RTS 重置根本沒送到螢幕 → 螢幕全黑
+	return s.SetDTR(s.dtr)
 }
 
 func (s *serialPort) SetBaud(baud int) error {

@@ -28,6 +28,8 @@ type Item struct {
 	Review      bool     `json:"review"`
 	ReviewSince int64    `json:"reviewSince"`
 	FinishedAt  int64    `json:"finishedAt"`
+	Failed      bool     `json:"failed"` // 上一次是出錯結束：完成時改亮紅燈
+	Msg         string   `json:"msg"`    // 錯誤的短字（螢幕顯示）
 	Buttons     []string `json:"buttons"`
 
 	doneUntil int64
@@ -140,14 +142,16 @@ func (s *State) ApplyScan(list []Item) (finished []string) {
 				s.genAcc[it.Key] = 0
 				if it.Focused {
 					it.doneUntil = nowMs + doneShowWhenViewed.Milliseconds()
-				} else if strings.HasPrefix(it.Key, "cc:") {
+				} else if strings.HasPrefix(it.Key, "cc:") && !it.Failed {
 					it.doneUntil = nowMs + ccDoneShow.Milliseconds() // 終端機無法判斷你有沒有在看：亮 5 分鐘
 				} else {
 					it.doneUntil = forever // 等你切回去看才熄
 				}
 			}
-		} else if it.FinishedAt != 0 {
+		} else if it.FinishedAt != 0 && !it.Failed {
 			it.doneUntil = 0 // 程式剛啟動時看到的舊完成狀態不亮
+		} else if it.Failed {
+			it.doneUntil = forever // 錯誤要等你看過（或長按 BOOT）才熄
 		}
 		if it.Gen {
 			it.doneUntil = 0
@@ -217,6 +221,8 @@ func status(it *Item, nowMs int64) (string, int64) {
 		return "review", it.ReviewSince
 	case it.Gen:
 		return "working", it.GenSince
+	case it.FinishedAt != 0 && nowMs < it.doneUntil && it.Failed:
+		return "error", it.FinishedAt
 	case it.FinishedAt != 0 && nowMs < it.doneUntil:
 		return "done", it.FinishedAt
 	case it.FinishedAt != 0:
@@ -271,6 +277,9 @@ func (s *State) BuildFrame() Frame {
 	if main != nil {
 		ai = main.it.AI
 		f.St = main.st
+		if f.St == "error" {
+			f.Msg = main.it.Msg
+		}
 		f.Age = (nowMs - main.since) / 1000
 		if f.Age < 0 {
 			f.Age = 0

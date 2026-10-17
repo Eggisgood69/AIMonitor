@@ -25,6 +25,8 @@ type ccSession struct {
 	GenSince    int64
 	ReviewSince int64
 	FinishedAt  int64
+	Failed      bool   // 上一次是因為 API 錯誤結束（StopFailure）
+	ErrMsg      string // 螢幕上的短字，例如 RATE LIMIT
 	Last        time.Time
 }
 
@@ -40,11 +42,37 @@ func NewClaudeCode() *ClaudeCode {
 }
 
 type ccEvent struct {
-	SessionID        string `json:"session_id"`
-	Cwd              string `json:"cwd"`
-	HookEventName    string `json:"hook_event_name"`
-	NotificationType string `json:"notification_type"`
-	Message          string `json:"message"`
+	SessionID        string          `json:"session_id"`
+	Cwd              string          `json:"cwd"`
+	HookEventName    string          `json:"hook_event_name"`
+	NotificationType string          `json:"notification_type"`
+	Message          string          `json:"message"`
+	Error            json.RawMessage `json:"error"` // StopFailure 的錯誤種類（rate_limit、server_error …）
+}
+
+// StopFailure 的錯誤種類 → 螢幕上的短字（螢幕只有英文字型，用大寫）
+func ccErrMsg(raw json.RawMessage) string {
+	var kind string
+	if json.Unmarshal(raw, &kind) != nil {
+		var obj struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &obj) == nil {
+			kind = obj.Type
+		}
+	}
+	switch k := strings.ToLower(kind); {
+	case strings.Contains(k, "rate_limit"), strings.Contains(k, "overloaded"):
+		return "RATE LIMIT"
+	case strings.Contains(k, "auth"):
+		return "AUTH FAILED"
+	case strings.Contains(k, "billing"):
+		return "BILLING"
+	case strings.Contains(k, "max_output_tokens"):
+		return "TOO LONG"
+	default:
+		return "API ERROR"
+	}
 }
 
 // 收到一個 hook 事件
@@ -81,6 +109,7 @@ func (c *ClaudeCode) Handle(body []byte) error {
 	switch e.HookEventName {
 	case "UserPromptSubmit":
 		s.Gen, s.GenSince, s.Review = true, ms, false
+		s.Failed, s.ErrMsg = false, ""
 	case "PermissionRequest":
 		startGen()
 		if !s.Review {
@@ -98,11 +127,17 @@ func (c *ClaudeCode) Handle(body []byte) error {
 		if s.Gen { // 你按了允許（或拒絕）之後，它繼續工作
 			s.Review = false
 		}
-	case "Stop", "StopFailure":
+	case "Stop":
 		if s.Gen || s.Review {
 			s.FinishedAt = ms
 		}
 		s.Gen, s.Review = false, false
+		s.Failed, s.ErrMsg = false, ""
+	case "StopFailure":
+		// API 錯誤（額度用完、伺服器錯誤…）：紅燈，就算 AIMonitor 晚開、沒看到開始也要亮
+		s.FinishedAt = ms
+		s.Gen, s.Review = false, false
+		s.Failed, s.ErrMsg = true, ccErrMsg(e.Error)
 	case "SessionEnd":
 		delete(c.sessions, e.SessionID)
 	}
@@ -133,6 +168,7 @@ func (c *ClaudeCode) Items() []Item {
 		out = append(out, Item{
 			Key: "cc:" + short, AI: "claude",
 			Gen: s.Gen, GenSince: s.GenSince, Review: s.Review, ReviewSince: s.ReviewSince, FinishedAt: s.FinishedAt,
+			Failed: s.Failed, Msg: s.ErrMsg,
 			Buttons: []string{label},
 		})
 	}

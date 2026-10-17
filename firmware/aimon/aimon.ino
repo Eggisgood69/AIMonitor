@@ -19,6 +19,9 @@
 #include <Preferences.h>
 #define FW_VERSION "1.6.0"
 
+// arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
+struct LineReader;
+
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_GC9A01 _panel;
   lgfx::Bus_SPI      _bus;

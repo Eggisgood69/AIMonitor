@@ -66,6 +66,55 @@ func TestClaudeCodeEvents(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeStopFailure(t *testing.T) {
+	c := NewClaudeCode()
+	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	ev := func(name string, extra string) {
+		body := `{"session_id":"abcdef123456","hook_event_name":"` + name + `"` + extra + `}`
+		if err := c.Handle([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+	}
+	ev("UserPromptSubmit", "")
+	s, snow := newTestState()
+	*snow = now
+	s.ApplyScan(c.Items())
+	ev("StopFailure", `,"error":"rate_limit"`)
+	it := c.Items()[0]
+	if !it.Failed || it.Msg != "RATE LIMIT" || it.Gen {
+		t.Fatalf("failure: %+v", it)
+	}
+	*snow = snow.Add(time.Second)
+	s.ApplyScan(c.Items())
+	if f := s.BuildFrame(); f.St != "error" || f.Msg != "RATE LIMIT" {
+		t.Fatalf("frame: %+v", f)
+	}
+	// 錯誤不像完成那樣 5 分鐘就熄
+	*snow = snow.Add(6 * time.Minute)
+	s.ApplyScan(c.Items())
+	if f := s.BuildFrame(); f.St != "error" {
+		t.Fatalf("after 6m: %+v", f)
+	}
+	// 長按 BOOT 標為已讀
+	s.Acknowledge()
+	if f := s.BuildFrame(); f.St != "idle" || f.Msg != "" {
+		t.Fatalf("ack: %+v", f)
+	}
+	// 再送出任務就清掉錯誤
+	ev("UserPromptSubmit", "")
+	if it := c.Items()[0]; it.Failed || it.Msg != "" {
+		t.Fatalf("retry: %+v", it)
+	}
+	// 錯誤種類
+	for in, want := range map[string]string{`"server_error"`: "API ERROR", `"authentication_failed"`: "AUTH FAILED", `{"type":"billing_error"}`: "BILLING", `null`: "API ERROR"} {
+		if got := ccErrMsg(json.RawMessage(in)); got != want {
+			t.Errorf("ccErrMsg(%s) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestClaudeCodeSettingsPatch(t *testing.T) {
 	orig := `{
   "model": "opus",

@@ -141,3 +141,8 @@ windows/AIMonitor.exe           Windows 程式（每台電腦雙擊一次）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）
 extension/                      Chrome 擴充功能（選用，Mac 用）
 ```
+
+## 授權
+
+MIT License，見 [LICENSE](LICENSE)。
+螢幕使用的 Inter 字型（`firmware/aimon/fonts.h`）採用 SIL Open Font License，不在 MIT 範圍內。

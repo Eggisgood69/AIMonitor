@@ -50,6 +50,10 @@ func startFirmwareUpdate() {
 			logf("firmware updated to %s", fwVersion())
 		}
 		fwMu.Unlock()
+		if err == nil {
+			// 螢幕重開機時 USB 會重新列舉好幾次：等它開機完成再連，免得連上又斷
+			time.Sleep(3 * time.Second)
+		}
 		pauseSerial.Store(false)
 	}()
 }

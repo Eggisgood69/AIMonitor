@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.4"
+const version = "1.8.5"
 const appTitle = "AI 狀態指示燈"
 
 //go:embed monitor.ps1
@@ -320,7 +320,11 @@ var (
 	demoMu    sync.Mutex
 )
 
-var skipPort = map[string]time.Time{}
+var (
+	skipPort     = map[string]time.Time{}
+	openErr      = map[string]string{} // 每個埠上次開啟失敗的原因（一樣的錯誤只記一次）
+	lastGoodPort string                // 上次成功連上螢幕的埠：優先嘗試
+)
 
 func serialLoop() {
 	for {
@@ -329,11 +333,15 @@ func serialLoop() {
 			continue
 		}
 		ports := findDisplayPorts()
-		// 不回應的埠（其他 USB 裝置）暫時跳過
+		// 不回應的埠（其他 USB 裝置）暫時跳過；上次連上的埠排第一個
 		var cand []string
 		for _, p := range ports {
 			if until, bad := skipPort[p]; !bad || time.Now().After(until) {
-				cand = append(cand, p)
+				if p == lastGoodPort {
+					cand = append([]string{p}, cand...)
+				} else {
+					cand = append(cand, p)
+				}
 			}
 		}
 		multi := len(ports) > 1
@@ -341,8 +349,11 @@ func serialLoop() {
 		for _, p := range cand {
 			if s, err := openSerial(p); err == nil {
 				sp = s
+				delete(openErr, p)
 				break
-			} else {
+			} else if openErr[p] != err.Error() {
+				// 例如另一個 USB 裝置被別的程式占用：每 2 秒都會失敗，只在原因改變時記一次
+				openErr[p] = err.Error()
 				logf("open %s: %v", p, err)
 			}
 		}
@@ -363,10 +374,12 @@ func serialLoop() {
 		buf := make([]byte, 512)
 		line := []byte{}
 		ok := true
+		why := "" // 斷線原因（記在紀錄裡）
 		lastHello := time.Now()
 		openedAt := time.Now()
 		for ok {
 			if pauseSerial.Load() {
+				why = "paused for firmware update"
 				break
 			}
 			// 還沒收到螢幕回覆：每 5 秒再打一次招呼
@@ -375,8 +388,8 @@ func serialLoop() {
 			serMu.Unlock()
 			// 有好幾個序列埠、這個 12 秒都沒回應：可能不是螢幕，換下一個
 			if !ver && multi && time.Since(openedAt) > 12*time.Second {
-				logf("%s did not answer, trying other ports", sp.name)
 				skipPort[sp.name] = time.Now().Add(2 * time.Minute)
+				why = "did not answer, trying other ports"
 				break
 			}
 			if !ver && time.Since(lastHello) > 5*time.Second {
@@ -390,6 +403,7 @@ func serialLoop() {
 				case b := <-frameCh:
 					if err := sp.Write(b); err != nil {
 						ok = false
+						why = "write: " + err.Error()
 						break drain
 					}
 				default:
@@ -401,6 +415,7 @@ func serialLoop() {
 			}
 			n, err := sp.Read(buf)
 			if err != nil {
+				why = "read: " + err.Error()
 				break
 			}
 			if n > 0 {
@@ -418,7 +433,7 @@ func serialLoop() {
 			}
 		}
 		sp.Close()
-		logf("disconnected %s", sp.name)
+		logf("disconnected %s after %s (%s)", sp.name, time.Since(openedAt).Round(time.Second), why)
 		serMu.Lock()
 		serStat = serialStatus{}
 		serMu.Unlock()
@@ -441,6 +456,7 @@ func handleDeviceLine(l string) {
 		if fw, ok := m["fw"].(string); ok {
 			serStat.FW = fw
 		}
+		lastGoodPort = serStat.Port // 只在 serialLoop 裡讀寫
 		serMu.Unlock()
 	}
 	if m["ev"] == "btn" {

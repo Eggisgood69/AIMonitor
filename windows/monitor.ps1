@@ -105,9 +105,12 @@ function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$n
   $s.ai = $ai
   $s.focused = $focused
   $s.seen = $now
-  $s.buttons = @($names | Select-Object -Unique | Select-Object -First 30)
-  $g = [bool]($names | Where-Object { $_ -match $STOP_RE -and $_ -notmatch $STOP_NOT_RE })
-  $r = [bool]($names | Where-Object { $_ -match $REVIEW_RE })
+  $stops = @($names | Where-Object { $_ -match $STOP_RE -and $_ -notmatch $STOP_NOT_RE })
+  $reviews = @($names | Where-Object { $_ -match $REVIEW_RE })
+  # 除錯畫面只列 30 個：判斷依據（停止 / 允許）排最前面，才不會被一般按鈕擠掉
+  $s.buttons = @(@($stops) + @($reviews) + @($names) | Select-Object -Unique | Select-Object -First 30)
+  $g = $stops.Count -gt 0
+  $r = $reviews.Count -gt 0
   # 停止按鈕會短暫消失，要連續消失 1.5 秒才算真的結束
   if ($g) {
     if (-not $s.gen) { $s.gen = $true; $s.genSince = $now }

@@ -261,8 +261,11 @@ func (s *State) BuildFrame() Frame {
 	})
 
 	var main *ranked
+	if len(list) > 0 && list[0].st == "review" {
+		main = &list[0] // 需要你按允許：不管正在看哪個視窗都優先（例如在 Claude App 裡看著 Claude Code 跑）
+	}
 	for i := range list {
-		if list[i].it.Focused { // 你正在看的 App / 分頁優先
+		if main == nil && list[i].it.Focused { // 其次是你正在看的 App / 分頁
 			main = &list[i]
 			break
 		}

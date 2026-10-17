@@ -63,11 +63,24 @@ func TestFocusedWinsAndOthers(t *testing.T) {
 	s, now := newTestState()
 	s.ApplyScan([]Item{
 		{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)},
-		{Key: "web:gemini", AI: "gemini", Review: true, ReviewSince: ms(*now)},
+		{Key: "web:gemini", AI: "gemini", FinishedAt: ms(*now)},
+	})
+	*now = now.Add(time.Second)
+	s.ApplyScan([]Item{
+		{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)},
+		{Key: "web:gemini", AI: "gemini", FinishedAt: ms(*now)},
 	})
 	f := s.BuildFrame()
-	if f.AI != "claude" || f.St != "working" || len(f.O) != 1 || f.O[0][0] != "gemini" || f.O[0][1] != "review" {
+	if f.AI != "claude" || f.St != "working" || len(f.O) != 1 || f.O[0][0] != "gemini" || f.O[0][1] != "done" {
 		t.Fatalf("focus/others: %+v", f)
+	}
+	// 需審核比正在看的優先（在 Claude App 裡看著 Claude Code 等你允許）
+	s.ApplyScan([]Item{
+		{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)},
+		{Key: "cc:abcdef12", AI: "claude", Gen: true, Review: true, ReviewSince: ms(*now)},
+	})
+	if f := s.BuildFrame(); f.St != "review" || len(f.O) != 1 || f.O[0][1] != "working" {
+		t.Fatalf("review over focus: %+v", f)
 	}
 	// 沒有在看任何 AI：顯示需審核的那個
 	s.ApplyScan([]Item{

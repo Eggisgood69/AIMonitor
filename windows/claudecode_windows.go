@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,11 @@ func startClaudeCodeServer() {
 		if err := claudeCode.Handle(body); err != nil {
 			logf("claude code hook: %v", err)
 			return
+		}
+		// 記下收到的事件（除錯用；每個工具都會觸發的 Pre/PostToolUse 不記，避免洗版）
+		var e ccEvent
+		if json.Unmarshal(body, &e) == nil && e.HookEventName != "PreToolUse" && e.HookEventName != "PostToolUse" {
+			logf("claude code hook: %s %s %s", e.HookEventName, shortID(e.SessionID), e.NotificationType)
 		}
 		go rescan()
 	})

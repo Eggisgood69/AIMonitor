@@ -157,10 +157,7 @@ func (c *ClaudeCode) Items() []Item {
 			delete(c.sessions, id)
 			continue
 		}
-		short := id
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		short := shortID(id)
 		label := "Claude Code"
 		if s.Cwd != "" {
 			label += " · " + filepath.Base(strings.ReplaceAll(s.Cwd, "\\", "/"))
@@ -174,6 +171,13 @@ func (c *ClaudeCode) Items() []Item {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 func (c *ClaudeCode) Status() (sessions int, last time.Time) {

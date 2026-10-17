@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin:0; width:260px; padding:16px; background:#0b1e78; color:#f4f5fb;
+         font: 14px/1.5 -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+  .row { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .dot { width:12px; height:12px; border-radius:50%; background:#6b7280; flex:none; }
+  .dot.on { background:#22c55e; } .dot.off { background:#ef4444; }
+  .now { background:#13247f; border-radius:10px; padding:10px 12px; margin-bottom:12px; }
+  .now b { display:block; font-size:16px; }
+  .dim { color:#b7bde0; font-size:12px; }
+  button { width:100%; font:inherit; font-weight:600; border:0; border-radius:999px; padding:9px; margin-top:6px;
+           cursor:pointer; background:#e8b518; color:#1b1b1b; }
+  button.sec { background:#2a3156; color:#f4f5fb; }
+</style>
+</head>
+<body>
+  <div class="row"><span class="dot" id="dot"></span><span id="conn">檢查中…</span></div>
+  <div class="row"><span class="dot" id="adot"></span><span id="app" class="dim">桌面 App 監測：檢查中…</span></div>
+  <div class="now"><b id="ai">—</b><span class="dim" id="st"></span></div>
+  <button id="demo">播放測試畫面</button>
+  <button class="sec" id="pair">配對 / 重新配對螢幕</button>
+<script src="popup.js"></script>
+</body>
+</html>

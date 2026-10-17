@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "AI 狀態指示燈",
+  "version": "1.0.0",
+  "description": "把 ChatGPT / Claude / Gemini 網頁的生成狀態與額度，透過 USB 顯示在 ESP32 圓形螢幕上。",
+  "permissions": ["offscreen", "tabs", "storage", "scripting"],
+  "host_permissions": [
+    "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "http://127.0.0.1:47321/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "AI 狀態指示燈" },
+  "icons": { "128": "icon128.png" }
+}

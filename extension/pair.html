@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配對 AI 狀態指示燈</title>
+<style>
+  :root { --bg:#0b1e78; --card:#13247f; --text:#f4f5fb; --dim:#b7bde0; --accent:#e8b518; --ok:#22c55e; --bad:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--text);
+         font: 16px/1.6 -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; padding:24px; }
+  main { width:min(520px,100%); text-align:center; }
+  .dial { width:180px; height:180px; margin:0 auto 28px; border-radius:50%; border:16px solid #5e4766;
+          display:grid; place-items:center; font-size:22px; font-weight:700; position:relative; overflow:hidden; }
+  .dial::after { content:""; position:absolute; left:0; right:0; bottom:0; height:34%; background:var(--accent);
+                 clip-path: polygon(50% 0, 100% 45%, 100% 100%, 0 100%, 0 45%); }
+  h1 { font-size:26px; margin:0 0 8px; }
+  p { color:var(--dim); margin:0 0 20px; }
+  ol { text-align:left; color:var(--dim); margin:0 auto 24px; max-width:420px; padding-left:22px; }
+  button { font:inherit; font-weight:700; border:0; border-radius:999px; padding:14px 28px; cursor:pointer;
+           background:var(--accent); color:#1b1b1b; }
+  button.ghost { background:transparent; color:var(--dim); text-decoration:underline; padding:8px; font-weight:400; }
+  #status { margin-top:20px; min-height:1.6em; font-weight:600; }
+  .ok { color:var(--ok); } .bad { color:#ff8a8a; }
+</style>
+</head>
+<body>
+<main>
+  <div class="dial">AI</div>
+  <h1>配對螢幕（每台電腦只要一次）</h1>
+  <ol>
+    <li>用 USB 線把螢幕接到這台電腦</li>
+    <li>按下面的按鈕，在 Chrome 跳出的清單選擇螢幕（名稱通常含 USB JTAG、USB Serial 或 CH340）</li>
+    <li>之後插上就會自動連線，不用再開這個頁面</li>
+  </ol>
+  <button id="pick">選擇螢幕</button>
+  <div><button class="ghost" id="pickAll">清單裡找不到？顯示所有序列埠</button></div>
+  <div id="status"></div>
+  <div id="after" hidden>
+    <button id="demo">播放測試畫面</button>
+  </div>
+</main>
+<script src="pair.js"></script>
+</body>
+</html>

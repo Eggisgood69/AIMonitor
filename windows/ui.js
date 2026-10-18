@@ -53,8 +53,16 @@
   .logo::after { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 3px solid #f0855a; }
   h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
   .ver { color: #6e6e73; font-size: 12px; }
-  .card { background: #1c1c1e; border-radius: 14px; padding: 4px 16px; margin-bottom: 14px; }
-  .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #2c2c2e; }
+  .copy { margin-top: 10px; }
+  /* 液態玻璃方格：背後兩團很淡的光（綠、橘，同 logo 配色）讓模糊有東西可透 */
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+                 background: radial-gradient(420px 320px at 15% 20%, rgba(48,209,88,.06), transparent 70%),
+                             radial-gradient(460px 360px at 85% 65%, rgba(240,133,90,.05), transparent 70%); }
+  .card { background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
+          -webkit-backdrop-filter: blur(40px) saturate(140%); backdrop-filter: blur(40px) saturate(140%);
+          border: 0.5px solid rgba(255,255,255,.09); border-radius: 18px; padding: 4px 16px; margin-bottom: 14px;
+          box-shadow: inset 0 0.5px 0 rgba(255,255,255,.14), 0 8px 24px rgba(0,0,0,.35); }
+  .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
   .row:last-child { border-bottom: 0; }
   .k { color: #98989f; width: 92px; flex: none; }
   .v { flex: 1; min-width: 0; }
@@ -66,7 +74,7 @@
   button.primary { background: #0a84ff; color: #fff; }
   button:hover { filter: brightness(1.15); }
   .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-  .items .it { padding: 10px 0; border-bottom: 1px solid #2c2c2e; }
+  .items .it { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
   .items .it:last-child { border-bottom: 0; }
   .muted { color: #6e6e73; }
   details { margin-top: 6px; color: #8e8e93; font-size: 12px; }
@@ -139,7 +147,7 @@
     <button id="hide">隱藏視窗</button>
     <button id="quit">結束程式</button>
   </div>
-  <footer>關閉視窗只是隱藏，程式會繼續在背景執行。<br>點右下角系統匣的圓形圖示（或再次雙擊 AIMonitor）就能打開這個視窗。</footer>
+  <footer>關閉視窗只是隱藏，程式會繼續在背景執行。<br>點右下角系統匣的圓形圖示（或再次雙擊 AIMonitor）就能打開這個視窗。<div class="copy" id="copy"></div></footer>
 </main></body>`;
     document.getElementById("demo").onclick = () => window.aimonCmd("demo");
     document.getElementById("hide").onclick = () => window.aimonCmd("hide");
@@ -179,6 +187,7 @@
     try { s = JSON.parse(await window.aimonStatus()); } catch (e) { return; }
     const $ = (id) => document.getElementById(id);
     $("ver").textContent = "版本 " + s.version;
+    $("copy").textContent = "© " + s.releaseYear + " " + s.author;
 
     const ser = s.serial || {};
     $("serial").innerHTML = ser.connected

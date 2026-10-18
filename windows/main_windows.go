@@ -27,7 +27,9 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.12"
+const version = "1.8.13"
+const releaseYear = "2026"
+const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
 
 //go:embed monitor.ps1
@@ -780,7 +782,7 @@ func uiStatusJSON() string {
 	md, ue := monitorDiag, usageErr
 	diagMu.Unlock()
 	b, _ := json.Marshal(map[string]interface{}{
-		"version": version, "serial": ss, "login": ls, "quota": qj,
+		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(),
 		"providers": providersStatus(), "firmware": firmwareStatus(),

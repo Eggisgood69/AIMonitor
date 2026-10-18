@@ -70,10 +70,10 @@ func TestFocusedWinsAndOthers(t *testing.T) {
 		{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)},
 		{Key: "web:gemini", AI: "gemini", FinishedAt: ms(*now)},
 	})
-	// 背景完成（沒看過）比正在看的生成中優先
+	// 你正在看的是另一個 AI：主燈跟著你看的（Claude 生成中），Gemini 的完成放小圓點
 	f := s.BuildFrame()
-	if f.AI != "gemini" || f.St != "done" || len(f.O) != 1 || f.O[0][0] != "claude" || f.O[0][1] != "working" {
-		t.Fatalf("background done over focused working: %+v", f)
+	if f.AI != "claude" || f.St != "working" || len(f.O) != 1 || f.O[0][0] != "gemini" || f.O[0][1] != "done" {
+		t.Fatalf("focused other AI wins: %+v", f)
 	}
 	// 需審核比正在看的優先（在 Claude App 裡看著 Claude Code 等你允許）
 	s.ApplyScan([]Item{
@@ -165,7 +165,7 @@ func TestRankTable(t *testing.T) {
 	bgError := Item{Key: "cc:aaaa1111", AI: "claude", FinishedAt: 1, Failed: true, Msg: "RATE LIMIT"}
 	bgDone := Item{Key: "web:gemini", AI: "gemini", FinishedAt: 1}
 	bgWorking := Item{Key: "cc:bbbb2222", AI: "claude", Gen: true, GenSince: 1}
-	fgWorking := Item{Key: "web:chatgpt", AI: "chatgpt", Focused: true, Gen: true, GenSince: 1}
+	fgWorking := Item{Key: "web:claude", AI: "claude", Focused: true, Gen: true, GenSince: 1} // 同一個 AI 才比優先度
 	seenDone := Item{Key: "web:chatgpt", AI: "chatgpt", Focused: true, FinishedAt: 1}
 	idle := Item{Key: "web:gemini", AI: "gemini"}
 
@@ -179,7 +179,7 @@ func TestRankTable(t *testing.T) {
 		{"3>4 背景錯誤 > 背景完成", bgError, bgDone, "claude", "error"},
 		{"4>5 背景完成 > 背景生成中", bgDone, bgWorking, "gemini", "done"},
 		{"5>6 背景生成中 > 正在看的生成中", bgWorking, fgWorking, "claude", "working"},
-		{"6>7 正在看的生成中 > 看過的完成", fgWorking, Item{Key: "web:gemini", AI: "gemini", Focused: true, FinishedAt: 1}, "chatgpt", "working"},
+		{"6>7 正在看的生成中 > 看過的完成", fgWorking, Item{Key: "web:gemini", AI: "gemini", Focused: true, FinishedAt: 1}, "claude", "working"},
 		{"7>8 看過的完成 > 待機", seenDone, idle, "chatgpt", "done"},
 	}
 	for _, c := range cases {
@@ -377,6 +377,41 @@ func TestOtherDotsPerConversation(t *testing.T) {
 	s.ApplyScan(many)
 	if f := s.BuildFrame(); len(f.O) != 5 {
 		t.Fatalf("at most 5 dots: %+v", f)
+	}
+}
+
+// 實測情境（16:52）：Claude 有沒看過的完成，你從 Claude App 切到 Gemini 網頁 → 主燈跟著 Gemini；
+// 需審核、錯誤例外
+func TestSwitchToAnotherAI(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan(nil)
+	*now = now.Add(time.Minute)
+	cc := Item{Key: "cc:46b9e869", AI: "claude", Gen: true, GenSince: ms(*now)}
+	gem := Item{Key: "web:gemini", AI: "gemini"}
+	s.ApplyScan([]Item{cc, gem})
+	*now = now.Add(time.Second)
+	cc = Item{Key: "cc:46b9e869", AI: "claude", FinishedAt: ms(*now)}
+	s.ApplyScan([]Item{cc, gem})
+	if f := s.BuildFrame(); f.AI != "claude" || f.St != "done" {
+		t.Fatalf("not looking at Gemini yet: %+v", f)
+	}
+	gem.Focused = true
+	s.ApplyScan([]Item{cc, gem})
+	f := s.BuildFrame()
+	if f.AI != "gemini" || f.St != "idle" || len(f.O) != 1 || f.O[0][0] != "claude" || f.O[0][1] != "done" {
+		t.Fatalf("switched to Gemini → follow Gemini, Claude done as a dot: %+v", f)
+	}
+	// Claude 出錯：不管看哪裡都顯示
+	cc.Failed = true
+	s.ApplyScan([]Item{cc, gem})
+	if f := s.BuildFrame(); f.AI != "claude" || f.St != "error" {
+		t.Fatalf("error stays on top: %+v", f)
+	}
+	// Claude 需要允許：也一樣
+	rv := Item{Key: "cc:46b9e869", AI: "claude", Gen: true, Review: true, ReviewSince: ms(*now)}
+	s.ApplyScan([]Item{rv, gem})
+	if f := s.BuildFrame(); f.AI != "claude" || f.St != "review" {
+		t.Fatalf("review stays on top: %+v", f)
 	}
 }
 

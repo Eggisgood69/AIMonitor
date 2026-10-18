@@ -442,6 +442,25 @@ func (s *State) BuildFrame() Frame {
 			break
 		}
 	}
+	// 你切到另一個 AI（例如從 Claude App 切到 Gemini 網頁）：主燈跟著你看的那個 AI（連額度一起），
+	// 其他 AI 的完成 / 生成中放在小圓點。需審核、錯誤例外：工作停了，不管看哪裡都顯示
+	if main != nil && main.rank < 50 && !main.it.Focused {
+		for i := range list {
+			if list[i].it.Focused && list[i].it.AI != main.it.AI {
+				main = &list[i]
+				break
+			}
+		}
+		// 跟到 Claude App 時，畫面上的對話通常也是一個 Claude Code 對話：用它（名稱清楚、小圓點不重複）
+		if main.it.Key == "app:claude" {
+			for i := range list {
+				if strings.HasPrefix(list[i].it.Key, "cc:") && list[i].st == main.st {
+					main = &list[i]
+					break
+				}
+			}
+		}
+	}
 
 	_, tz := now.Zone()
 	f := Frame{AI: "none", St: "idle", Now: now.Unix(), O: [][]string{}, TZ: tz}

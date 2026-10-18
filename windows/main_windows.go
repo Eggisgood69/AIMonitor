@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.19"
+const version = "1.8.20"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -672,6 +672,7 @@ func onUsage(raw string) {
 		}
 		diagMu.Unlock()
 		if ok {
+			logQuotaChange("claude", q, "")
 			state.SetQuota("claude", q)
 			quotaUpdated("claude", q)
 			lastUsageOK = time.Now()
@@ -809,20 +810,7 @@ func main() {
 	startClaudeCodeServer()
 	go serialLoop()
 	go runMonitor(func(items []Item) {
-		fin := state.ApplyScan(mergedScan(items))
-		for _, f := range state.TakeFinished() {
-			stats.Add(f.AI, f.Dur)
-		}
-		showAlerts()
-		pushFrame(false)
-		for _, ai := range fin {
-			if ai == "claude" {
-				go func() { time.Sleep(3 * time.Second); pollUsage() }()
-			} else {
-				a := ai
-				go func() { time.Sleep(5 * time.Second); pollProviders(a) }()
-			}
-		}
+		afterScan(state.ApplyScan(mergedScan(items)), false)
 	})
 	go func() { // 每秒重算（經過時間、綠燈過期），變化才送；至少每 3 秒送一次當心跳
 		for range time.Tick(time.Second) {

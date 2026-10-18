@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -180,6 +181,11 @@ func onProviderUsage(ai, raw string) {
 		}
 		provMu.Unlock()
 		nq := Quota{P5: d.Quota.P5, PW: d.Quota.PW, R5: int64(d.Quota.R5), RW: int64(d.Quota.RW)}
+		diag := d.Diag
+		if ai == "chatgpt" {
+			diag = "" // ChatGPT 的 diag 是 API 原始回應，裡面有 email、帳號 ID：不寫進紀錄
+		}
+		logQuotaChange(ai, nq, diag)
 		state.SetQuota(ai, nq)
 		quotaUpdated(ai, nq)
 		pushFrame(false)
@@ -235,4 +241,22 @@ func providerLoop() {
 			pollProviders("")
 		}
 	}
+}
+
+// 額度數字有變才記（追查用；diag 是頁面原文開頭，看得出是哪裡解析錯）。要在 SetQuota 之前呼叫
+func logQuotaChange(ai string, nq Quota, diag string) {
+	if old := state.GetQuota(ai); old != nil && old.P5 == nq.P5 && old.PW == nq.PW && old.R5 == nq.R5 && old.RW == nq.RW {
+		return
+	}
+	ts := func(u int64) string {
+		if u == 0 {
+			return "-"
+		}
+		return time.Unix(u, 0).Format("01-02 15:04")
+	}
+	diag = strings.Join(strings.Fields(diag), " ")
+	if r := []rune(diag); len(r) > 200 {
+		diag = string(r[:200])
+	}
+	logf("%s quota: now %.0f%% reset %s, week %.0f%% reset %s | %s", ai, nq.P5, ts(nq.R5), nq.PW, ts(nq.RW), diag)
 }

@@ -50,14 +50,14 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 日常：
 - `./build.ps1`：編譯韌體 → 更新 `windows/fw/` → 測試並編譯 `windows/AIMonitor.exe`
 - `./build.ps1 -Flash COM5`：另外直接把韌體燒進螢幕（先在 AIMonitor 系統匣按「結束程式」，否則序列埠被占用）
-- 只改電腦端：`cd windows; go test ./...; go build -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
+- 只改電腦端：`cd windows; go test ./...; go build -trimpath -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
 - 雙擊新的 AIMonitor.exe 會自動取代執行中的舊版並安裝到 `%LOCALAPPDATA%\AIMonitor`
 
 ## 版本規則（改了就要升版）
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.8.19、韌體 1.6.5
+- 目前：AIMonitor 1.8.20、韌體 1.6.5
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -87,6 +87,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   （App 標題列「…，重新命名工作階段」按鈕、瀏覽器網址），換了對話就不算完成。
   今日統計：App 的完成等 4 秒，跟 Claude Code 同時完成的只算一次（state.go `flushPending`）
 - hook 伺服器（127.0.0.1:47322）只收不帶 Origin、Content-Type 是 JSON 的請求，網頁送不進來（`ccRequestAllowed`）
+- 公開專案：exe 一定要用 `-trimpath` 編譯（否則會內嵌 `C:/Users/<使用者>/go/...` 路徑）；紀錄 / 額度原文不要寫入 email、帳號 ID
 - go.mod 用 `replace golang.org/x/sys => github.com/golang/sys`（原開發環境擋 golang.org，在你的電腦上也能正常用）
 
 ## 待處理

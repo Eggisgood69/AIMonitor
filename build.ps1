@@ -38,7 +38,7 @@ Push-Location (Join-Path $root 'windows')
 try {
   go test ./...
   if ($LASTEXITCODE) { throw '測試失敗' }
-  go build -ldflags '-H windowsgui -s -w' -o AIMonitor.exe .
+  go build -trimpath -ldflags '-H windowsgui -s -w' -o AIMonitor.exe .
   if ($LASTEXITCODE) { throw '編譯失敗' }
 } finally { Pop-Location }
 Write-Host '完成：windows\AIMonitor.exe（雙擊即可取代執行中的舊版）' -ForegroundColor Green

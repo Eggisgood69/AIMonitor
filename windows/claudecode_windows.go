@@ -78,12 +78,26 @@ func mergedScan(fromMonitor []Item) []Item {
 
 // hook 事件進來時立刻更新螢幕（不用等下一次掃描）
 func rescan() {
-	state.ApplyScan(mergedScan(nil))
+	afterScan(state.ApplyScan(mergedScan(nil)), true)
+}
+
+// 每次套用偵測結果之後（畫面偵測每秒一次、Claude Code 事件一進來）：
+// 今日統計、通知、送畫面；有 AI 剛完成就過幾秒重新讀它的額度
+func afterScan(finished []string, force bool) {
 	for _, f := range state.TakeFinished() {
 		stats.Add(f.AI, f.Dur)
 	}
 	showAlerts()
-	pushFrame(true)
+	pushFrame(force)
+	for _, ai := range finished {
+		logf("%s finished: re-read quota", ai)
+		if ai == "claude" {
+			go func() { time.Sleep(3 * time.Second); pollUsage() }()
+		} else {
+			a := ai
+			go func() { time.Sleep(5 * time.Second); pollProviders(a) }()
+		}
+	}
 }
 
 func ccInstalled() bool {

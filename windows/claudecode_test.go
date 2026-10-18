@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +171,75 @@ func TestClaudeCodeQuestions(t *testing.T) {
 	a := s.TakeAlerts()
 	if len(a) != 1 || a[0].Title != "Claude Code · 2026-EAC-AirPurifier 在等你回覆" {
 		t.Fatalf("alerts: %+v", a)
+	}
+}
+
+// 實測情境（21:47:03）：裝新版重啟 AIMonitor，兩個「等你回覆」的黃燈不見了（等你回覆時對話不會再送事件）
+func TestClaudeCodePersistAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cc-sessions.json")
+	now := time.Date(2026, 10, 18, 21, 46, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	send := func(c *ClaudeCode, id, name, extra string) {
+		if err := c.Handle([]byte(`{"session_id":"` + id + `","cwd":"C:/w/proj","hook_event_name":"` + name + `"` + extra + `}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	byKey := func(c *ClaudeCode) map[string]Item {
+		m := map[string]Item{}
+		for _, it := range c.Items() {
+			m[it.Key] = it
+		}
+		return m
+	}
+
+	old := NewClaudeCode()
+	old.now = clock
+	old.Load(path) // 第一次啟動：沒有檔案
+	send(old, "d4674c44aaaa", "UserPromptSubmit", "")
+	send(old, "d4674c44aaaa", "PreToolUse", `,"tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"ask":"要繼續 Phase 3 嗎？"}`)
+	send(old, "d4674c44aaaa", "Stop", "")              // 等你回覆
+	send(old, "43e85d0eaaaa", "UserPromptSubmit", "")  // 還在跑
+	send(old, "7fc4fb19aaaa", "PermissionRequest", "") // 等你允許
+	send(old, "7fc4fb19aaaa", "Notification", `,"notification_type":"permission_prompt"`)
+
+	// AIMonitor 重啟
+	now = now.Add(time.Minute)
+	c := NewClaudeCode()
+	c.now = clock
+	c.Load(path)
+	m := byKey(c)
+	if x := m["cc:d4674c44"]; !x.Review || !x.Asking {
+		t.Fatalf("waiting for reply should survive restart: %+v", x)
+	}
+	if x := m["cc:43e85d0e"]; !x.Gen {
+		t.Fatalf("working should survive restart: %+v", x)
+	}
+	if x := m["cc:7fc4fb19"]; !x.Review || x.Asking {
+		t.Fatalf("permission prompt should survive restart: %+v", x)
+	}
+
+	// 讀回來的「生成中」10 分鐘都沒新事件：重啟期間已經結束了；等你回覆的仍然亮
+	now = now.Add(ccRestoredStale + time.Minute)
+	m = byKey(c)
+	if x := m["cc:43e85d0e"]; x.Gen {
+		t.Fatalf("stale restored working should stop: %+v", x)
+	}
+	if x := m["cc:d4674c44"]; !x.Review {
+		t.Fatalf("still waiting for reply: %+v", x)
+	}
+	// 有新事件的對話照常
+	send(c, "43e85d0eaaaa", "UserPromptSubmit", "")
+	now = now.Add(20 * time.Minute)
+	if x := byKey(c)["cc:43e85d0e"]; !x.Gen {
+		t.Fatalf("new event after restart → normal working: %+v", x)
+	}
+
+	// 壞掉的檔案：當作沒有，不會當掉
+	os.WriteFile(path, []byte("{broken"), 0o644)
+	c3 := NewClaudeCode()
+	c3.Load(path)
+	if len(c3.Items()) != 0 {
+		t.Fatal("broken file should load nothing")
 	}
 }
 

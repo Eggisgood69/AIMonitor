@@ -29,6 +29,7 @@ func ccSettingsPath() string {
 
 // 本機 HTTP：只聽 127.0.0.1，接收 Claude Code hooks
 func startClaudeCodeServer() {
+	claudeCode.Load(filepath.Join(appDir, "cc-sessions.json")) // 重啟前的對話狀態
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cc", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

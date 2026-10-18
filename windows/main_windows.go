@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.9.2"
+const version = "1.9.3"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -330,6 +330,15 @@ var (
 	openErr      = map[string]string{} // 每個埠上次開啟失敗的原因（一樣的錯誤只記一次）
 	lastGoodPort string                // 上次成功連上螢幕的埠：優先嘗試
 	stuckCount   int                   // 連續幾次「一連上就寫入逾時」
+	lastAnswer   time.Time             // 螢幕最後一次回應 hello 的時間（只在 serialLoop 裡讀寫）
+	lastRecover  time.Time             // 上次因為「螢幕沒回應」自動重開的時間
+)
+
+// 螢幕收得到資料、卻沒在解析（畫面顯示 Disconnected）時，寫入不會失敗，只能靠定時打招呼發現
+const (
+	pingEvery     = 15 * time.Second // 連線中每 15 秒打一次招呼
+	noAnswerAfter = 40 * time.Second // 這麼久都沒回應 = 螢幕沒在解析資料
+	recoverGap    = 2 * time.Minute  // 自動重開螢幕最多每 2 分鐘一次，避免一直重開
 )
 
 func serialLoop() {
@@ -376,6 +385,8 @@ func serialLoop() {
 		serMu.Unlock()
 		sp.Write([]byte("{\"hello\":1}\n"))
 		sendFrameNow()
+		lastAnswer = time.Now()
+		sent := 0 // 上次回應之後送了幾個畫面（沒回應時記在紀錄裡）
 
 		buf := make([]byte, 512)
 		line := []byte{}
@@ -402,6 +413,14 @@ func serialLoop() {
 				sp.Write([]byte("{\"hello\":1}\n"))
 				lastHello = time.Now()
 			}
+			if ver && time.Since(lastHello) > pingEvery {
+				sp.Write([]byte("{\"hello\":1}\n"))
+				lastHello = time.Now()
+			}
+			if ver && time.Since(lastAnswer) > noAnswerAfter {
+				why = fmt.Sprintf("screen not answering for %s, %d frames sent meanwhile", time.Since(lastAnswer).Round(time.Second), sent)
+				break
+			}
 			// 送出所有待送的畫面
 		drain:
 			for {
@@ -412,6 +431,7 @@ func serialLoop() {
 						why = "write: " + err.Error()
 						break drain
 					}
+					sent++
 				default:
 					break drain
 				}
@@ -431,7 +451,9 @@ func serialLoop() {
 			}
 			for _, c := range buf[:n] {
 				if c == '\n' || c == '\r' {
-					handleDeviceLine(string(line))
+					if handleDeviceLine(string(line)) {
+						lastAnswer, sent = time.Now(), 0
+					}
 					line = line[:0]
 				} else if len(line) < 1024 {
 					line = append(line, c)
@@ -449,17 +471,17 @@ func serialLoop() {
 		if stuckCount >= 3 {
 			stuckCount = 0
 			logf("%s is not reading, resetting the screen", sp.name)
-			if s, err := openSerial(sp.name); err == nil {
-				usbJTAG := true
-				for _, p := range findDisplayPortInfos() {
-					if p.Name == sp.name {
-						usbJTAG = p.VID == "VID_303A"
-					}
-				}
-				rebootToApp(s, usbJTAG)
-				s.Close()
+			resetScreen(sp.name)
+		}
+		// 螢幕活著但沒在解析資料（畫面 Disconnected）：重開螢幕
+		if strings.HasPrefix(why, "screen not answering") {
+			if time.Since(lastRecover) > recoverGap {
+				lastRecover = time.Now()
+				logf("%s: resetting the screen (not answering)", sp.name)
+				resetScreen(sp.name)
+			} else {
+				logf("%s: still not answering, already reset %s ago; reconnecting only", sp.name, time.Since(lastRecover).Round(time.Second))
 			}
-			time.Sleep(3 * time.Second) // 等螢幕開機
 		}
 		serMu.Lock()
 		serStat = serialStatus{}
@@ -468,17 +490,37 @@ func serialLoop() {
 	}
 }
 
-func handleDeviceLine(l string) {
+// 讓螢幕重新開機（先進燒錄模式再 RTS 重置，見 flasher.go rebootToApp），等它開機
+func resetScreen(port string) {
+	if s, err := openSerial(port); err == nil {
+		usbJTAG := true
+		for _, p := range findDisplayPortInfos() {
+			if p.Name == port {
+				usbJTAG = p.VID == "VID_303A"
+			}
+		}
+		rebootToApp(s, usbJTAG)
+		s.Close()
+	}
+	time.Sleep(3 * time.Second) // 等螢幕開機
+}
+
+// 處理螢幕送來的一行；回傳 true = 這是 hello 的回應（螢幕還在正常解析資料）
+func handleDeviceLine(l string) (answered bool) {
 	l = strings.TrimSpace(l)
 	if !strings.HasPrefix(l, "{") {
-		return
+		return false
 	}
 	var m map[string]interface{}
 	if json.Unmarshal([]byte(l), &m) != nil {
-		return
+		return false
 	}
 	if _, ok := m["aimon"]; ok {
+		answered = true
 		serMu.Lock()
+		if !serStat.Verified {
+			logf("%s: screen answered (fw %v)", serStat.Port, m["fw"])
+		}
 		serStat.Verified = true
 		if fw, ok := m["fw"].(string); ok {
 			serStat.FW = fw
@@ -487,10 +529,12 @@ func handleDeviceLine(l string) {
 		serMu.Unlock()
 	}
 	if m["ev"] == "btn" {
+		answered = true           // 按鍵事件也代表螢幕活著
 		claudeCode.AckQuestions() // 「等你回覆」的黃燈也標為已讀
 		state.Acknowledge()
 		rescan()
 	}
+	return answered
 }
 
 func queueFrame(b []byte) {

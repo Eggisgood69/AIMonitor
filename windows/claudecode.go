@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,7 +45,49 @@ type ClaudeCode struct {
 	sessions map[string]*ccSession
 	lastAt   time.Time
 	now      func() time.Time
-	termFg   bool // 前景視窗是終端機 / 編輯器：當作你正在看 Claude Code
+	termFg   bool      // 前景視窗是終端機 / 編輯器：當作你正在看 Claude Code
+	store    string    // 對話狀態存檔路徑（AIMonitor 重啟後讀回來；空 = 不存）
+	loadedAt time.Time // 從檔案讀回來的時間
+}
+
+// 從檔案讀回來的「生成中」：這麼久都沒有新事件，就當作在 AIMonitor 重啟期間已經結束（漏掉了 Stop）
+const ccRestoredStale = 10 * time.Minute
+
+// AIMonitor 重啟（例如裝新版）後讀回對話狀態：等你回覆 / 允許的對話不會再送事件，不存的話黃燈就消失了
+func (c *ClaudeCode) Load(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store = path
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var saved map[string]*ccSession
+	if json.Unmarshal(b, &saved) != nil {
+		return
+	}
+	now := c.now()
+	c.loadedAt = now
+	for id, s := range saved {
+		if s != nil && now.Sub(s.Last) < 3*time.Hour {
+			c.sessions[id] = s
+		}
+	}
+}
+
+// 寫檔（呼叫時要持有 c.mu）；先寫暫存檔再改名，寫到一半不會壞掉
+func (c *ClaudeCode) saveLocked() {
+	if c.store == "" {
+		return
+	}
+	b, err := json.Marshal(c.sessions)
+	if err != nil {
+		return
+	}
+	tmp := c.store + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		os.Rename(tmp, c.store)
+	}
 }
 
 // 會跑 Claude Code 的終端機、編輯器（前景行程名稱，小寫、不含 .exe）
@@ -204,6 +247,7 @@ func (c *ClaudeCode) Handle(body []byte) error {
 	case "SessionEnd":
 		delete(c.sessions, e.SessionID)
 	}
+	c.saveLocked()
 	return nil
 }
 
@@ -213,14 +257,26 @@ func (c *ClaudeCode) Items() []Item {
 	defer c.mu.Unlock()
 	now := c.now()
 	var out []Item
+	changed := false
+	defer func() {
+		if changed {
+			c.saveLocked()
+		}
+	}()
 	for id, s := range c.sessions {
 		if s.Review && !s.Waiting && s.AskAt != 0 && now.UnixMilli()-s.AskAt > ccReviewGrace.Milliseconds() {
 			s.Review = false // 沒收到「還在等你」的通知：你已經按了允許，工具正在跑
+			changed = true
+		}
+		if s.Gen && !s.Review && !c.loadedAt.IsZero() && s.Last.Before(c.loadedAt) && now.Sub(c.loadedAt) > ccRestoredStale {
+			s.Gen = false // 讀回來的生成中一直沒新事件：重啟期間已經結束了（不算完成，不亮綠燈）
+			changed = true
 		}
 		idle := !s.Gen && !s.Review
 		// 很久沒動靜的工作階段就移除（終端機直接關掉時不一定有 SessionEnd）
 		if (idle && now.Sub(s.Last) > 15*time.Minute) || now.Sub(s.Last) > 3*time.Hour {
 			delete(c.sessions, id)
+			changed = true
 			continue
 		}
 		short := shortID(id)
@@ -261,6 +317,7 @@ func (c *ClaudeCode) AckQuestions() {
 			s.Review, s.Asking = false, false
 		}
 	}
+	c.saveLocked()
 }
 
 func (c *ClaudeCode) Status() (sessions int, last time.Time) {

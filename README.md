@@ -77,7 +77,7 @@ Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型�
 2. 用 USB 接上螢幕，按 **Connect**，選擇裝置。
    - 如果連不上：按住板子的 BOOT 鍵，再按一下 RST 鍵，然後放開 BOOT，再試一次。
 3. Flash Address 填 **0x0**，檔案選 `firmware/aimon-usb-esp32c3.bin`，按 **Program**。
-4. 完成後按一下 RST 鍵，畫面會出現 **NO LINK / Plug in USB**。
+4. 完成後按一下 RST 鍵，畫面會出現 **Not Connected**。
 
 ### 方法 B：Arduino IDE
 
@@ -158,7 +158,7 @@ AIMonitor 內建最新韌體。設定視窗「韌體」一欄顯示「可更新�
 - `ai`：`claude` / `chatgpt` / `gemini` / `none`
 - `st`：`idle` / `done` / `working` / `review` / `error`
 - `led`（選用）：外接 WS2812 的亮度 0-100，0 = 關閉
-- 螢幕 20 秒沒收到資料，會自動顯示 NO LINK。
+- 螢幕 20 秒沒收到資料，會顯示 **Disconnected**（從沒連上過時顯示 Not Connected）。AIMonitor 連線中每 15 秒送一次 `{"hello":1}`，40 秒沒回應就判定螢幕沒在處理資料，自動重開螢幕。
 - 送出 `{"hello":1}` 會收到 `{"aimon":2}`；按下 BOOT 鍵時，螢幕會送出 `{"ev":"btn"}`。
 
 ## 檔案

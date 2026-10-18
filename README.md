@@ -6,6 +6,10 @@
 
 動態效果見 [preview.gif](preview.gif)。
 
+各頁面（BOOT 短按切換：狀態 → 額度詳細 → 今日統計 → 時鐘）與螢幕保護：
+
+![頁面](preview-pages.png)
+
 Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型（抗鋸齒）。
 
 | 最外圈細環（狀態燈） | 意義 |
@@ -140,7 +144,7 @@ AIMonitor 內建最新韌體。設定視窗「韌體」一欄顯示「可更新�
 firmware/aimon-usb-esp32c3.bin  已編譯好的完整韌體（從 0x0 燒錄）
 firmware/aimon/                 原始碼（aimon.ino 主程式、ui.h 畫面、fonts.h 字型、config.h 亮度與腳位）
 firmware/tools/fontgen.py       重新產生字型（Inter, SIL OFL）
-firmware/preview/               在電腦上渲染預覽圖用（開發用）
+firmware/preview/               重新產生 README 的預覽圖片（`build-preview.ps1`，開發用）
 windows/AIMonitor.exe           Windows 程式（每台電腦雙擊一次）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）
 extension/                      Chrome 擴充功能（選用，Mac 用）

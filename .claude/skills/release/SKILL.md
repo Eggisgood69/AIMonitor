@@ -73,7 +73,9 @@ push 到 GitHub 之前，先把這次（以及上次 push 之後所有還沒 pus
 
 - `README.md`：螢幕畫面、燈號、頁面、設定視窗、按鈕操作、安裝步驟有變就要改
 - `CLAUDE.md`：版本號那一行、新踩到的坑、主燈規則、待處理清單
-- 用 `git log origin/main..HEAD` 和 `git diff` 找出要寫的東西；`preview.png` / `preview.gif` 過時的話告訴使用者（要在 Linux 用 `firmware/preview/` 重新產生）
+- 用 `git log origin/main..HEAD` 和 `git diff` 找出要寫的東西；畫面（`firmware/aimon/ui.h`）有改就重新產生預覽圖片，檢查圖片跟現在的畫面一致：
+  `./firmware/preview/build-preview.ps1`（需要 zig：`winget install zig.zig`）。
+  會更新 `preview.png`、`preview-pages.png`、`preview-saver.png`、`preview.gif`；新增畫面或狀態時順便改 `firmware/preview/preview.cpp` 的場景
 
 ## 回報
 

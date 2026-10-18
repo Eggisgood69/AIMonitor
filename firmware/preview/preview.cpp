@@ -15,6 +15,7 @@ static uint32_t g_ms = 100000;
 static uint32_t millis() { return g_ms; }
 #define PI 3.14159265358979f
 #define DEG_TO_RAD 0.017453292519943295f
+#define RAD_TO_DEG 57.29577951308232f
 static LGFX_Sprite band;
 #include "../aimon/ui.h"
 
@@ -25,7 +26,7 @@ int main() {
   struct Sc { const char* file; const char* ai; St st; float p5, pw; const char* msg; int age; int no; bool link; uint32_t ms; };
   Sc sc[] = {
     {"review.ppm",  "claude",  S_REVIEW,  45, 63, "", 12, 0, true, 100700},
-    {"working.ppm", "chatgpt", S_WORKING, -1, -1, "", 42, 2, true, 101300},
+    {"working.ppm", "chatgpt", S_WORKING, -1, -1, "", 42, 4, true, 101300},
     {"done.ppm",    "gemini",  S_DONE,    -1, -1, "", 95, 1, true, 100000},
     {"error.ppm",   "claude",  S_ERROR,   97, 80, "Usage limit", 3, 0, true, 100700},
     {"idle.ppm",    "claude",  S_IDLE,    23, 41, "", 300, 0, true, 100000},
@@ -38,8 +39,12 @@ int main() {
     f.nOthers = s.no;
     if (!strcmp(s.file, "idle.ppm")) { f.note = "5H RESETS IN 4M"; f.noteKind = 1; }
     if (!strcmp(s.file, "done.ppm")) { f.note = "CLAUDE 5H QUOTA RESET"; f.noteKind = 2; }
-    if (s.no >= 1) { f.others[0].brand = 0; f.others[0].st = S_DONE; }
-    if (s.no >= 2) { f.others[1].brand = 2; f.others[1].st = S_WORKING; }
+    // 小圓點：要你處理的在左邊（需審核 → 錯誤 → 完成 → 生成中）
+    if (s.no == 1) { f.others[0].brand = 0; f.others[0].st = S_DONE; }
+    if (s.no == 4) {
+      f.others[0] = {0, S_REVIEW}; f.others[1] = {2, S_ERROR};
+      f.others[2] = {0, S_DONE};   f.others[3] = {2, S_WORKING};
+    }
     g_frame = f; g_ms = s.ms; g_stChangedMs = 0;
     g_lastFrameMs = s.link ? g_ms - 1000 : 0;
     g_stateSinceMs = g_ms; g_stateSinceBase = s.age;

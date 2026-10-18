@@ -20,7 +20,7 @@ firmware/aimon/aimon.ino   韌體主程式（序列埠協定、BOOT 鍵、分條
 firmware/aimon/ui.h        所有畫面（韌體與 preview 共用）
 firmware/aimon/fonts.h     由 firmware/tools/fontgen.py 產生（Inter，SIL OFL）
 firmware/aimon/config.h    腳位、亮度
-firmware/preview/          在電腦上把 ui.h 渲染成圖片（Linux + SDL2 版 LovyanGFX，開發用，可略過）
+firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）
 windows/                   Go 程式（Windows only，WebView2）
   main_windows.go          進入點、設定、序列埠連線、指令（onCmd）、狀態 JSON（uiStatusJSON）
   state.go                 偵測結果 → 送給螢幕的 Frame（可跨平台測試）

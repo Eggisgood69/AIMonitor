@@ -31,6 +31,8 @@ type ccSession struct {
 	ReviewSince int64
 	AskAt       int64 // 最近一次 PermissionRequest
 	Waiting     bool  // 收到 permission_prompt 通知：確定還在等你
+	Asking      bool  // 黃燈是因為 Claude 問你問題（不是權限提示）：等你回覆
+	AskAfter    bool  // 這輪結尾會問你問題（Claude App 的「下一步」方塊）：Stop 時亮黃燈
 	FinishedAt  int64
 	Failed      bool   // 上一次是因為 API 錯誤結束（StopFailure）
 	ErrMsg      string // 螢幕上的短字，例如 RATE LIMIT
@@ -69,6 +71,27 @@ type ccEvent struct {
 	NotificationType string          `json:"notification_type"`
 	Message          string          `json:"message"`
 	Error            json.RawMessage `json:"error"` // StopFailure 的錯誤種類（rate_limit、server_error …）
+	ToolName         string          `json:"tool_name"`
+	ToolInput        json.RawMessage `json:"tool_input"`
+}
+
+// Claude 問你問題用的工具（看工具，不看按鈕文字：按鈕每次都不一樣）
+//
+//	now：題目一出現就在等你（選擇題 AskUserQuestion、核准計畫 ExitPlanMode）
+//	after：這輪結束時才問（Claude App 的「下一步」方塊 = wrap_up 工具帶 ask）
+func ccAskKind(tool string, input json.RawMessage) string {
+	switch {
+	case tool == "AskUserQuestion" || tool == "ExitPlanMode":
+		return "now"
+	case strings.HasSuffix(tool, "wrap_up"):
+		var in struct {
+			Ask string `json:"ask"`
+		}
+		if json.Unmarshal(input, &in) == nil && strings.TrimSpace(in.Ask) != "" {
+			return "after"
+		}
+	}
+	return ""
 }
 
 // StopFailure 的錯誤種類 → 螢幕上的短字（螢幕只有英文字型，用大寫）
@@ -131,6 +154,7 @@ func (c *ClaudeCode) Handle(body []byte) error {
 	case "UserPromptSubmit":
 		s.Gen, s.GenSince, s.Review = true, ms, false
 		s.Failed, s.ErrMsg = false, ""
+		s.Asking, s.AskAfter = false, false
 	case "PermissionRequest":
 		startGen()
 		if !s.Review {
@@ -150,13 +174,28 @@ func (c *ClaudeCode) Handle(body []byte) error {
 		// 正在用工具 = 正在工作（AIMonitor 中途重啟、沒看到 UserPromptSubmit 時也能補回來）；
 		// 你按了允許（或拒絕）之後，它也是靠這些事件繼續工作
 		startGen()
-		s.Review = false
+		if e.HookEventName == "PreToolUse" {
+			switch ccAskKind(e.ToolName, e.ToolInput) {
+			case "now": // 題目出現了：等你回答（回答後的 PostToolUse 會熄）
+				if !s.Review {
+					s.ReviewSince = ms
+				}
+				s.Review, s.Waiting, s.Asking = true, true, true
+				return nil
+			case "after":
+				s.AskAfter = true
+			}
+		}
+		s.Review, s.Asking = false, false
 	case "Stop":
 		if s.Gen || s.Review {
 			s.FinishedAt = ms
 		}
 		s.Gen, s.Review = false, false
 		s.Failed, s.ErrMsg = false, ""
+		if s.AskAfter { // 結尾問了你問題：等你回覆（送出下一則訊息才熄）
+			s.Review, s.ReviewSince, s.Waiting, s.Asking, s.AskAfter = true, ms, true, true, false
+		}
 	case "StopFailure":
 		// API 錯誤（額度用完、伺服器錯誤…）：紅燈，就算 AIMonitor 晚開、沒看到開始也要亮
 		s.FinishedAt = ms
@@ -192,7 +231,7 @@ func (c *ClaudeCode) Items() []Item {
 		out = append(out, Item{
 			Key: "cc:" + short, AI: "claude", Focused: c.termFg,
 			Gen: s.Gen, GenSince: s.GenSince, Review: s.Review, ReviewSince: s.ReviewSince, FinishedAt: s.FinishedAt,
-			Failed: s.Failed, Msg: s.ErrMsg,
+			Failed: s.Failed, Msg: s.ErrMsg, Asking: s.Review && s.Asking,
 			Buttons: []string{label},
 		})
 	}
@@ -211,6 +250,17 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// 長按 BOOT：「等你回覆」的黃燈標為已讀（權限提示不熄：工作真的卡在那裡）
+func (c *ClaudeCode) AckQuestions() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range c.sessions {
+		if s.Asking && !s.Gen {
+			s.Review, s.Asking = false, false
+		}
+	}
 }
 
 func (c *ClaudeCode) Status() (sessions int, last time.Time) {

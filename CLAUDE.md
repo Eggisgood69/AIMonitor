@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.1、韌體 1.7.1
+- 目前：AIMonitor 1.9.2、韌體 1.7.1
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -81,6 +81,8 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   寫完用 `rebootToApp`（先進燒錄模式再 RTS 重置）。Windows usbser.sys 只改 RTS 不會送出，
   `SetRTS` 之後要再設一次 DTR（esptool 同樣做法）。卡住的韌體單純 RTS 重置救不回來
 - Claude Code hooks：按下允許時沒有任何事件；`permission_prompt` 通知在提示等了約 6 秒才送（只送一次）
+- Claude 問你問題不是權限提示（只有 Stop）：看 PreToolUse 的工具判斷（`ccAskKind`）——AskUserQuestion / ExitPlanMode 題目出現就亮黃燈，
+  Claude App「下一步」方塊是 wrap_up 工具帶 `ask`，Stop 時亮黃燈、送出下一則訊息才熄。不要靠按鈕文字（每次都不一樣）
 - 主燈規則（state.go `rank`）：「你沒看到的事」優先——背景需審核 > 正在看的需審核 > 背景錯誤 > 背景完成 >
   背景生成中 > 正在看的生成中 > 背景完成（通知 1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機；背景的錯誤 / 完成 / 需審核會跳 Windows 通知（各一次）。
   正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）

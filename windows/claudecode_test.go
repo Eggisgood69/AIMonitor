@@ -77,6 +77,101 @@ func TestClaudeCodeEvents(t *testing.T) {
 	}
 }
 
+// Claude 問你問題（不是權限提示）：看工具判斷，不看按鈕文字
+func TestClaudeCodeQuestions(t *testing.T) {
+	c := NewClaudeCode()
+	now := time.Date(2026, 10, 18, 21, 15, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	ev := func(name, extra string) {
+		if err := c.Handle([]byte(`{"session_id":"43e85d0e1234","cwd":"C:/w/2026-EAC-AirPurifier","hook_event_name":"` + name + `"` + extra + `}`)); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+	}
+	wrapUp := func(ask string) string {
+		return `,"tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"兩份 spec 草案寫好了","ask":"` + ask + `"}`
+	}
+	it := func() Item { return c.Items()[0] }
+
+	// 1. 回覆結尾問你（Claude App 的「下一步」方塊）：這輪結束時亮黃燈，送出下一則訊息才熄
+	ev("UserPromptSubmit", "")
+	ev("PreToolUse", wrapUp("兩份 spec 及預設值可以核准嗎？"))
+	ev("PostToolUse", wrapUp("兩份 spec 及預設值可以核准嗎？"))
+	if x := it(); x.Review {
+		t.Fatalf("not yet (turn still running): %+v", x)
+	}
+	ev("Stop", "")
+	if x := it(); !x.Review || !x.Asking || x.Gen || x.FinishedAt == 0 {
+		t.Fatalf("question at end → waiting for reply: %+v", x)
+	}
+	now = now.Add(10 * time.Minute) // 不會因為 7 秒寬限就熄
+	if x := it(); !x.Review {
+		t.Fatalf("still waiting after 10 min: %+v", x)
+	}
+	ev("UserPromptSubmit", "")
+	if x := it(); x.Review || x.Asking {
+		t.Fatalf("answered: %+v", x)
+	}
+
+	// 2. 結尾沒有問題：只是完成
+	ev("PreToolUse", wrapUp(""))
+	ev("Stop", "")
+	if x := it(); x.Review {
+		t.Fatalf("no question → just done: %+v", x)
+	}
+
+	// 3. 中途問選擇題：題目出現就亮，回答後熄
+	ev("UserPromptSubmit", "")
+	ev("PreToolUse", `,"tool_name":"AskUserQuestion","tool_input":{"questions":[]}`)
+	now = now.Add(time.Minute)
+	if x := it(); !x.Review || !x.Asking || !x.Gen {
+		t.Fatalf("AskUserQuestion: %+v", x)
+	}
+	ev("PostToolUse", `,"tool_name":"AskUserQuestion"`)
+	if x := it(); x.Review {
+		t.Fatalf("answered AskUserQuestion: %+v", x)
+	}
+
+	// 4. 長按 BOOT：「等你回覆」可以標為已讀；權限提示不行
+	ev("PreToolUse", wrapUp("要提交嗎？"))
+	ev("Stop", "")
+	c.AckQuestions()
+	if x := it(); x.Review {
+		t.Fatalf("ack question: %+v", x)
+	}
+	ev("UserPromptSubmit", "")
+	ev("PermissionRequest", `,"tool_name":"Bash"`)
+	c.AckQuestions()
+	if x := it(); !x.Review || x.Asking {
+		t.Fatalf("permission prompt must stay: %+v", x)
+	}
+
+	// 5. 狀態整合：主燈黃燈，通知只跳「在等你回覆」，不另外跳「完成了」
+	c2 := NewClaudeCode()
+	c2.now = func() time.Time { return now }
+	s, snow := newTestState()
+	*snow = now
+	s.ApplyScan(nil)
+	*snow = snow.Add(time.Minute)
+	now = *snow
+	for _, e := range []string{`"UserPromptSubmit"`, `"PreToolUse"` + wrapUp("可以核准嗎？"), `"Stop"`} {
+		if err := c2.Handle([]byte(`{"session_id":"43e85d0e1234","cwd":"C:/w/2026-EAC-AirPurifier","hook_event_name":` + e + `}`)); err != nil {
+			t.Fatal(err)
+		}
+		s.ApplyScan(c2.Items())
+	}
+	*snow = snow.Add(alertReviewDelay + time.Second)
+	now = *snow
+	s.ApplyScan(c2.Items())
+	if f := s.BuildFrame(); f.St != "review" {
+		t.Fatalf("frame: %+v", f)
+	}
+	a := s.TakeAlerts()
+	if len(a) != 1 || a[0].Title != "Claude Code · 2026-EAC-AirPurifier 在等你回覆" {
+		t.Fatalf("alerts: %+v", a)
+	}
+}
+
 func TestClaudeCodeRequestAllowed(t *testing.T) {
 	cases := []struct {
 		origin, ctype string

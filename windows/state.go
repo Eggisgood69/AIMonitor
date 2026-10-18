@@ -33,6 +33,7 @@ type Item struct {
 	FinishedAt  int64    `json:"finishedAt"`
 	Failed      bool     `json:"failed"` // 上一次是出錯結束：完成時改亮紅燈
 	Msg         string   `json:"msg"`    // 錯誤的短字（螢幕顯示）
+	Asking      bool     `json:"asking"` // 需審核是因為 Claude 問你問題（等你回覆），不是權限提示
 	Buttons     []string `json:"buttons"`
 
 	doneUntil     int64 // 完成 / 錯誤亮到何時；forever = 你還沒看過（背景發生的）
@@ -308,7 +309,7 @@ func (s *State) collectAlerts(nowMs int64) {
 	appFocused := s.items["app:claude"] != nil && s.items["app:claude"].Focused
 	for _, it := range s.items {
 		label := itemLabel(it)
-		if it.doneUntil == forever && it.FinishedAt > s.startMs && it.FinishedAt != it.alertedFin &&
+		if it.doneUntil == forever && !it.Review && it.FinishedAt > s.startMs && it.FinishedAt != it.alertedFin &&
 			nowMs-it.FinishedAt >= alertDoneDelay.Milliseconds() {
 			it.alertedFin = it.FinishedAt
 			if it.Failed {
@@ -326,7 +327,11 @@ func (s *State) collectAlerts(nowMs int64) {
 			nowMs-it.ReviewSince >= alertReviewDelay.Milliseconds() &&
 			!(strings.HasPrefix(it.Key, "cc:") && appFocused) {
 			it.alertedReview = it.ReviewSince
-			s.alerts = append(s.alerts, Alert{it.AI, "review", label + " 需要你允許", "正在等你按「允許」，不處理工作會停在這裡"})
+			if it.Asking {
+				s.alerts = append(s.alerts, Alert{it.AI, "review", label + " 在等你回覆", "Claude 問了你一個問題，回覆後才會繼續"})
+			} else {
+				s.alerts = append(s.alerts, Alert{it.AI, "review", label + " 需要你允許", "正在等你按「允許」，不處理工作會停在這裡"})
+			}
 		}
 	}
 }

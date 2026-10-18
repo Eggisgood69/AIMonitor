@@ -315,6 +315,45 @@ func TestClaudeAppPairing(t *testing.T) {
 	}
 }
 
+// 實測情境（15:48）：空氣清淨機的對話在背景完成，之後你在別的對話來回聊。
+// 通知後 1 分鐘內綠燈恆亮；之後排到生成中後面（看得到呼吸燈），沒有 AI 在跑時又回到綠燈恆亮
+func TestBackgroundDoneDemotes(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan(nil)
+	*now = now.Add(time.Minute)
+	bg := Item{Key: "cc:43e85d0e", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{bg})
+	*now = now.Add(time.Second)
+	bg = Item{Key: "cc:43e85d0e", AI: "claude", FinishedAt: ms(*now)}
+	chat := Item{Key: "cc:7fc4fb19", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{bg, chat})
+	if f := s.BuildFrame(); f.St != "done" {
+		t.Fatalf("just finished in background: %+v", f)
+	}
+	*now = now.Add(alertDoneDelay + doneOnTop + time.Second)
+	s.ApplyScan([]Item{bg, chat})
+	f := s.BuildFrame()
+	if f.St != "working" || len(f.O) != 1 || f.O[0][1] != "done" {
+		t.Fatalf("after 1 min, chatting shows breathing, done stays as a dot: %+v", f)
+	}
+	// 聊完了（沒有 AI 在跑）：沒看過的完成又回到主燈
+	*now = now.Add(time.Second)
+	chat = Item{Key: "cc:7fc4fb19", AI: "claude", Focused: true, FinishedAt: ms(*now)}
+	s.ApplyScan([]Item{bg, chat})
+	*now = now.Add(9 * time.Second)
+	if f := s.BuildFrame(); f.St != "done" || f.Age < 60 {
+		t.Fatalf("idle again → unseen done back on top: %+v", f)
+	}
+	// 錯誤不降級
+	s.ApplyScan([]Item{{Key: "cc:43e85d0e", AI: "claude", FinishedAt: bg.FinishedAt, Failed: true}, chat})
+	*now = now.Add(10 * time.Minute)
+	chat = Item{Key: "cc:7fc4fb19", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{{Key: "cc:43e85d0e", AI: "claude", FinishedAt: bg.FinishedAt, Failed: true}, chat})
+	if f := s.BuildFrame(); f.St != "error" {
+		t.Fatalf("error should stay on top: %+v", f)
+	}
+}
+
 func TestQuotaAndNoItems(t *testing.T) {
 	s, now := newTestState()
 	if f := s.BuildFrame(); f.AI != "none" {

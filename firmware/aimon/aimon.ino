@@ -17,7 +17,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.6.1"
+#define FW_VERSION "1.6.3"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -114,7 +114,7 @@ static void handleLine(Stream* src, const String& line) {
   f.rw = doc["rw"] | 0UL;
   JsonArray o = doc["o"].as<JsonArray>();
   for (JsonArray item : o) {
-    if (f.nOthers >= 3) break;
+    if (f.nOthers >= 5) break;
     f.others[f.nOthers].brand = brandIndex(item[0] | "none");
     f.others[f.nOthers].st = parseSt(item[1] | "idle");
     f.nOthers++;

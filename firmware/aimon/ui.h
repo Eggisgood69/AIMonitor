@@ -78,7 +78,7 @@ struct Frame {
   String note; uint8_t noteKind = 0;      // 額度重置提醒：1 = 即將重置（黃）、2 = 已重置（綠）
   float p5 = -1, pw = -1;
   uint32_t r5 = 0, rw = 0;
-  Other others[3]; int nOthers = 0;
+  Other others[5]; int nOthers = 0;
   float hist[24]; int nHist = 0;          // 5 小時額度的歷史（由電腦端提供，畫折線用）
   struct Today { int brand; int count; uint32_t secs; } today[3]; int nToday = 0;   // 今日統計
 };
@@ -346,18 +346,13 @@ static void statusLine(St st, int y, uint32_t ms) {
 }
 
 static void othersRow(const Frame& f, int y) {
-  int gap = 17, x0 = CX - (f.nOthers - 1) * gap / 2;
+  // 其他對話：只用顏色（綠 = 完成、黃 = 需審核、紅 = 錯誤），空心 = 生成中。順序由電腦端排好（要你處理的在前）
+  const float r = 5;
+  int gap = 16, x0 = CX - (f.nOthers - 1) * gap / 2;
   for (int i = 0; i < f.nOthers; i++) {
-    const Other& o = f.others[i];
-    uint32_t c = stColor(o.st);
-    if (o.st == S_WORKING) {                    // 生成中：空心圈（完成是實心）
-      band.fillSmoothCircle(x0 + i * gap, y - OY, 6, c);
-      band.fillSmoothCircle(x0 + i * gap, y - OY, 4.5f, C_BG);
-      text(BRANDS[o.brand].letter, x0 + i * gap, y + 1, c, &fTiny.font);
-    } else {
-      band.fillSmoothCircle(x0 + i * gap, y - OY, 6, c);
-      text(BRANDS[o.brand].letter, x0 + i * gap, y + 1, 0x000000, &fTiny.font);
-    }
+    int x = x0 + i * gap;
+    band.fillSmoothCircle(x, y - OY, r, stColor(f.others[i].st));
+    if (f.others[i].st == S_WORKING) band.fillSmoothCircle(x, y - OY, r - 1.8f, C_BG);
   }
 }
 

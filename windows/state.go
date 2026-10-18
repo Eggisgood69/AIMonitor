@@ -16,6 +16,7 @@ const (
 	ccSeenWindow       = 4 * time.Second  // Claude Code 完成的同時、桌面 App 的停止鈕也消失 → 是你正在看的對話
 	alertDoneDelay     = 5 * time.Second  // 背景完成 / 錯誤：等這麼久還是「沒看過」才跳通知（先讓上面的比對完成）
 	alertReviewDelay   = 7 * time.Second  // 背景需審核：等這麼久還沒處理才跳通知
+	doneOnTop          = time.Minute      // 背景完成通知後，在主燈最上面停留多久（之後排到生成中後面，避免來回對話時看不到呼吸燈）
 	quotaFresh         = 15 * time.Minute // 額度資料多久內算有效
 	forever            = int64(1) << 62
 )
@@ -130,10 +131,11 @@ func (s *State) history(ai string, n int) []float64 {
 // 主燈的優先順序：「你沒看到的事」優先，你正在看的對話自己看得到。
 //
 //	70 背景需審核      60 正在看的需審核
-//	50 背景錯誤（沒看過）  40 背景完成（沒看過）
+//	50 背景錯誤（沒看過）  40 背景完成（沒看過，通知後 1 分鐘內）
 //	30 背景生成中      20 正在看的生成中
+//	15 背景完成（沒看過，超過 1 分鐘：還是一直亮，但沒有 AI 在跑時才輪到主燈）
 //	10 看過的錯誤 / 完成（亮 8 秒）  0 待機
-func rank(it *Item, st string) int {
+func rank(it *Item, st string, nowMs int64) int {
 	switch st {
 	case "review":
 		if it.Focused {
@@ -146,6 +148,9 @@ func rank(it *Item, st string) int {
 		}
 		if st == "error" {
 			return 50
+		}
+		if nowMs-it.FinishedAt > (alertDoneDelay + doneOnTop).Milliseconds() {
+			return 15
 		}
 		return 40
 	case "working":
@@ -376,7 +381,7 @@ func (s *State) BuildFrame() Frame {
 	var list []ranked
 	for _, it := range s.items {
 		st, since := status(it, nowMs)
-		list = append(list, ranked{it, st, since, rank(it, st)})
+		list = append(list, ranked{it, st, since, rank(it, st, nowMs)})
 	}
 	// 依優先度、時間排序（結果穩定）
 	sort.Slice(list, func(i, j int) bool {
@@ -419,7 +424,7 @@ func (s *State) BuildFrame() Frame {
 		}
 		seenAI := map[string]bool{}
 		for _, r := range list {
-			if r.it == main.it || r.st == "idle" || len(f.O) >= 3 {
+			if r.it == main.it || r.st == "idle" || len(f.O) >= 5 { // 螢幕最多畫 5 個點
 				continue
 			}
 			k := r.it.AI + "/" + r.st

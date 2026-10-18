@@ -345,14 +345,15 @@ static void statusLine(St st, int y, uint32_t ms) {
   text(s, x + 12, y + 1, col, &fLabel.font, middle_left);
 }
 
-static void othersRow(const Frame& f, int y) {
-  // 其他對話：只用顏色（綠 = 完成、黃 = 需審核、紅 = 錯誤），空心 = 生成中。順序由電腦端排好（要你處理的在前）
-  const float r = 5;
-  int gap = 16, x0 = CX - (f.nOthers - 1) * gap / 2;
+static void othersRow(const Frame& f) {
+  // 其他對話：排在額度環下方的缺口裡（同一個半徑、跟環一樣粗），只用顏色（綠 = 完成、黃 = 需審核、紅 = 錯誤），空心 = 生成中
+  // 順序由電腦端排好（要你處理的在前），從左邊開始排
+  const float r = HW_USAGE, step = 16.0f / R_USAGE * RAD_TO_DEG;
   for (int i = 0; i < f.nOthers; i++) {
-    int x = x0 + i * gap;
-    band.fillSmoothCircle(x, y - OY, r, stColor(f.others[i].st));
-    if (f.others[i].st == S_WORKING) band.fillSmoothCircle(x, y - OY, r - 1.8f, C_BG);
+    float deg = 90 + ((f.nOthers - 1) / 2.0f - i) * step;
+    float x = px(R_USAGE, deg), y = py(R_USAGE, deg) - OY;
+    band.fillSmoothCircle(x, y, r, stColor(f.others[i].st));
+    if (f.others[i].st == S_WORKING) band.fillSmoothCircle(x, y, r - 2.2f, C_BG);
   }
 }
 
@@ -384,7 +385,8 @@ static void drawClock(uint32_t ms, bool pageMode) {
   uint32_t doe = z - era * 146097, yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
   uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
   uint32_t dd = doy - (153 * mp + 2) / 5 + 1, mon = mp < 10 ? mp + 3 : mp - 9;
-  const int dx = 0, dy = 0;               // 固定置中（IPS 液晶不會烙印）
+  // 整組（時間、日期、額度、重置）垂直置中；沒有額度資料時只有時間和日期
+  const int dx = 0, dy = (linkAlive() && g_frame.p5 >= 0) ? -26 : -14;
 
   // 細細的 Claude 額度弧（螢幕保護時）
   if (!pageMode && linkAlive() && g_frame.p5 >= 0) {
@@ -557,7 +559,7 @@ static void drawScene(uint32_t ms) {
     }
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL3;
     if (cap.length()) text(fitText(cap, 150, &fTiny.font).c_str(), CX, 185, capCol, &fTiny.font);
-    if (f.nOthers > 0) othersRow(f, 204);
+    if (f.nOthers > 0) othersRow(f);
   } else {
     text(hasAI ? b.name : "No AI Tab", CX, 56, hasAI ? b.color : C_LABEL2, &fName.font);
     if (hasAI) {
@@ -572,7 +574,7 @@ static void drawScene(uint32_t ms) {
     String cap = f.note.length() ? f.note : f.msg.length() ? f.msg : String(hasAI ? (f.st == S_IDLE ? "SINCE LAST REPLY" : "ELAPSED") : "OPEN CHATGPT, CLAUDE OR GEMINI");
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL2;
     text(fitText(cap, 170, &fTiny.font).c_str(), CX, 173, capCol, &fTiny.font);
-    if (f.nOthers > 0) othersRow(f, 199);
+    if (f.nOthers > 0) othersRow(f);
   }
 }
 

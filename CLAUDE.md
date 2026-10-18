@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.8.13、韌體 1.6.3
+- 目前：AIMonitor 1.8.17、韌體 1.6.5
 
 ## 序列埠協定（115200，每行一個 JSON）
 

@@ -66,6 +66,15 @@ AIMonitor 1.8.8：一句話說明這版改了什麼
 
 使用者沒有要求就不要 commit 或 push，先回報建置結果、等使用者實測。
 
+## 5. Push 前更新文件
+
+push 到 GitHub 之前，先把這次（以及上次 push 之後所有還沒 push 的 commit）使用者看得到的改動寫進文件，
+跟程式一起 push，不要讓 GitHub 上的說明落後於程式：
+
+- `README.md`：螢幕畫面、燈號、頁面、設定視窗、按鈕操作、安裝步驟有變就要改
+- `CLAUDE.md`：版本號那一行、新踩到的坑、主燈規則、待處理清單
+- 用 `git log origin/main..HEAD` 和 `git diff` 找出要寫的東西；`preview.png` / `preview.gif` 過時的話告訴使用者（要在 Linux 用 `firmware/preview/` 重新產生）
+
 ## 回報
 
 最後簡短告訴使用者：

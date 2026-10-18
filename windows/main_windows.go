@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.13"
+const version = "1.8.17"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -557,9 +557,9 @@ func playDemo() {
 	now := time.Now().Unix()
 	f := func(s string) { queueFrame([]byte(s + "\n")) }
 	go func() {
-		f(fmt.Sprintf(`{"ai":"claude","st":"working","p5":45,"pw":63,"r5":%d,"age":12,"now":%d,"o":[]}`, now+7800, now))
+		f(fmt.Sprintf(`{"ai":"claude","st":"working","p5":45,"pw":63,"r5":%d,"age":12,"now":%d,"o":[["claude","review"],["chatgpt","error"],["gemini","done"],["claude","working"],["claude","working"]]}`, now+7800, now))
 		time.Sleep(3 * time.Second)
-		f(fmt.Sprintf(`{"ai":"claude","st":"review","p5":45,"pw":63,"r5":%d,"age":3,"now":%d,"o":[]}`, now+7800, now))
+		f(fmt.Sprintf(`{"ai":"claude","st":"review","p5":45,"pw":63,"r5":%d,"age":3,"now":%d,"o":[["claude","done"],["gemini","working"]]}`, now+7800, now))
 		time.Sleep(3 * time.Second)
 		f(fmt.Sprintf(`{"ai":"chatgpt","st":"done","age":5,"now":%d,"o":[["gemini","working"]]}`, now))
 		time.Sleep(3 * time.Second)

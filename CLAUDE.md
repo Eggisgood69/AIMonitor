@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.8.7、韌體 1.6.0
+- 目前：AIMonitor 1.8.9、韌體 1.6.1
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -78,11 +78,14 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   寫完用 `rebootToApp`（先進燒錄模式再 RTS 重置）。Windows usbser.sys 只改 RTS 不會送出，
   `SetRTS` 之後要再設一次 DTR（esptool 同樣做法）。卡住的韌體單純 RTS 重置救不回來
 - Claude Code hooks：按下允許時沒有任何事件；`permission_prompt` 通知在提示等了約 6 秒才送（只送一次）
+- 主燈規則（state.go `rank`）：「你沒看到的事」優先——背景需審核 > 正在看的需審核 > 背景錯誤 > 背景完成 >
+  背景生成中 > 正在看的生成中 > 看過的錯誤 / 完成（8 秒）> 待機；背景的錯誤 / 完成 / 需審核會跳 Windows 通知（各一次）
+- Claude Code hooks 不知道你在看哪個對話：Stop 與 Claude App 停止鈕消失的時間差 4 秒內 = 同一個對話（`matchClaudeApp`），
+  只通知一次、切回 App 一起熄。Claude App 背景任務的「停止此任務」不算生成中（monitor.ps1 `$STOP_NOT_RE`）
 - go.mod 用 `replace golang.org/x/sys => github.com/golang/sys`（原開發環境擋 golang.org，在你的電腦上也能正常用）
 
 ## 待處理
 
 - Gemini 生成時燈號不亮：monitor.ps1 的 `$STOP_RE` 已放寬，仍需在 Gemini 生成時看「偵測狀態（除錯用）」確認停止按鈕名稱
-- Claude Code 連接（hooks）尚未實測，需要較新版 Claude Code（http hooks）
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
 - 其他提案：生成完成 Windows 通知、額度快用完警告、夜間自動調暗、生成太久提醒

@@ -42,6 +42,20 @@ type ClaudeCode struct {
 	sessions map[string]*ccSession
 	lastAt   time.Time
 	now      func() time.Time
+	termFg   bool // 前景視窗是終端機 / 編輯器：當作你正在看 Claude Code
+}
+
+// 會跑 Claude Code 的終端機、編輯器（前景行程名稱，小寫、不含 .exe）
+var terminalProcs = map[string]bool{
+	"windowsterminal": true, "cmd": true, "powershell": true, "pwsh": true, "conhost": true,
+	"wezterm-gui": true, "alacritty": true, "mintty": true, "code": true, "cursor": true,
+}
+
+// 偵測程式每次掃描回報前景視窗的行程名稱
+func (c *ClaudeCode) SetForeground(proc string) {
+	c.mu.Lock()
+	c.termFg = terminalProcs[strings.ToLower(proc)]
+	c.mu.Unlock()
 }
 
 func NewClaudeCode() *ClaudeCode {
@@ -133,9 +147,10 @@ func (c *ClaudeCode) Handle(body []byte) error {
 			s.Waiting = true
 		}
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionDenied", "SubagentStop":
-		if s.Gen { // 你按了允許（或拒絕）之後，它繼續工作
-			s.Review = false
-		}
+		// 正在用工具 = 正在工作（AIMonitor 中途重啟、沒看到 UserPromptSubmit 時也能補回來）；
+		// 你按了允許（或拒絕）之後，它也是靠這些事件繼續工作
+		startGen()
+		s.Review = false
 	case "Stop":
 		if s.Gen || s.Review {
 			s.FinishedAt = ms
@@ -175,7 +190,7 @@ func (c *ClaudeCode) Items() []Item {
 			label += " · " + filepath.Base(strings.ReplaceAll(s.Cwd, "\\", "/"))
 		}
 		out = append(out, Item{
-			Key: "cc:" + short, AI: "claude",
+			Key: "cc:" + short, AI: "claude", Focused: c.termFg,
 			Gen: s.Gen, GenSince: s.GenSince, Review: s.Review, ReviewSince: s.ReviewSince, FinishedAt: s.FinishedAt,
 			Failed: s.Failed, Msg: s.ErrMsg,
 			Buttons: []string{label},

@@ -76,6 +76,7 @@ func rescan() {
 	for _, f := range state.TakeFinished() {
 		stats.Add(f.AI, f.Dur)
 	}
+	showAlerts()
 	pushFrame(true)
 }
 

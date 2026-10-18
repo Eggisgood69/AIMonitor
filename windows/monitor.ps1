@@ -37,7 +37,8 @@ $HOST_RE = '^(https?://)?(www\.)?(claude\.ai|chatgpt\.com|chat\.openai\.com|gemi
 # 「停止生成」按鈕 → 生成中；「允許 / 核准」按鈕 → 需審核
 # Gemini 的停止鈕名稱各語言版本不同（例如「停止回覆」「停止產生回覆」），所以「停止 / Stop 開頭的短名稱」都算
 $STOP_RE   = '^(stop( (response|responding|generating|streaming|generation))?|停止.{0,6}|中止.{0,4}|停止 .{0,8})$'
-$STOP_NOT_RE = '(分享|共用|錄|播放|朗讀|語音|share|record|play|read aloud|voice|sharing)'
+# 排除：Claude App 背景任務的「停止此任務」（不是生成中）、分享 / 錄音 / 朗讀等
+$STOP_NOT_RE = '(分享|共用|錄|播放|朗讀|語音|任務|share|record|play|read aloud|voice|sharing|task)'
 $REVIEW_RE = '^(allow|allow once|allow always|always allow|allow for this chat|approve|允許|允許一次|一律允許|永遠允許|允許這次|核准)$'
 
 function Now-Ms { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
@@ -168,8 +169,10 @@ function Scan {
   # 這次沒看到的項目移除（App 關掉、分頁換走）
   foreach ($key in @($items.Keys)) { if ($items[$key].seen -ne $now) { $items.Remove($key) } }
   $script:diagText = ($diag -join ' ｜ ')
+  $script:fgName = $fgName
 }
 $script:diagText = ''
+$script:fgName = ''
 
 
 function Get-StateJson {
@@ -178,7 +181,7 @@ function Get-StateJson {
     $list += [ordered]@{ key = $s.key; ai = $s.ai; focused = $s.focused; gen = $s.gen; genSince = $s.genSince;
                          review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; buttons = @($s.buttons) }
   }
-  return (ConvertTo-Json -InputObject ([ordered]@{ t = (Now-Ms); items = @($list); diag = $script:diagText; uia = [bool]$UIA }) -Depth 4 -Compress)
+  return (ConvertTo-Json -InputObject ([ordered]@{ t = (Now-Ms); items = @($list); diag = $script:diagText; fg = $script:fgName; uia = [bool]$UIA }) -Depth 4 -Compress)
 }
 
 # ---- 主迴圈 ----

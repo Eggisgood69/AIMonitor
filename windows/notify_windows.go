@@ -65,6 +65,14 @@ $x.LoadXml('` + strings.ReplaceAll(xml, "'", "''") + `')
 	}()
 }
 
+// 背景發生的需審核 / 錯誤 / 完成 → Windows 通知
+func showAlerts() {
+	for _, a := range state.TakeAlerts() {
+		logf("alert: %s %s", a.Kind, a.Title)
+		showToast(a.Title, a.Body)
+	}
+}
+
 // 螢幕上的提醒字（顯示一段時間）
 var (
 	noteMu    sync.Mutex

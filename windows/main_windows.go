@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.7"
+const version = "1.8.9"
 const appTitle = "AI 狀態指示燈"
 
 //go:embed monitor.ps1
@@ -281,6 +281,7 @@ func runMonitor(onScan func([]Item)) {
 			var d struct {
 				Items []Item `json:"items"`
 				Diag  string `json:"diag"`
+				FG    string `json:"fg"` // 前景視窗的行程名稱
 				UIA   bool   `json:"uia"`
 			}
 			if json.Unmarshal([]byte(line), &d) == nil {
@@ -290,6 +291,7 @@ func runMonitor(onScan func([]Item)) {
 					monitorDiag = "UI Automation 載入失敗｜" + monitorDiag
 				}
 				diagMu.Unlock()
+				claudeCode.SetForeground(d.FG)
 				onScan(d.Items)
 			}
 		}
@@ -809,6 +811,7 @@ func main() {
 		for _, f := range state.TakeFinished() {
 			stats.Add(f.AI, f.Dur)
 		}
+		showAlerts()
 		pushFrame(false)
 		for _, ai := range fin {
 			if ai == "claude" {

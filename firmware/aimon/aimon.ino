@@ -17,7 +17,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.6.0"
+#define FW_VERSION "1.6.1"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;

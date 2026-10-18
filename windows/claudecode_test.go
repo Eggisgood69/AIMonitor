@@ -43,7 +43,7 @@ func TestClaudeCodeEvents(t *testing.T) {
 	if it.Gen || it.Review || it.FinishedAt == 0 {
 		t.Fatalf("stop: %+v", it)
 	}
-	// 狀態整合：完成後顯示 done，5 分鐘後熄（終端機無法判斷是否正在看）
+	// 狀態整合：在背景完成（終端機不在前景）→ 一直亮到你看過
 	s, snow := newTestState()
 	*snow = now
 	s.ApplyScan([]Item{{Key: it.Key, AI: "claude", Gen: true}})
@@ -52,10 +52,21 @@ func TestClaudeCodeEvents(t *testing.T) {
 	if f := s.BuildFrame(); f.St != "done" {
 		t.Fatalf("frame: %+v", f)
 	}
-	*snow = snow.Add(6 * time.Minute)
+	*snow = snow.Add(10 * time.Minute)
 	s.ApplyScan([]Item{it})
+	if f := s.BuildFrame(); f.St != "done" {
+		t.Fatalf("background done should stay: %+v", f)
+	}
+	// 切到終端機（前景）= 看過：再亮 8 秒就熄
+	c.SetForeground("WindowsTerminal")
+	s.ApplyScan(c.Items())
+	*snow = snow.Add(9 * time.Second)
 	if f := s.BuildFrame(); f.St != "idle" {
-		t.Fatalf("after 6m: %+v", f)
+		t.Fatalf("viewed in terminal: %+v", f)
+	}
+	c.SetForeground("chrome")
+	if c.Items()[0].Focused {
+		t.Fatal("chrome is not a terminal")
 	}
 	ev("SessionEnd", "")
 	if len(c.Items()) != 0 {
@@ -63,6 +74,17 @@ func TestClaudeCodeEvents(t *testing.T) {
 	}
 	if c.Handle([]byte("nope")) == nil {
 		t.Fatal("bad json accepted")
+	}
+}
+
+func TestClaudeCodeResumeAfterRestart(t *testing.T) {
+	// AIMonitor 中途重啟：沒看到 UserPromptSubmit，只收到工具事件，也要算生成中
+	c := NewClaudeCode()
+	if err := c.Handle([]byte(`{"session_id":"43e85d0e1234","hook_event_name":"PostToolUse"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if it := c.Items(); len(it) != 1 || !it[0].Gen {
+		t.Fatalf("resume: %+v", it)
 	}
 }
 

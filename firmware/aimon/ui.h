@@ -409,6 +409,8 @@ static void drawClock(uint32_t ms, bool pageMode) {
   if (linkAlive() && g_frame.p5 >= 0) {
     snprintf(buf, sizeof buf, "%s %d%%", BRANDS[g_frame.brand].name, (int)(g_frame.p5 + 0.5f));
     text(buf, CX + dx, CY + 58 + dy, C_LABEL2, &fTiny.font);
+    String left = fmtLeft(g_frame.r5);   // 5 小時額度多久後重置
+    if (left.length()) text((String("RESETS ") + left).c_str(), CX + dx, CY + 74 + dy, C_LABEL2, &fTiny.font);
   }
 }
 
@@ -515,7 +517,7 @@ static void drawScene(uint32_t ms) {
   if (g_saver) { drawClock(ms, false); return; }
   if (g_page == 1 && linkAlive()) { drawUsagePage(ms); return; }
   if (g_page == 2 && linkAlive()) { drawTodayPage(ms); return; }
-  if (g_page == 3 || g_page == 2) { drawClock(ms, true); pageDots(190); return; }
+  if (g_page == 3 || g_page == 2) { drawClock(ms, true); pageDots(208); return; }
   band.fillScreen(C_BG);
 
   if (!linkAlive()) {

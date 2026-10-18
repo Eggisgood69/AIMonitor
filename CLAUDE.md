@@ -71,7 +71,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   **不要讓外環跟著 sprite 一起推**，否則會出現上下半圈亮度不同、呼吸燈卡頓
 - ESP32-C3 沒有 FPU：每像素運算要用整數
 - 螢幕方向存在 NVS（Preferences "aimon"/"rot"）
-- 外接 WS2812 接背面 5-pin 排座的 RX（GPIO20，不用 IO8：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
+- 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）
 - Gemini 用量頁是獨立網址 `/usage`；背景 WebView 禁止開新視窗（曾經一直點到「瞭解詳情」跳窗）

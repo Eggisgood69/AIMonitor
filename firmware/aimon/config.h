@@ -19,7 +19,7 @@
 #define PIN_LCD_BL     3
 #define PIN_BTN        9    // 板上的 BOOT 鍵
 
-// 外接 WS2812（單顆，選用）：DIN 接背面 5-pin 排座的 RX（GPIO20），電源接 3.3V / GND。
+// 外接 WS2812（單顆，選用）：DIN 接背面 4-pin 排座的 RX（GPIO20），電源接 3.3V / GND。
 // 由電腦端設定亮度（0 = 關閉）；只在走內建 USB 連線時才會接管 RX 腳。
 #define PIN_LED        20
 #define LED_SAVER_PCT  30   // 螢幕保護時 LED 亮度再乘上這個 %

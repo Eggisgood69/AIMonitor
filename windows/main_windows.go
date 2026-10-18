@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.21"
+const version = "1.9.1"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -60,6 +60,7 @@ type Settings struct {
 	Brightness int  `json:"brightness"` // 背光亮度 5-255
 	RemindAt   *int `json:"remindAt"`
 	Rotation   int  `json:"rotation"` // 螢幕方向 0-3（×90°）   // 額度重置提醒：用量達到幾 % 才提醒，0 = 關閉（預設 90）
+	Led        int  `json:"led"`      // 外接 WS2812 亮度 0-100，0 = 關閉
 }
 
 var (
@@ -524,6 +525,7 @@ func pushFrame(force bool) {
 	f.Bri = brightness()
 	settingsMu.Lock()
 	f.Rot = settings.Rotation & 3
+	f.Led = settings.Led
 	settingsMu.Unlock()
 	f.Note, f.NK = currentNote(f.AI)
 	if stats != nil {
@@ -727,6 +729,15 @@ func onCmd(cmd string) string {
 				sendFrameNow()
 			}
 		}
+		if strings.HasPrefix(cmd, "led:") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(cmd, "led:")); err == nil && n >= 0 && n <= 100 {
+				settingsMu.Lock()
+				settings.Led = n
+				settingsMu.Unlock()
+				saveSettings()
+				sendFrameNow()
+			}
+		}
 		if cmd == "cc-on" || cmd == "cc-off" {
 			ccCmd(cmd == "cc-on")
 		}
@@ -785,7 +796,7 @@ func uiStatusJSON() string {
 	b, _ := json.Marshal(map[string]interface{}{
 		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
-		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(),
+		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(),
 	})
 	return string(b)
@@ -895,4 +906,10 @@ func rotation() int {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 	return settings.Rotation & 3
+}
+
+func ledPct() int {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	return settings.Led
 }

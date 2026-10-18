@@ -17,7 +17,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.6.5"
+#define FW_VERSION "1.7.1"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -88,6 +88,44 @@ static void sendLine(Stream* s, const char* line) {
 
 static Stream* lastSource = nullptr;
 
+// ---------------- 外接 WS2812（RX 腳）----------------
+// 顏色、亮度跟外環一樣（ringParams），每 16 ms 更新一次，值沒變就不送。
+static int g_ledPct = 0;          // 0 = 關閉，1-100 = 最大亮度 %
+static bool g_ledPin = false;     // RX 腳已經改成 LED 用（UART0 不再接收）
+
+static void ledSetPct(Stream* src, int pct) {
+#if ARDUINO_USB_CDC_ON_BOOT
+  if (pct > 0 && src != &Serial) return;   // 走 UART0（CH340 板）連線時，RX 腳是通訊用的，不能接管
+  if (pct > 0 && !g_ledPin) { Serial0.end(); g_ledPin = true; }
+  g_ledPct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+#else
+  (void)src; (void)pct;                    // Serial 本身就是 UART0，RX 腳不能用
+#endif
+}
+
+static void ledTick(uint32_t ms) {
+  static uint32_t lastMs = 0, lastVal = 0xFFFFFFFF;
+  if (!g_ledPin || ms - lastMs < 16) return;
+  lastMs = ms;
+  uint8_t r = 0, g = 0, b = 0;
+  if (g_ledPct > 0 && linkAlive() && g_frame.st != S_IDLE) {     // 待命、沒連線：熄燈
+    uint32_t col; float k;
+    ringParams(ms, col, k);
+    // LED 用純色：螢幕的 Apple 系統色在 LED 上綠色會偏藍、紅色會偏粉紅
+    if (col == C_GREEN) col = 0x00FF00;
+    else if (col == C_RED) col = 0xFF0000;
+    float s = k * k * g_ledPct / 100.0f;                          // gamma 2：低亮度時呼吸才平順
+    if (g_saver) s = s * LED_SAVER_PCT / 100.0f;
+    r = (uint8_t)(((col >> 16) & 0xFF) * s + 0.5f);
+    g = (uint8_t)(((col >> 8) & 0xFF) * s + 0.5f);
+    b = (uint8_t)((col & 0xFF) * s + 0.5f);
+  }
+  uint32_t v = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+  if (v == lastVal) return;
+  lastVal = v;
+  neopixelWrite(PIN_LED, r, g, b);
+}
+
 static void handleLine(Stream* src, const String& line) {
   JsonDocument doc;
   if (deserializeJson(doc, line)) return;
@@ -147,6 +185,7 @@ static void handleLine(Stream* src, const String& line) {
     int b = doc["bri"].as<int>();
     if (b >= 5 && b <= 255 && b != brightness) { brightness = b; if (!g_saver) lcd.setBrightness(brightness); }
   }
+  if (doc["led"].is<int>()) ledSetPct(src, doc["led"].as<int>());   // 外接 LED 亮度 0-100
   JsonArray ds = doc["d"].as<JsonArray>();
   for (JsonArray d : ds) {
     if (f.nToday >= 3) break;
@@ -235,9 +274,10 @@ void setup() {
 void loop() {
   pollReader(rdUsb);
 #if ARDUINO_USB_CDC_ON_BOOT
-  pollReader(rdUart);
+  if (!g_ledPin) pollReader(rdUart);
 #endif
   pollButton();
+  ledTick(millis());
 
   static uint32_t lastFull = 0, lastRing = 0;
   static bool lastAlive = false;

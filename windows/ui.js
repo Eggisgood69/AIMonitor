@@ -146,6 +146,11 @@
         <option value="2">180°</option><option value="3">270°</option>
       </select></div>
     <div class="row sw"><div>螢幕亮度</div><input type="range" id="bri" min="10" max="255" step="5"></div>
+    <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，DIN 接背面排座的 RX 腳，跟外圈燈號同步。需要韌體 1.7.0 以上</div></div>
+      <select id="led">
+        <option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
+        <option value="50">亮</option><option value="100">最亮</option>
+      </select></div>
     <div class="row sw"><div>連接 Claude Code<div class="hint">終端機的 Agent 模式也會亮燈（生成中、等你允許、完成）。<br>會在 Claude Code 設定檔加入通知設定，修改前自動備份。</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
   </div>
@@ -170,6 +175,7 @@
       window.aimonCmd(c).then(render);
     });
     document.getElementById("rot").onchange = (e) => { window.aimonCmd("rot:" + e.target.value).then(render); };
+    document.getElementById("led").onchange = (e) => { window.aimonCmd("led:" + e.target.value).then(render); };
     document.getElementById("remind").onchange = (e) => { window.aimonCmd("remind:" + e.target.value).then(render); };
     document.getElementById("saver").onchange = (e) => { window.aimonCmd("saver:" + e.target.value).then(render); };
     document.getElementById("cc").onclick = (e) => {
@@ -305,6 +311,12 @@
     }
     const ro = $("rot");
     if (document.activeElement !== ro) ro.value = String((s.rotation || 0) & 3);
+    const ld = $("led");
+    if (document.activeElement !== ld) {
+      const v = String(s.led || 0);
+      if (![...ld.options].some((o) => o.value === v)) ld.add(new Option(v + "%", v));
+      ld.value = v;
+    }
     const rm = $("remind");
     if (document.activeElement !== rm) {
       const v = String(s.remindAt ?? 90);

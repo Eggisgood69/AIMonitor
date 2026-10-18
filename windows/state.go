@@ -68,6 +68,7 @@ type Frame struct {
 	Saver int             `json:"saver"`          // 螢幕保護分鐘數（0 = 關閉）
 	Bri   int             `json:"bri,omitempty"`  // 背光亮度 5-255
 	Rot   int             `json:"rot"`            // 螢幕方向 0-3（×90°）
+	Led   int             `json:"led"`            // 外接 WS2812 亮度 0-100（0 = 關閉）
 	H     []float64       `json:"h,omitempty"`    // 最近 5 小時的 5 小時額度（折線用）
 	D     [][]interface{} `json:"d,omitempty"`    // 今日統計 [[ai, 次數, 秒數], ...]
 	Note  string          `json:"note,omitempty"` // 額度重置提醒（螢幕上的短字）

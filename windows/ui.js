@@ -225,7 +225,7 @@
         el.innerHTML = `${label} <b>${Math.round(main)}%</b>${left ? `<span class="muted"> · ${left}後重置</span>` : ""}
           <div class="bar"><i style="width:${Math.min(100, main)}%"></i></div>
           ${q.p5 >= 0 && q.pw >= 0 ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}
-          ${ai === "chatgpt" ? `<div class="hint">這是 Codex 的用量；ChatGPT 一般聊天沒有公開的用量數字</div>` : ""}`;
+          ${ai === "chatgpt" ? `<div class="hint">這是 Codex 的用量；ChatGPT 聊天也有上限，但 OpenAI 不公開剩餘量</div>` : ""}`;
       } else if (p.login === "out") {
         el.innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入
           <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="login:${ai}">登入 ${name}</button></div>`;

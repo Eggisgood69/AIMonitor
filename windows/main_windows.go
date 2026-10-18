@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.8.11"
+const version = "1.8.12"
 const appTitle = "AI 狀態指示燈"
 
 //go:embed monitor.ps1

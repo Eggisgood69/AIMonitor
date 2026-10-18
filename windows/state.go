@@ -422,16 +422,21 @@ func (s *State) BuildFrame() Frame {
 		if f.Age < 0 {
 			f.Age = 0
 		}
-		seenAI := map[string]bool{}
+		// 小圓點：每個對話一個點。例外：Claude App 畫面上的對話，通常也會以 Claude Code 對話出現一次
+		// （畫面偵測 + hooks），狀態相同時就當成同一個，不重複畫
+		ccSt := map[string]bool{}
+		for _, r := range list {
+			if strings.HasPrefix(r.it.Key, "cc:") {
+				ccSt[r.st] = true
+			}
+		}
 		for _, r := range list {
 			if r.it == main.it || r.st == "idle" || len(f.O) >= 5 { // 螢幕最多畫 5 個點
 				continue
 			}
-			k := r.it.AI + "/" + r.st
-			if seenAI[k] {
+			if r.it.Key == "app:claude" && ccSt[r.st] {
 				continue
 			}
-			seenAI[k] = true
 			f.O = append(f.O, []string{r.it.AI, r.st})
 		}
 	} else if q := s.quota["claude"]; q != nil && now.Sub(q.T) < quotaFresh {

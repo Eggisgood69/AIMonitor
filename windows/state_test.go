@@ -354,6 +354,32 @@ func TestBackgroundDoneDemotes(t *testing.T) {
 	}
 }
 
+// 小圓點：每個對話一個點（同 AI 同狀態不合併）；Claude App 畫面上那個與 Claude Code 重複時只算一次
+func TestOtherDotsPerConversation(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan([]Item{
+		{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)},
+		{Key: "cc:aaaa1111", AI: "claude", Gen: true, GenSince: ms(*now) - 3000},
+		{Key: "cc:bbbb2222", AI: "claude", Gen: true, GenSince: ms(*now) - 2000},
+		{Key: "cc:cccc3333", AI: "claude", Gen: true, GenSince: ms(*now) - 1000},
+		{Key: "web:gemini", AI: "gemini", Gen: true, GenSince: ms(*now)},
+	})
+	f := s.BuildFrame()
+	// 主燈 1 個 + 小圓點：另外 2 個 Claude Code、Gemini（App 那項和 Claude Code 重複，不畫）
+	if f.St != "working" || len(f.O) != 3 {
+		t.Fatalf("one dot per conversation: %+v", f)
+	}
+	// 最多 5 個點
+	var many []Item
+	for i := 0; i < 8; i++ {
+		many = append(many, Item{Key: "cc:" + string(rune('a'+i)) + "0000000", AI: "claude", Gen: true, GenSince: ms(*now)})
+	}
+	s.ApplyScan(many)
+	if f := s.BuildFrame(); len(f.O) != 5 {
+		t.Fatalf("at most 5 dots: %+v", f)
+	}
+}
+
 func TestQuotaAndNoItems(t *testing.T) {
 	s, now := newTestState()
 	if f := s.BuildFrame(); f.AI != "none" {

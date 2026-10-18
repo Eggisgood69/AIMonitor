@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.8.11、韌體 1.6.3
+- 目前：AIMonitor 1.8.12、韌體 1.6.3
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -72,7 +72,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 - ESP32-C3 沒有 FPU：每像素運算要用整數
 - 螢幕方向存在 NVS（Preferences "aimon"/"rot"）
 - Gemini 用量頁是獨立網址 `/usage`；背景 WebView 禁止開新視窗（曾經一直點到「瞭解詳情」跳窗）
-- ChatGPT 的用量其實是 Codex 的額度（wham/usage），ChatGPT 一般聊天沒有公開的用量數字
+- ChatGPT 的用量其實是 Codex 的額度（wham/usage），ChatGPT 聊天也有上限，但 OpenAI 不公開剩餘量
 - 多個序列埠時（例如另一個 USB 裝置在 COM3），韌體更新只用目前已連線並回應 hello 的那個埠
 - 燒錄（flasher.go）：**不要送 FLASH_END(1)**，它會讓 ROM 直接跳進韌體、螢幕卡在全黑；
   寫完用 `rebootToApp`（先進燒錄模式再 RTS 重置）。Windows usbser.sys 只改 RTS 不會送出，

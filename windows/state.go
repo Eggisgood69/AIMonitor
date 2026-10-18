@@ -84,9 +84,15 @@ type Finish struct {
 	Dur time.Duration
 }
 
+type pendingFinish struct {
+	Finish
+	at int64 // 完成時間
+}
+
 type State struct {
 	mu       sync.Mutex
-	startMs  int64 // 第一次掃描的時間（之前就發生的事不跳通知）
+	pending  []pendingFinish // Claude App 的完成：等幾秒確認不是 Claude Code 同一個對話，才算進統計
+	startMs  int64           // 第一次掃描的時間（之前就發生的事不跳通知）
 	alerts   []Alert
 	genAcc   map[string]int64 // 每個項目這次生成累積的毫秒數（不含需審核）
 	lastScan int64
@@ -202,7 +208,12 @@ func (s *State) ApplyScan(list []Item) (finished []string) {
 			it.doneUntil, it.alertedFin, it.alertedReview, it.pairedFin = prev.doneUntil, prev.alertedFin, prev.alertedReview, prev.pairedFin
 			if it.FinishedAt != 0 && it.FinishedAt != prev.FinishedAt {
 				finished = append(finished, it.AI)
-				s.done = append(s.done, Finish{it.AI, time.Duration(s.genAcc[it.Key]) * time.Millisecond})
+				fin := Finish{it.AI, time.Duration(s.genAcc[it.Key]) * time.Millisecond}
+				if it.Key == "app:claude" {
+					s.pending = append(s.pending, pendingFinish{fin, it.FinishedAt})
+				} else {
+					s.done = append(s.done, fin)
+				}
 				s.genAcc[it.Key] = 0
 				if it.Focused {
 					it.doneUntil = nowMs + doneShowWhenViewed.Milliseconds() // 你看著它完成：亮 8 秒
@@ -232,6 +243,7 @@ func (s *State) ApplyScan(list []Item) (finished []string) {
 		}
 	}
 	s.matchClaudeApp()
+	s.flushPending(nowMs)
 	s.collectAlerts(nowMs)
 	return finished
 }
@@ -266,6 +278,28 @@ func (s *State) matchClaudeApp() {
 			app.pairedFin = app.FinishedAt
 		}
 	}
+}
+
+// 今日統計：Claude App 的完成等 ccSeenWindow，期間有 Claude Code 對話同時完成 = 同一個對話，只算一次
+func (s *State) flushPending(nowMs int64) {
+	keep := s.pending[:0]
+	for _, p := range s.pending {
+		if nowMs-p.at < ccSeenWindow.Milliseconds() {
+			keep = append(keep, p)
+			continue
+		}
+		dup := false
+		for k, it := range s.items {
+			if d := it.FinishedAt - p.at; strings.HasPrefix(k, "cc:") && it.FinishedAt != 0 &&
+				d > -ccSeenWindow.Milliseconds() && d < ccSeenWindow.Milliseconds() {
+				dup = true
+			}
+		}
+		if !dup {
+			s.done = append(s.done, p.Finish)
+		}
+	}
+	s.pending = keep
 }
 
 // 背景發生、你還沒看到的事 → Windows 通知（每次只跳一次）

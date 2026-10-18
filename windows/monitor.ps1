@@ -98,7 +98,12 @@ function Url-To-AI([string]$url) {
   return $HOSTS[$h]
 }
 
-function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now) {
+# 畫面上是哪個對話：Claude App 標題列的「<對話名稱>，重新命名工作階段」按鈕（瀏覽器用網址）
+function Get-View($names) {
+  return [string]($names | Where-Object { $_ -match '重新命名|[Rr]ename' } | Select-Object -First 1)
+}
+
+function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now, [string]$view = '') {
   if (-not $items.ContainsKey($key)) {
     $items[$key] = @{ key = $key; ai = $ai; gen = $false; genSince = 0; genOffAt = 0; review = $false; reviewSince = 0; finishedAt = 0 }
   }
@@ -116,9 +121,14 @@ function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$n
   if ($g) {
     if (-not $s.gen) { $s.gen = $true; $s.genSince = $now }
     $s.genOffAt = 0
+    $s.genView = $view
   } elseif ($s.gen) {
     if (-not $s.genOffAt) { $s.genOffAt = $now }
-    if ($now - $s.genOffAt -gt 1500) { $s.gen = $false; $s.finishedAt = $now }
+    if ($now - $s.genOffAt -gt 1500) {
+      $s.gen = $false
+      # 畫面已經換成別的對話：是你切走了（那個對話還在跑），不算完成
+      if (-not ($s.genView -and $view -and $view -ne $s.genView)) { $s.finishedAt = $now }
+    }
   }
   if ($r -and -not $s.review) { $s.reviewSince = $now }
   $s.review = $r
@@ -143,7 +153,7 @@ function Scan {
     $names = New-Object System.Collections.Generic.List[string]
     foreach ($p in $wins) { $names.AddRange((Get-ButtonNames $p.MainWindowHandle)) }
     $focused = [bool]($procs | Where-Object { $_.Id -eq $fgPid })
-    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now
+    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now (Get-View $names)
   }
 
   # ---- 瀏覽器分頁 ----
@@ -160,11 +170,11 @@ function Scan {
       continue
     }
     $key = 'web:' + $ai
-    if (-not $agg.ContainsKey($key)) { $agg[$key] = @{ ai = $ai; focused = $false; names = (New-Object System.Collections.Generic.List[string]) } }
+    if (-not $agg.ContainsKey($key)) { $agg[$key] = @{ ai = $ai; focused = $false; view = $url; names = (New-Object System.Collections.Generic.List[string]) } }
     $agg[$key].names.AddRange((Get-ButtonNames $h))
     if ($h -eq $fg) { $agg[$key].focused = $true }
   }
-  foreach ($key in $agg.Keys) { Update-Item $key $agg[$key].ai $agg[$key].focused $agg[$key].names $now }
+  foreach ($key in $agg.Keys) { Update-Item $key $agg[$key].ai $agg[$key].focused $agg[$key].names $now $agg[$key].view }
 
   # 這次沒看到的項目移除（App 關掉、分頁換走）
   foreach ($key in @($items.Keys)) { if ($items[$key].seen -ne $now) { $items.Remove($key) } }

@@ -35,6 +35,12 @@ func startClaudeCodeServer() {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
 		}
+		if !ccRequestAllowed(r.Header.Get("Origin"), r.Header.Get("Content-Type")) {
+			// 瀏覽器裡的網頁也能對 127.0.0.1 送請求（會帶 Origin）：擋掉，免得網頁亂亮燈、亂跳通知
+			logf("claude code hook rejected: origin=%q content-type=%q", r.Header.Get("Origin"), r.Header.Get("Content-Type"))
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("{}")) // 先回應，Claude Code 不用等

@@ -19,10 +19,32 @@ func TestStatsFromScans(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		step(Item{Key: "app:claude", AI: "claude", Gen: true})
 	}
-	step(Item{Key: "app:claude", AI: "claude", FinishedAt: ms(*now)})
+	done := Item{Key: "app:claude", AI: "claude", FinishedAt: ms(*now)}
+	step(done)
+	if fin := s.TakeFinished(); len(fin) != 0 {
+		t.Fatalf("Claude App finish waits %v for a matching Claude Code: %+v", ccSeenWindow, fin)
+	}
+	for i := 0; i < 5; i++ {
+		step(done)
+	}
 	fin := s.TakeFinished()
 	if len(fin) != 1 || fin[0].AI != "claude" || fin[0].Dur != 13*time.Second {
 		t.Fatalf("finish: %+v", fin)
+	}
+	// Claude App 裡的 Claude Code 對話：畫面偵測 + hooks 同時完成 → 只算一次（Claude Code 那次）
+	step(Item{Key: "app:claude", AI: "claude", Gen: true})
+	s.ApplyScan([]Item{{Key: "app:claude", AI: "claude", Gen: true}, {Key: "cc:aaaa1111", AI: "claude", Gen: true}})
+	*now = now.Add(time.Second)
+	cc := Item{Key: "cc:aaaa1111", AI: "claude", FinishedAt: ms(*now)}
+	s.ApplyScan([]Item{{Key: "app:claude", AI: "claude", Gen: true}, cc})
+	*now = now.Add(2 * time.Second)
+	app := Item{Key: "app:claude", AI: "claude", FinishedAt: ms(*now)}
+	for i := 0; i < 6; i++ {
+		s.ApplyScan([]Item{app, cc})
+		*now = now.Add(time.Second)
+	}
+	if fin := s.TakeFinished(); len(fin) != 1 {
+		t.Fatalf("same conversation counted twice: %+v", fin)
 	}
 
 	path := filepath.Join(t.TempDir(), "stats.json")

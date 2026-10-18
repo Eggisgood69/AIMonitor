@@ -77,6 +77,25 @@ func TestClaudeCodeEvents(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeRequestAllowed(t *testing.T) {
+	cases := []struct {
+		origin, ctype string
+		ok            bool
+	}{
+		{"", "application/json", true}, // Claude Code 的 http hook
+		{"", "application/json; charset=utf-8", true},
+		{"https://evil.example", "application/json", false}, // 網頁（會帶 Origin）
+		{"null", "text/plain", false},
+		{"", "text/plain", false}, // 不是 JSON（網頁不經預檢能送的格式）
+		{"", "", false},
+	}
+	for _, c := range cases {
+		if got := ccRequestAllowed(c.origin, c.ctype); got != c.ok {
+			t.Errorf("origin=%q type=%q: got %v", c.origin, c.ctype, got)
+		}
+	}
+}
+
 func TestClaudeCodeResumeAfterRestart(t *testing.T) {
 	// AIMonitor 中途重啟：沒看到 UserPromptSubmit，只收到工具事件，也要算生成中
 	c := NewClaudeCode()

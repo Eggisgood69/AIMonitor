@@ -200,6 +200,12 @@ func (c *ClaudeCode) Items() []Item {
 	return out
 }
 
+// 只接受 Claude Code 的 http hook：不帶 Origin（瀏覽器發的請求一定會帶）、Content-Type 是 JSON
+// （網頁要送 JSON 必須先過 CORS 預檢，我們不回應預檢，所以網頁送不進來）
+func ccRequestAllowed(origin, contentType string) bool {
+	return origin == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "application/json")
+}
+
 func shortID(id string) string {
 	if len(id) > 8 {
 		return id[:8]

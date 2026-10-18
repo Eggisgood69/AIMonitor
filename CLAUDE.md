@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.8.17、韌體 1.6.5
+- 目前：AIMonitor 1.8.18、韌體 1.6.5
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -82,6 +82,10 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   背景生成中 > 正在看的生成中 > 背景完成（通知 1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機；背景的錯誤 / 完成 / 需審核會跳 Windows 通知（各一次）
 - Claude Code hooks 不知道你在看哪個對話：Stop 與 Claude App 停止鈕消失的時間差 4 秒內 = 同一個對話（`matchClaudeApp`），
   只通知一次、切回 App 一起熄。Claude App 背景任務的「停止此任務」不算生成中（monitor.ps1 `$STOP_NOT_RE`）
+- 在 Claude App / 瀏覽器裡切換對話時停止鈕也會消失：monitor.ps1 記下生成時畫面上的對話
+  （App 標題列「…，重新命名工作階段」按鈕、瀏覽器網址），換了對話就不算完成。
+  今日統計：App 的完成等 4 秒，跟 Claude Code 同時完成的只算一次（state.go `flushPending`）
+- hook 伺服器（127.0.0.1:47322）只收不帶 Origin、Content-Type 是 JSON 的請求，網頁送不進來（`ccRequestAllowed`）
 - go.mod 用 `replace golang.org/x/sys => github.com/golang/sys`（原開發環境擋 golang.org，在你的電腦上也能正常用）
 
 ## 待處理

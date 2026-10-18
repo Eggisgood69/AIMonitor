@@ -3,7 +3,6 @@
 (function () {
   const host = location.hostname;
   const send = (o) => { try { window.aimonUsage(JSON.stringify(o)); } catch (e) {} };
-  const pct = (v) => (typeof v === "number" ? v : v == null ? null : parseFloat(v));
 
   // ---------------- ChatGPT ----------------
   if (host === "chatgpt.com" || host === "chat.openai.com") {
@@ -14,28 +13,20 @@
         const headers = { Authorization: "Bearer " + s.accessToken };
         if (s.account && s.account.id) headers["ChatGPT-Account-Id"] = s.account.id;
         const diag = [];
-        // 方案用量（5 小時 / 每週，與 Codex 共用的額度視窗）
-        let q = null;
+        // 方案用量（5 小時 / 每週 / 30 天，與 Codex 共用的額度時窗）：原始回應交給程式解析（chatgpt.go，有單元測試）
+        let wham = "";
         try {
           const r = await fetch("/backend-api/wham/usage", { headers, credentials: "include", cache: "no-store" });
           const t = await r.text();
           diag.push("wham/usage " + r.status + " " + t.slice(0, 400));
-          if (r.ok) {
-            const d = JSON.parse(t);
-            const rl = d.rate_limit || d.rateLimit || {};
-            const win = (w) => w ? { p: pct(w.used_percent ?? w.usedPercent), r: w.reset_at ?? w.resetAt ?? (w.reset_after_seconds != null ? Math.floor(Date.now() / 1000) + w.reset_after_seconds : 0), len: w.limit_window_seconds ?? 0 } : null;
-            let a = win(rl.primary_window || rl.primary), b = win(rl.secondary_window || rl.secondary);
-            // 只有一個時窗而且是一週：當作每週
-            if (a && !b && a.len >= 86400) { b = a; a = null; }
-            if (a || b) q = { p5: a ? a.p : -1, r5: a ? a.r : 0, pw: b ? b.p : -1, rw: b ? b.r : 0, plan: d.plan_type || "", len5: a ? a.len : 0, lenw: b ? b.len : 0 };
-          }
+          if (r.ok) wham = t;
         } catch (e) { diag.push("wham err " + e); }
         // 聊天訊息上限（非公開，格式不固定；先記錄下來）
         try {
           const r = await fetch("/backend-api/conversation_limit", { headers, credentials: "include", cache: "no-store" });
           diag.push("conversation_limit " + r.status + " " + (await r.text()).slice(0, 300));
         } catch (e) {}
-        send({ ai: "chatgpt", login: true, quota: q, diag: diag.join("\n") });
+        send({ ai: "chatgpt", login: true, wham, diag: diag.join("\n") });
       } catch (e) {
         send({ ai: "chatgpt", error: String(e) });
       }

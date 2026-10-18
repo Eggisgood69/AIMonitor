@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -122,24 +123,34 @@ func showProvider(ai string) {
 	})
 }
 
+// providers.js 回報的用量（Gemini 在頁面上解析好；ChatGPT 改傳原始回應，在 Go 端解析）
+type providerQuota struct {
+	P5     float64 `json:"p5"`
+	PW     float64 `json:"pw"`
+	R5     float64 `json:"r5"`
+	RW     float64 `json:"rw"`
+	Plan   string  `json:"plan"`
+	Len5   float64 `json:"len5"`
+	LenW   float64 `json:"lenw"`
+	SLabel string  `json:"slabel"`
+}
+
 func onProviderUsage(ai, raw string) {
 	var d struct {
-		Login *bool  `json:"login"`
-		Error string `json:"error"`
-		Diag  string `json:"diag"`
-		Quota *struct {
-			P5     float64 `json:"p5"`
-			PW     float64 `json:"pw"`
-			R5     float64 `json:"r5"`
-			RW     float64 `json:"rw"`
-			Plan   string  `json:"plan"`
-			Len5   float64 `json:"len5"`
-			LenW   float64 `json:"lenw"`
-			SLabel string  `json:"slabel"`
-		} `json:"quota"`
+		Login *bool          `json:"login"`
+		Error string         `json:"error"`
+		Diag  string         `json:"diag"`
+		Quota *providerQuota `json:"quota"`
+		Wham  string         `json:"wham"` // ChatGPT：wham/usage 的原始回應，在 Go 端解析（chatgpt.go）
 	}
 	if json.Unmarshal([]byte(raw), &d) != nil {
 		return
+	}
+	if d.Wham != "" {
+		d.Quota = nil
+		if u, ok := parseChatGPTUsage([]byte(d.Wham), time.Now()); ok {
+			d.Quota = &providerQuota{P5: u.P5, PW: u.PW, R5: float64(u.R5), RW: float64(u.RW), Plan: u.Plan, Len5: float64(u.Len5), LenW: float64(u.LenW)}
+		}
 	}
 	provMu.Lock()
 	st := provSt[ai]
@@ -183,7 +194,7 @@ func onProviderUsage(ai, raw string) {
 		nq := Quota{P5: d.Quota.P5, PW: d.Quota.PW, R5: int64(d.Quota.R5), RW: int64(d.Quota.RW)}
 		diag := d.Diag
 		if ai == "chatgpt" {
-			diag = "" // ChatGPT 的 diag 是 API 原始回應，裡面有 email、帳號 ID：不寫進紀錄
+			diag = redactIDs(diag) // ChatGPT 的 diag 是 API 原始回應：遮掉 email、帳號 ID 才寫進紀錄
 		}
 		logQuotaChange(ai, nq, diag)
 		state.SetQuota(ai, nq)
@@ -243,6 +254,17 @@ func providerLoop() {
 	}
 }
 
+var (
+	reIDField = regexp.MustCompile(`"([A-Za-z_]*(?:id|email|name)[A-Za-z_]*)"\s*:\s*"[^"]*"`)
+	reEmail   = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
+)
+
+// 遮掉 JSON 裡的 *_id / email / name 欄位值與 email（紀錄檔可能被截圖分享）
+func redactIDs(s string) string {
+	s = reIDField.ReplaceAllString(s, `"$1":"…"`)
+	return reEmail.ReplaceAllString(s, "…@…")
+}
+
 // 額度數字有變才記（追查用；diag 是頁面原文開頭，看得出是哪裡解析錯）。要在 SetQuota 之前呼叫
 func logQuotaChange(ai string, nq Quota, diag string) {
 	if old := state.GetQuota(ai); old != nil && old.P5 == nq.P5 && old.PW == nq.PW && old.R5 == nq.R5 && old.RW == nq.RW {
@@ -255,8 +277,8 @@ func logQuotaChange(ai string, nq Quota, diag string) {
 		return time.Unix(u, 0).Format("01-02 15:04")
 	}
 	diag = strings.Join(strings.Fields(diag), " ")
-	if r := []rune(diag); len(r) > 200 {
-		diag = string(r[:200])
+	if r := []rune(diag); len(r) > 700 {
+		diag = string(r[:700])
 	}
 	logf("%s quota: now %.0f%% reset %s, week %.0f%% reset %s | %s", ai, nq.P5, ts(nq.R5), nq.PW, ts(nq.RW), diag)
 }

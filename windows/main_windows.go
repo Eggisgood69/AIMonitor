@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.9.3"
+const version = "1.9.4"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -490,6 +490,43 @@ func serialLoop() {
 	}
 }
 
+// 螢幕回報的負荷統計（韌體 1.7.2 起隨 hello 回應帶上；只在 serialLoop 裡讀寫）
+var scr struct {
+	have              bool
+	up, bad, long     float64   // 上一次的開機秒數、累計解析失敗行數、累計過長丟掉的行數
+	winLoop, winStrip float64   // 這 10 分鐘內最長的 loop / 一條畫面重畫（毫秒）
+	winHeap           float64   // 這 10 分鐘內最少的剩餘記憶體
+	lastSummary       time.Time // 上次寫摘要的時間
+}
+
+// 只在有意義時寫紀錄：螢幕重開機、有資料被丟掉、每 10 分鐘一行摘要
+func noteScreenStats(port string, m map[string]interface{}) {
+	num := func(k string) float64 { v, _ := m[k].(float64); return v }
+	up, loop, strip, bad, long, heap := num("up"), num("loop"), num("strip"), num("bad"), num("long"), num("heap")
+	if scr.have && up+5 < scr.up {
+		logf("%s: screen rebooted (was up %s, now %s)", port, time.Duration(scr.up)*time.Second, time.Duration(up)*time.Second)
+		scr.bad, scr.long = 0, 0 // 重開機後累計歸零
+	}
+	if scr.have && (bad > scr.bad || long > scr.long) {
+		logf("%s: screen dropped data: %.0f bad line(s), %.0f too long (since boot: %.0f / %.0f)", port, bad-scr.bad, long-scr.long, bad, long)
+	}
+	scr.up, scr.bad, scr.long = up, bad, long
+	if loop > scr.winLoop {
+		scr.winLoop = loop
+	}
+	if strip > scr.winStrip {
+		scr.winStrip = strip
+	}
+	if heap > 0 && (scr.winHeap == 0 || heap < scr.winHeap) {
+		scr.winHeap = heap
+	}
+	if !scr.have || time.Since(scr.lastSummary) >= 10*time.Minute {
+		logf("%s: screen load: max loop %.0fms, max strip %.0fms, min free heap %.0fKB, up %s", port, scr.winLoop, scr.winStrip, scr.winHeap/1024, time.Duration(up)*time.Second)
+		scr.winLoop, scr.winStrip, scr.winHeap, scr.lastSummary = 0, 0, 0, time.Now()
+	}
+	scr.have = true
+}
+
 // 讓螢幕重新開機（先進燒錄模式再 RTS 重置，見 flasher.go rebootToApp），等它開機
 func resetScreen(port string) {
 	if s, err := openSerial(port); err == nil {
@@ -526,7 +563,11 @@ func handleDeviceLine(l string) (answered bool) {
 			serStat.FW = fw
 		}
 		lastGoodPort = serStat.Port // 只在 serialLoop 裡讀寫
+		port := serStat.Port
 		serMu.Unlock()
+		if _, ok := m["up"]; ok { // 韌體 1.7.2 起才有
+			noteScreenStats(port, m)
+		}
 	}
 	if m["ev"] == "btn" {
 		answered = true           // 按鍵事件也代表螢幕活著

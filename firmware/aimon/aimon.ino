@@ -17,7 +17,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.7.1"
+#define FW_VERSION "1.7.2"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -126,12 +126,27 @@ static void ledTick(uint32_t ms) {
   neopixelWrite(PIN_LED, r, g, b);
 }
 
+// ---------------- 負荷統計（隨 hello 回報給電腦端，寫進 AIMonitor 紀錄）----------------
+static uint32_t g_maxLoopMs = 0;    // 上次回報之後，最長的一次 loop（畫一條畫面時 USB 沒人讀）
+static uint32_t g_maxStripMs = 0;   // 上次回報之後，最長的一條畫面重畫
+static uint32_t g_badLines = 0;     // 開機以來解析失敗的行（資料被截斷 / 丟掉）
+static uint32_t g_longLines = 0;    // 開機以來超過長度上限、整行丟掉的次數
+
+static void sendHello(Stream* src) {
+  char b[160];
+  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
+           (unsigned long)(millis() / 1000), (unsigned long)g_maxLoopMs, (unsigned long)g_maxStripMs,
+           (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
+  sendLine(src, b);
+  g_maxLoopMs = g_maxStripMs = 0;
+}
+
 static void handleLine(Stream* src, const String& line) {
   JsonDocument doc;
-  if (deserializeJson(doc, line)) return;
+  if (deserializeJson(doc, line)) { g_badLines++; return; }
   lastSource = src;
   if (doc["hello"].is<int>()) {
-    sendLine(src, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\"}");
+    sendHello(src);
     return;
   }
   if (doc["bright"].is<int>()) {
@@ -214,6 +229,7 @@ static void pollReader(LineReader& r) {
       r.buf += c;
     } else {
       r.buf = "";   // 異常長行，丟掉
+      g_longLines++;
     }
   }
 }
@@ -252,8 +268,11 @@ static void pollButton() {
 }
 
 void setup() {
+  // 一行畫面資料約 400-600 位元組，預設接收緩衝只有 256：畫一條畫面的期間沒人讀，滿了後面就被丟掉 → 那行解析失敗
+  Serial.setRxBufferSize(2048);
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
+  Serial0.setRxBufferSize(1024);
   Serial0.begin(115200);
 #endif
   pinMode(PIN_BTN, INPUT_PULLUP);
@@ -272,6 +291,7 @@ void setup() {
 }
 
 void loop() {
+  const uint32_t loopStart = millis();
   pollReader(rdUsb);
 #if ARDUINO_USB_CDC_ON_BOOT
   if (!g_ledPin) pollReader(rdUart);
@@ -307,12 +327,15 @@ void loop() {
     lastRing = now;
   } else if (strip >= 0) {
     OY = strip * BAND_H;
+    const uint32_t t0 = millis();
     renderStrip(stripMs);
+    if (millis() - t0 > g_maxStripMs) g_maxStripMs = millis() - t0;
     OY = 0;
     if (++strip * BAND_H >= H) {
       strip = -1;
       if (g_anyKeyed && !ringAnimating()) { lcd.startWrite(); statusRingOn(lcd, 0, millis()); lcd.endWrite(); }   // 靜態外環（完成、待命）
     }
   }
+  if (millis() - loopStart > g_maxLoopMs) g_maxLoopMs = millis() - loopStart;
   delay(1);
 }

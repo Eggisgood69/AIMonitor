@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.5、韌體 1.7.2
+- 目前：AIMonitor 1.9.6、韌體 1.7.2
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -84,10 +84,10 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 - Claude 問你問題不是權限提示（只有 Stop）：看 PreToolUse 的工具判斷（`ccAskKind`）——AskUserQuestion / ExitPlanMode 題目出現就亮黃燈，
   Claude App「下一步」方塊是 wrap_up 工具帶 `ask`，Stop 時亮黃燈、送出下一則訊息才熄。不要靠按鈕文字（每次都不一樣）
 - 主燈規則（state.go `rank`）：「你沒看到的事」優先——背景需審核 > 正在看的需審核 > 背景錯誤 > 背景完成 >
-  背景生成中 > 正在看的生成中 > 背景完成（通知 1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機；背景的錯誤 / 完成 / 需審核會跳 Windows 通知（各一次）。
+  背景生成中 > 正在看的生成中 > 背景完成（1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機。**不跳 Windows 通知**（使用者不要，已移除）。
   正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）
 - Claude Code hooks 不知道你在看哪個對話：Stop 與 Claude App 停止鈕消失的時間差 4 秒內 = 同一個對話（`matchClaudeApp`），
-  只通知一次、切回 App 一起熄。Claude App 背景任務的「停止此任務」不算生成中（monitor.ps1 `$STOP_NOT_RE`）
+  只亮一個綠燈、切回 App 一起熄。Claude App 背景任務的「停止此任務」不算生成中（monitor.ps1 `$STOP_NOT_RE`）
 - 在 Claude App / 瀏覽器裡切換對話時停止鈕也會消失：monitor.ps1 記下生成時畫面上的對話
   （App 標題列「…，重新命名工作階段」按鈕、瀏覽器網址），換了對話就不算完成。
   今日統計：App 的完成等 4 秒，跟 Claude Code 同時完成的只算一次（state.go `flushPending`）
@@ -99,6 +99,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   負荷數字寫在 AIMonitor 紀錄：`screen load`（每 10 分鐘）、`screen dropped`、`screen rebooted`
 - 螢幕顯示 Disconnected = 有收到資料但 20 秒沒解析到畫面（寫入不會失敗）：serialLoop 每 15 秒送 hello，
   40 秒沒回應就記錄「screen not answering」並 `resetScreen`（最多每 2 分鐘一次）
+- 更新：從專案資料夾啟動新版、取代執行中的舊版時加 `--updated`，安靜換掉不開設定視窗；第一次安裝或舊版沒在跑才 `--welcome` 開視窗
 - 公開專案：exe 一定要用 `-trimpath` 編譯（否則會內嵌 `C:/Users/<使用者>/go/...` 路徑）；紀錄 / 額度原文不要寫入 email、帳號 ID
 - go.mod 用 `replace golang.org/x/sys => github.com/golang/sys`（原開發環境擋 golang.org，在你的電腦上也能正常用）
 
@@ -106,4 +107,4 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - Gemini 生成時燈號不亮：monitor.ps1 的 `$STOP_RE` 已放寬，仍需在 Gemini 生成時看「偵測狀態（除錯用）」確認停止按鈕名稱
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
-- 其他提案：生成完成 Windows 通知、額度快用完警告、夜間自動調暗、生成太久提醒
+- 其他提案：額度快用完警告、夜間自動調暗、生成太久提醒

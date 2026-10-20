@@ -148,7 +148,7 @@ func TestClaudeCodeQuestions(t *testing.T) {
 		t.Fatalf("permission prompt must stay: %+v", x)
 	}
 
-	// 5. 狀態整合：主燈黃燈，通知只跳「在等你回覆」，不另外跳「完成了」
+	// 5. 狀態整合：主燈黃燈（不是「完成」的綠燈）
 	c2 := NewClaudeCode()
 	c2.now = func() time.Time { return now }
 	s, snow := newTestState()
@@ -162,15 +162,11 @@ func TestClaudeCodeQuestions(t *testing.T) {
 		}
 		s.ApplyScan(c2.Items())
 	}
-	*snow = snow.Add(alertReviewDelay + time.Second)
+	*snow = snow.Add(time.Minute)
 	now = *snow
 	s.ApplyScan(c2.Items())
 	if f := s.BuildFrame(); f.St != "review" {
 		t.Fatalf("frame: %+v", f)
-	}
-	a := s.TakeAlerts()
-	if len(a) != 1 || a[0].Title != "Claude Code · 2026-EAC-AirPurifier 在等你回覆" {
-		t.Fatalf("alerts: %+v", a)
 	}
 }
 

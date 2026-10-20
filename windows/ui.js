@@ -44,7 +44,7 @@
   };
   const ST = { idle: "待命", done: "完成", working: "生成中", review: "需審核", error: "錯誤" };
   const COL = { idle: "#8e8e93", done: "#30d158", working: "#30d158", review: "#ffd60a", error: "#ff453a" };
-  const SRC = { app: "桌面 App", web: "瀏覽器", cc: "終端機" };
+  const SRC = { app: "桌面 App", web: "瀏覽器", cc: "Agent" };   // Claude Code 分不出是 App 的 Code 分頁還是終端機
 
   function build() {
     document.documentElement.innerHTML = `
@@ -283,16 +283,21 @@
     if (document.activeElement !== bri) bri.value = s.brightness || 160;
 
     const items = s.items || [];
+    const esc = (t) => String(t).replace(/[<&]/g, "");
+    const name = (it) => it.key.startsWith("cc:") ? esc((it.buttons || [])[0] || "Claude Code") : (NAMES[it.ai] || it.ai);
+    const dbgOpen = !!($("dbg") && $("dbg").open);   // 每次重畫都會重建：記住除錯資訊是否展開
     $("items").innerHTML = items.length
       ? items.map((it) => {
           const [src] = it.key.split(":");
-          const nm = src === "cc" ? ((it.buttons || [])[0] || "Claude Code").replace(/[<&]/g, "") : (NAMES[it.ai] || it.ai);
-          return `<div class="it"><span class="dot" style="background:${COL[it.st]}"></span>${nm}
-            <span class="muted">· ${SRC[src] || src}${it.focused ? " · 前景" : ""}</span> — ${ST[it.st] || it.st}
-            <details><summary>偵測到的按鈕（除錯用）</summary><code>${(it.buttons || []).map((b) => b.replace(/[<&]/g, "")).join(" | ") || "（沒有）"}</code></details></div>`;
+          return `<div class="it"><span class="dot" style="background:${COL[it.st]}"></span>${name(it)}
+            <span class="muted">· ${SRC[src] || src}${it.focused ? " · 前景" : ""}</span> — ${ST[it.st] || it.st}</div>`;
         }).join("")
       : `<div class="it muted">目前沒有偵測到 AI App 或 AI 網頁。<br>打開 Claude 桌面 App，或在瀏覽器切到 claude.ai / chatgpt.com / gemini.google.com 分頁。</div>`;
-    $("items").innerHTML += `<details style="padding:8px 0 10px"><summary>偵測狀態（除錯用）</summary><code>${(s.monitor || "偵測程式尚未回報").replace(/[<&]/g, "")}</code></details>`;
+    // 除錯資訊集中在最下面一個：畫面偵測的狀態 + 每個項目讀到的按鈕（Claude Code 沒有按鈕，不列）
+    const btns = items.filter((it) => !it.key.startsWith("cc:"))
+      .map((it) => `${name(it)}：${(it.buttons || []).map(esc).join(" | ") || "（沒有）"}`);
+    $("items").innerHTML += `<details id="dbg" style="padding:8px 0 10px"${dbgOpen ? " open" : ""}><summary>除錯資訊</summary>
+      <code>${esc(s.monitor || "偵測程式尚未回報")}${btns.length ? "<br><br>偵測到的按鈕<br>" + btns.join("<br>") : ""}</code></details>`;
 
     renderStats(s);
     const cc = s.claudeCode || {};

@@ -37,7 +37,7 @@ func startClaudeCodeServer() {
 			return
 		}
 		if !ccRequestAllowed(r.Header.Get("Origin"), r.Header.Get("Content-Type")) {
-			// 瀏覽器裡的網頁也能對 127.0.0.1 送請求（會帶 Origin）：擋掉，免得網頁亂亮燈、亂跳通知
+			// 瀏覽器裡的網頁也能對 127.0.0.1 送請求（會帶 Origin）：擋掉，免得網頁亂亮燈
 			logf("claude code hook rejected: origin=%q content-type=%q", r.Header.Get("Origin"), r.Header.Get("Content-Type"))
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -83,12 +83,11 @@ func rescan() {
 }
 
 // 每次套用偵測結果之後（畫面偵測每秒一次、Claude Code 事件一進來）：
-// 今日統計、通知、送畫面；有 AI 剛完成就過幾秒重新讀它的額度
+// 今日統計、送畫面；有 AI 剛完成就過幾秒重新讀它的額度
 func afterScan(finished []string, force bool) {
 	for _, f := range state.TakeFinished() {
 		stats.Add(f.AI, f.Dur)
 	}
-	showAlerts()
 	pushFrame(force)
 	for _, ai := range finished {
 		logf("%s finished: re-read quota", ai)

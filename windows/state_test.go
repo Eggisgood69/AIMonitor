@@ -197,8 +197,8 @@ func TestRankTable(t *testing.T) {
 	}
 }
 
-// 看過 / 沒看過：熄燈時機與 Windows 通知
-func TestSeenAndAlerts(t *testing.T) {
+// 看過 / 沒看過：熄燈時機
+func TestSeenRules(t *testing.T) {
 	s, now := newTestState()
 	s.ApplyScan(nil) // 程式啟動
 	*now = now.Add(time.Minute)
@@ -209,7 +209,7 @@ func TestSeenAndAlerts(t *testing.T) {
 		{Key: "web:gemini", AI: "gemini", Gen: true, GenSince: ms(*now)},
 	}
 	s.ApplyScan(run)
-	// 你正在看的 App 對話完成：Claude Code 的 Stop 與 App 停止鈕消失的時間對得上 → 看過（不通知）
+	// 你正在看的 App 對話完成：Claude Code 的 Stop 與 App 停止鈕消失的時間對得上 → 看過（8 秒後熄）
 	*now = now.Add(10 * time.Second)
 	fin := ms(*now)
 	s.ApplyScan([]Item{
@@ -226,29 +226,12 @@ func TestSeenAndAlerts(t *testing.T) {
 	*now = now.Add(6 * time.Second)
 	cc2 := Item{Key: "cc:bbbb2222", AI: "claude", FinishedAt: ms(*now), Failed: true, Msg: "RATE LIMIT", Buttons: run[2].Buttons}
 	gem := Item{Key: "web:gemini", AI: "gemini", FinishedAt: ms(*now)}
+	*now = now.Add(5 * time.Second)
 	s.ApplyScan([]Item{app, cc1, cc2, gem})
-	if a := s.TakeAlerts(); len(a) != 0 {
-		t.Fatalf("alerts should wait %v: %+v", alertDoneDelay, a)
-	}
-	*now = now.Add(alertDoneDelay)
-	s.ApplyScan([]Item{app, cc1, cc2, gem})
-	a := s.TakeAlerts()
-	kinds := map[string]string{}
-	for _, x := range a {
-		kinds[x.Title] = x.Kind
-	}
-	if len(a) != 2 || kinds["Claude Code · 空氣清淨機 出錯"] != "error" || kinds["Gemini 網頁 完成了"] != "done" {
-		t.Fatalf("alerts: %+v", a)
-	}
-	// 主燈：背景錯誤；看過的 App 對話早就熄了
-	if f := s.BuildFrame(); f.St != "error" || f.Msg != "RATE LIMIT" {
+	// 主燈：背景錯誤；Gemini 背景完成是小圓點；看過的 App 對話已經熄了（不在小圓點裡）
+	f := s.BuildFrame()
+	if f.St != "error" || f.Msg != "RATE LIMIT" || len(f.O) != 1 || f.O[0][0] != "gemini" || f.O[0][1] != "done" {
 		t.Fatalf("frame: %+v", f)
-	}
-	// 通知只跳一次
-	*now = now.Add(time.Minute)
-	s.ApplyScan([]Item{app, cc1, cc2, gem})
-	if a := s.TakeAlerts(); len(a) != 0 {
-		t.Fatalf("alerts repeated: %+v", a)
 	}
 	// 沒看過的會一直亮；長按 BOOT 全部標為已讀
 	*now = now.Add(30 * time.Minute)
@@ -260,19 +243,10 @@ func TestSeenAndAlerts(t *testing.T) {
 	if f := s.BuildFrame(); f.St != "idle" {
 		t.Fatalf("ack: %+v", f)
 	}
-	// 背景需審核：7 秒還沒處理才通知；Claude Code 的需審核在你用 Claude App 時不通知
-	rv := Item{Key: "web:gemini", AI: "gemini", Gen: true, Review: true, ReviewSince: ms(*now)}
-	ccrv := Item{Key: "cc:bbbb2222", AI: "claude", Gen: true, Review: true, ReviewSince: ms(*now), Buttons: run[2].Buttons}
-	s.ApplyScan([]Item{app, ccrv, rv})
-	*now = now.Add(alertReviewDelay)
-	s.ApplyScan([]Item{app, ccrv, rv})
-	if a := s.TakeAlerts(); len(a) != 1 || a[0].Kind != "review" || a[0].AI != "gemini" {
-		t.Fatalf("review alert: %+v", a)
-	}
 }
 
 // 實測情境（14:46:49）：Claude App 不在前景時，App 裡的對話完成。
-// Claude Code（hooks）和 App（畫面偵測）是同一件事：只通知一次；之後切回 App 看，兩個一起熄
+// Claude Code（hooks）和 App（畫面偵測）是同一件事：只亮一個綠燈；之後切回 App 看，兩個一起熄
 func TestClaudeAppPairing(t *testing.T) {
 	s, now := newTestState()
 	s.ApplyScan(nil)
@@ -290,10 +264,6 @@ func TestClaudeAppPairing(t *testing.T) {
 	s.ApplyScan([]Item{app, cc})
 	*now = now.Add(10 * time.Second)
 	s.ApplyScan([]Item{app, cc})
-	a := s.TakeAlerts()
-	if len(a) != 1 || a[0].Title != "Claude Code · AIMonitor 完成了" {
-		t.Fatalf("want one alert from Claude Code: %+v", a)
-	}
 	f := s.BuildFrame()
 	if f.St != "done" || len(f.O) != 0 {
 		t.Fatalf("one green light, no duplicate dot: %+v", f)
@@ -310,13 +280,10 @@ func TestClaudeAppPairing(t *testing.T) {
 	if f := s.BuildFrame(); f.St != "idle" {
 		t.Fatalf("viewed in app → off: %+v", f)
 	}
-	if a := s.TakeAlerts(); len(a) != 0 {
-		t.Fatalf("no more alerts: %+v", a)
-	}
 }
 
 // 實測情境（15:48）：空氣清淨機的對話在背景完成，之後你在別的對話來回聊。
-// 通知後 1 分鐘內綠燈恆亮；之後排到生成中後面（看得到呼吸燈），沒有 AI 在跑時又回到綠燈恆亮
+// 完成後 1 分鐘內綠燈恆亮；之後排到生成中後面（看得到呼吸燈），沒有 AI 在跑時又回到綠燈恆亮
 func TestBackgroundDoneDemotes(t *testing.T) {
 	s, now := newTestState()
 	s.ApplyScan(nil)
@@ -330,7 +297,7 @@ func TestBackgroundDoneDemotes(t *testing.T) {
 	if f := s.BuildFrame(); f.St != "done" {
 		t.Fatalf("just finished in background: %+v", f)
 	}
-	*now = now.Add(alertDoneDelay + doneOnTop + time.Second)
+	*now = now.Add(doneOnTop + time.Second)
 	s.ApplyScan([]Item{bg, chat})
 	f := s.BuildFrame()
 	if f.St != "working" || len(f.O) != 1 || f.O[0][1] != "done" {

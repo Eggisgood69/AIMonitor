@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.9.5"
+const version = "1.9.6"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -138,18 +138,23 @@ func msgBox(text string) {
 
 // ---------------- 安裝 / 單一執行個體 ----------------
 
-func installAndMaybeExit() (welcome bool) {
+// 回傳 welcome = 要打開設定視窗；updated = 取代了執行中的舊版（安靜換掉，不開視窗）
+func installAndMaybeExit() (welcome, updated bool) {
 	appDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "AIMonitor")
 	os.MkdirAll(appDir, 0o755)
 	target := filepath.Join(appDir, "AIMonitor.exe")
 	self, _ := os.Executable()
 
 	for _, a := range os.Args[1:] {
-		if a == "--welcome" {
+		switch a {
+		case "--welcome":
 			welcome = true
+		case "--updated":
+			updated = true
 		}
 	}
 
+	replacing := false // 有舊版正在執行，這次是用新版取代它
 	name, _ := windows.UTF16PtrFromString(`Local\AIMonitorSingleton`)
 	h, err := windows.CreateMutex(nil, false, name)
 	if err == windows.ERROR_ALREADY_EXISTS {
@@ -159,6 +164,7 @@ func installAndMaybeExit() (welcome bool) {
 			os.Exit(0)
 		}
 		// 從別的地方執行（例如下載的新版）：請舊的結束，再用新版取代
+		replacing = true
 		windows.CloseHandle(h)
 		signalNamed(quitEventName)
 		for i := 0; i < 50; i++ {
@@ -181,18 +187,23 @@ func installAndMaybeExit() (welcome bool) {
 		}
 		setAutostart(target)
 		windows.CloseHandle(h)
+		// 取代執行中的舊版（例如更新）：安靜換掉，不打開設定視窗；第一次安裝或舊版沒在跑：打開視窗
+		arg := "--welcome"
+		if replacing {
+			arg = "--updated"
+		}
 		if !strings.EqualFold(filepath.Clean(self), filepath.Clean(target)) {
-			cmd := exec.Command(target, "--welcome")
+			cmd := exec.Command(target, arg)
 			if err := cmd.Start(); err == nil {
 				os.Exit(0)
 			}
 		}
 		h, _ = windows.CreateMutex(nil, false, name)
-		welcome = true
+		welcome, updated = !replacing, replacing
 	} else {
 		setAutostart(target)
 	}
-	return welcome
+	return welcome, updated
 }
 
 func copyFile(src, dst string) error {
@@ -889,9 +900,9 @@ func uiStatusJSON() string {
 }
 
 func main() {
-	welcome := installAndMaybeExit()
+	welcome, updated := installAndMaybeExit()
 	loadSettings()
-	logf("start v%s welcome=%v", version, welcome)
+	logf("start v%s welcome=%v updated=%v", version, welcome, updated)
 
 	evName, _ := windows.UTF16PtrFromString(showEventName)
 	showEv, _ := windows.CreateEvent(nil, 0, 0, evName)

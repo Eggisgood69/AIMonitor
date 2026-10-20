@@ -14,10 +14,8 @@ import (
 const (
 	doneShowWhenViewed = 8 * time.Second  // 正在看的 App / 分頁完成時，綠燈亮 8 秒
 	ccSeenWindow       = 4 * time.Second  // Claude Code 完成的同時、桌面 App 的停止鈕也消失 → 是你正在看的對話
-	alertDoneDelay     = 5 * time.Second  // 背景完成 / 錯誤：等這麼久還是「沒看過」才跳通知（先讓上面的比對完成）
-	alertReviewDelay   = 7 * time.Second  // 背景需審核：等這麼久還沒處理才跳通知
 	appLag             = 6 * time.Second  // 畫面偵測（Claude App）比 Claude Code hooks 晚多久才跟上狀態
-	doneOnTop          = time.Minute      // 背景完成通知後，在主燈最上面停留多久（之後排到生成中後面，避免來回對話時看不到呼吸燈）
+	doneOnTop          = time.Minute      // 背景完成後，在主燈最上面停留多久（之後排到生成中後面，避免來回對話時看不到呼吸燈）
 	quotaFresh         = 15 * time.Minute // 額度資料多久內算有效
 	forever            = int64(1) << 62
 )
@@ -37,16 +35,8 @@ type Item struct {
 	Asking      bool     `json:"asking"` // 需審核是因為 Claude 問你問題（等你回覆），不是權限提示
 	Buttons     []string `json:"buttons"`
 
-	doneUntil     int64 // 完成 / 錯誤亮到何時；forever = 你還沒看過（背景發生的）
-	alertedFin    int64 // 已經為哪一次完成跳過通知
-	alertedReview int64 // 已經為哪一次需審核跳過通知
-	pairedFin     int64 // app:claude：這次完成已經併到對應的 Claude Code 對話
-}
-
-// 背景發生、要跳 Windows 通知的事件
-type Alert struct {
-	AI, Kind    string // Kind：done / error / review
-	Title, Body string
+	doneUntil int64 // 完成 / 錯誤亮到何時；forever = 你還沒看過（背景發生的）
+	pairedFin int64 // app:claude：這次完成已經併到對應的 Claude Code 對話
 }
 
 type Quota struct {
@@ -94,9 +84,7 @@ type pendingFinish struct {
 
 type State struct {
 	mu       sync.Mutex
-	pending  []pendingFinish // Claude App 的完成：等幾秒確認不是 Claude Code 同一個對話，才算進統計
-	startMs  int64           // 第一次掃描的時間（之前就發生的事不跳通知）
-	alerts   []Alert
+	pending  []pendingFinish  // Claude App 的完成：等幾秒確認不是 Claude Code 同一個對話，才算進統計
 	genAcc   map[string]int64 // 每個項目這次生成累積的毫秒數（不含需審核）
 	lastScan int64
 	done     []Finish
@@ -140,7 +128,7 @@ func (s *State) history(ai string, n int) []float64 {
 // 主燈的優先順序：「你沒看到的事」優先，你正在看的對話自己看得到。
 //
 //	70 背景需審核      60 正在看的需審核
-//	50 背景錯誤（沒看過）  40 背景完成（沒看過，通知後 1 分鐘內）
+//	50 背景錯誤（沒看過）  40 背景完成（沒看過，完成後 1 分鐘內）
 //	30 背景生成中      20 正在看的生成中
 //	15 背景完成（沒看過，超過 1 分鐘：還是一直亮，但沒有 AI 在跑時才輪到主燈）
 //	10 看過的錯誤 / 完成（亮 8 秒）  0 待機
@@ -158,7 +146,7 @@ func rank(it *Item, st string, nowMs int64) int {
 		if st == "error" {
 			return 50
 		}
-		if nowMs-it.FinishedAt > (alertDoneDelay + doneOnTop).Milliseconds() {
+		if nowMs-it.FinishedAt > doneOnTop.Milliseconds() {
 			return 15
 		}
 		return 40
@@ -171,21 +159,6 @@ func rank(it *Item, st string, nowMs int64) int {
 	return 0
 }
 
-// 通知、設定視窗用的名稱
-func itemLabel(it *Item) string {
-	switch {
-	case strings.HasPrefix(it.Key, "cc:"):
-		if len(it.Buttons) > 0 {
-			return it.Buttons[0] // Claude Code · 專案資料夾
-		}
-		return "Claude Code"
-	case strings.HasPrefix(it.Key, "app:"):
-		return aiNames[it.AI] + " App"
-	default:
-		return aiNames[it.AI] + " 網頁"
-	}
-}
-
 // 套用偵測程式的一次回報。回傳：是否有項目剛完成（用來觸發額度更新）
 func (s *State) ApplyScan(list []Item) (finished []string) {
 	s.mu.Lock()
@@ -196,9 +169,6 @@ func (s *State) ApplyScan(list []Item) (finished []string) {
 		dt = 0 // 太久沒掃描（電腦睡眠等）就不算
 	}
 	s.lastScan = nowMs
-	if s.startMs == 0 {
-		s.startMs = nowMs
-	}
 	seen := map[string]bool{}
 	for i := range list {
 		it := list[i]
@@ -208,7 +178,7 @@ func (s *State) ApplyScan(list []Item) (finished []string) {
 			s.genAcc[it.Key] += dt
 		}
 		if prev != nil {
-			it.doneUntil, it.alertedFin, it.alertedReview, it.pairedFin = prev.doneUntil, prev.alertedFin, prev.alertedReview, prev.pairedFin
+			it.doneUntil, it.pairedFin = prev.doneUntil, prev.pairedFin
 			if it.FinishedAt != 0 && it.FinishedAt != prev.FinishedAt {
 				finished = append(finished, it.AI)
 				fin := Finish{it.AI, time.Duration(s.genAcc[it.Key]) * time.Millisecond}
@@ -247,16 +217,15 @@ func (s *State) ApplyScan(list []Item) (finished []string) {
 	}
 	s.matchClaudeApp()
 	s.flushPending(nowMs)
-	s.collectAlerts(nowMs)
 	return finished
 }
 
 // Claude Code 的 hooks 不會說你正在看哪個對話。在桌面 App 裡跑的對話完成時，
-// App 畫面上的「停止」鈕也會同時消失：時間對得上，就是你正在看的那個（只亮 8 秒、不跳通知）
+// App 畫面上的「停止」鈕也會同時消失：時間對得上，就是你正在看的那個（只亮 8 秒）
 //
 // 時間對得上 = 同一個對話：
 //   - App 在前景（當時或之後切回來）→ 兩個都算看過，跟 App 一起熄
-//   - App 不在前景 → 還是沒看過，但只留 Claude Code 這一項（名稱較清楚），App 那項不重複亮燈、不重複通知
+//   - App 不在前景 → 還是沒看過，但只留 Claude Code 這一項（名稱較清楚），App 那項不重複亮燈
 func (s *State) matchClaudeApp() {
 	app := s.items["app:claude"]
 	if app == nil || app.FinishedAt == 0 {
@@ -276,8 +245,7 @@ func (s *State) matchClaudeApp() {
 				it.doneUntil = it.FinishedAt + doneShowWhenViewed.Milliseconds() // 看著它完成
 			}
 		} else if app.doneUntil == forever || app.pairedFin == app.FinishedAt {
-			app.doneUntil = 0 // 同一件事：App 這項不亮、不通知
-			app.alertedFin = app.FinishedAt
+			app.doneUntil = 0 // 同一件事：App 這項不亮
 			app.pairedFin = app.FinishedAt
 		}
 	}
@@ -303,47 +271,6 @@ func (s *State) flushPending(nowMs int64) {
 		}
 	}
 	s.pending = keep
-}
-
-// 背景發生、你還沒看到的事 → Windows 通知（每次只跳一次）
-func (s *State) collectAlerts(nowMs int64) {
-	appFocused := s.items["app:claude"] != nil && s.items["app:claude"].Focused
-	for _, it := range s.items {
-		label := itemLabel(it)
-		if it.doneUntil == forever && !it.Review && it.FinishedAt > s.startMs && it.FinishedAt != it.alertedFin &&
-			nowMs-it.FinishedAt >= alertDoneDelay.Milliseconds() {
-			it.alertedFin = it.FinishedAt
-			if it.Failed {
-				body := "工作中斷了，切過去看看"
-				if it.Msg != "" {
-					body = it.Msg + "：" + body
-				}
-				s.alerts = append(s.alerts, Alert{it.AI, "error", label + " 出錯", body})
-			} else {
-				s.alerts = append(s.alerts, Alert{it.AI, "done", label + " 完成了", "背景的工作跑完了，切過去看看結果"})
-			}
-		}
-		// 需審核：你正在看它（或正在用 Claude App，可能就在看這個提示）就不跳
-		if it.Review && !it.Focused && it.ReviewSince != it.alertedReview &&
-			nowMs-it.ReviewSince >= alertReviewDelay.Milliseconds() &&
-			!(strings.HasPrefix(it.Key, "cc:") && appFocused) {
-			it.alertedReview = it.ReviewSince
-			if it.Asking {
-				s.alerts = append(s.alerts, Alert{it.AI, "review", label + " 在等你回覆", "Claude 問了你一個問題，回覆後才會繼續"})
-			} else {
-				s.alerts = append(s.alerts, Alert{it.AI, "review", label + " 需要你允許", "正在等你按「允許」，不處理工作會停在這裡"})
-			}
-		}
-	}
-}
-
-// 取出要跳的通知
-func (s *State) TakeAlerts() []Alert {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a := s.alerts
-	s.alerts = nil
-	return a
 }
 
 // 取出上次以來完成的生成（今日統計用）

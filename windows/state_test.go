@@ -415,6 +415,36 @@ func TestSwitchToAnotherAI(t *testing.T) {
 	}
 }
 
+// 實測情境（23:25:10）：只有一個對話，Claude Code 一完成，App 的畫面偵測還要 2-3 秒才跟上，
+// 這段時間不能多畫一個「生成中」的點；真的另一個 App 對話在跑（超過 appLag）才畫
+func TestNoDuplicateDotWhileAppLags(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan(nil)
+	*now = now.Add(time.Minute)
+	app := Item{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)}
+	cc := Item{Key: "cc:0cccab18", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{app, cc})
+	if f := s.BuildFrame(); len(f.O) != 0 {
+		t.Fatalf("both working: one conversation, no dot: %+v", f)
+	}
+	*now = now.Add(20 * time.Second)
+	cc = Item{Key: "cc:0cccab18", AI: "claude", FinishedAt: ms(*now)}
+	s.ApplyScan([]Item{app, cc}) // App 還沒發現停止鈕消失
+	if f := s.BuildFrame(); len(f.O) != 0 {
+		t.Fatalf("app lagging behind Claude Code: no duplicate dot: %+v", f)
+	}
+	*now = now.Add(2 * time.Second)
+	if f := s.BuildFrame(); len(f.O) != 0 {
+		t.Fatalf("still within appLag: %+v", f)
+	}
+	// 過了 appLag，App 還在生成中 = 真的是另一個（一般聊天）對話：畫點
+	*now = now.Add(appLag)
+	s.ApplyScan([]Item{app, cc})
+	if f := s.BuildFrame(); len(f.O) != 1 || f.O[0][1] != "working" {
+		t.Fatalf("a real second conversation after appLag: %+v", f)
+	}
+}
+
 func TestQuotaAndNoItems(t *testing.T) {
 	s, now := newTestState()
 	if f := s.BuildFrame(); f.AI != "none" {

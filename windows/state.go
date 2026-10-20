@@ -16,6 +16,7 @@ const (
 	ccSeenWindow       = 4 * time.Second  // Claude Code 完成的同時、桌面 App 的停止鈕也消失 → 是你正在看的對話
 	alertDoneDelay     = 5 * time.Second  // 背景完成 / 錯誤：等這麼久還是「沒看過」才跳通知（先讓上面的比對完成）
 	alertReviewDelay   = 7 * time.Second  // 背景需審核：等這麼久還沒處理才跳通知
+	appLag             = 6 * time.Second  // 畫面偵測（Claude App）比 Claude Code hooks 晚多久才跟上狀態
 	doneOnTop          = time.Minute      // 背景完成通知後，在主燈最上面停留多久（之後排到生成中後面，避免來回對話時看不到呼吸燈）
 	quotaFresh         = 15 * time.Minute // 額度資料多久內算有效
 	forever            = int64(1) << 62
@@ -483,17 +484,26 @@ func (s *State) BuildFrame() Frame {
 		}
 		// 小圓點：每個對話一個點。例外：Claude App 畫面上的對話，通常也會以 Claude Code 對話出現一次
 		// （畫面偵測 + hooks），狀態相同時就當成同一個，不重複畫
+		// 畫面偵測比 hooks 慢 2-3 秒（每秒掃一次、停止鈕要消失 1.5 秒才算），所以 Claude Code 剛開始 / 剛完成的那幾秒，
+		// App 那項的狀態會跟它對不上（例如 Claude Code 已完成、App 還是生成中）：這段時間 App 那項也不畫
 		ccSt := map[string]bool{}
+		ccJustChanged := false
 		for _, r := range list {
 			if strings.HasPrefix(r.it.Key, "cc:") {
 				ccSt[r.st] = true
+				if d := nowMs - r.it.FinishedAt; r.it.FinishedAt != 0 && d >= 0 && d < appLag.Milliseconds() {
+					ccJustChanged = true
+				}
+				if d := nowMs - r.it.GenSince; r.it.Gen && d >= 0 && d < appLag.Milliseconds() {
+					ccJustChanged = true
+				}
 			}
 		}
 		for _, r := range list {
 			if r.it == main.it || r.st == "idle" || len(f.O) >= 5 { // 螢幕最多畫 5 個點
 				continue
 			}
-			if r.it.Key == "app:claude" && ccSt[r.st] {
+			if r.it.Key == "app:claude" && (ccSt[r.st] || ccJustChanged) {
 				continue
 			}
 			f.O = append(f.O, []string{r.it.AI, r.st})

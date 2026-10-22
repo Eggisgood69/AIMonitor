@@ -40,14 +40,21 @@ $STOP_RE   = '^(stop( (response|responding|generating|streaming|generation))?|�
 # 排除：Claude App 背景任務的「停止此任務」（不是生成中）、分享 / 錄音 / 朗讀等
 $STOP_NOT_RE = '(分享|共用|錄|播放|朗讀|語音|任務|share|record|play|read aloud|voice|sharing|task)'
 $REVIEW_RE = '^(allow|allow once|allow always|always allow|allow for this chat|approve|允許|允許一次|一律允許|永遠允許|允許這次|核准)$'
+# Claude App 側邊欄：背景在跑的對話旁有「執行中」狀態（橘點）；上方模式切換也會變成「Code，執行中」
+$BUSY_RE = '^(.*[，,]\s*)?(執行中|running)$'
 
 function Now-Ms { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
 
 $UIA = [System.Windows.Automation.AutomationElement]
 $btnCond = New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
 $editCond = New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+$sideCond = New-Object System.Windows.Automation.OrCondition(
+  (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::StatusBar)),
+  (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::RadioButton)))
+$walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 
 $items = @{}        # key -> 狀態
+$bg = @{}           # Claude App 背景對話：標題 -> 狀態（畫面上看不到停止鈕，只能看側邊欄）
 $tracked = @{}      # 瀏覽器視窗 hwnd -> $true（前景過的視窗，切走後仍持續追蹤，才能偵測到「背景完成」）
 $omni = @{}         # 瀏覽器視窗 hwnd -> 網址列元素（快取，避免每次搜尋整個畫面）
 
@@ -134,6 +141,66 @@ function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$n
   $s.review = $r
 }
 
+function Is-Selected($e) {
+  try { return [bool]$e.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch {}
+  try { return $e.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState -eq 'On' } catch {}
+  return $false
+}
+
+# Claude App 的背景對話（一般聊天）：切到別的對話後畫面上就沒有停止鈕，改看側邊欄的「執行中」。
+# 每個背景對話一個項目 app:claude:bg:<標題>；畫面上正在看的那個由 app:claude 負責。
+# Code 模式時側邊欄列的是 Claude Code 對話（hooks 已經有），只看「Claude」模式按鈕有沒有「執行中」
+function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
+  $mode = ''
+  $chatBusy = $false
+  $running = @{}
+  foreach ($p in $wins) {
+    try {
+      $els = $UIA::FromHandle($p.MainWindowHandle).FindAll([System.Windows.Automation.TreeScope]::Descendants, $sideCond)
+      foreach ($e in $els) {
+        $c = $e.Current
+        $n = [string]$c.Name
+        if ($c.ControlType -eq [System.Windows.Automation.ControlType]::RadioButton) {
+          if ($n -match '^Claude') {
+            if (Is-Selected $e) { $mode = 'chat' }
+            if ($n -match $BUSY_RE) { $chatBusy = $true }
+          } elseif ($n -match '^Code' -and (Is-Selected $e)) { $mode = 'code' }
+        } elseif ($n -match $BUSY_RE) {
+          $b = $walker.GetPreviousSibling($e)
+          if ($b -and $b.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $b.Current.Name) { $running[$b.Current.Name.Trim()] = $true }
+        }
+      }
+    } catch {}
+  }
+  if ($mode -eq 'chat') {
+    foreach ($t in $running.Keys) {
+      if ($t -eq $view) { continue }
+      if (-not $bg.ContainsKey($t)) { $bg[$t] = @{ gen = $false; genSince = 0; genOffAt = 0; finishedAt = 0; viewedAt = 0 } }
+      $s = $bg[$t]
+      if (-not $s.gen) { $s.gen = $true; $s.genSince = $now; $s.viewedAt = 0 }
+      $s.genOffAt = 0
+    }
+  }
+  foreach ($t in @($bg.Keys)) {
+    $s = $bg[$t]
+    if ($mode -eq 'chat' -and $t -eq $view) {
+      # 你點開了這個對話：還在跑就交給 app:claude（畫面上有停止鈕）；已完成就算看過，亮 8 秒後移除
+      if ($s.gen) { $bg.Remove($t); continue }
+      if ($focused -and -not $s.viewedAt) { $s.viewedAt = $now }
+    }
+    if ($s.viewedAt -and $now - $s.viewedAt -gt 10000) { $bg.Remove($t); continue }
+    $still = if ($mode -eq 'chat') { $running.ContainsKey($t) } elseif ($mode -eq 'code') { $chatBusy } else { $s.gen }
+    if ($s.gen -and -not $still) {
+      # 跟停止鈕一樣，要連續 1.5 秒沒有「執行中」才算完成
+      if (-not $s.genOffAt) { $s.genOffAt = $now }
+      if ($now - $s.genOffAt -gt 1500) { $s.gen = $false; $s.finishedAt = $now }
+    }
+    if (-not $s.gen -and $s.finishedAt -and $now - $s.finishedAt -gt 12 * 3600000) { $bg.Remove($t); continue }
+    $items['app:claude:bg:' + $t] = @{ key = 'app:claude:bg:' + $t; ai = 'claude'; focused = [bool]($s.viewedAt -and $focused); gen = $s.gen; genSince = $s.genSince;
+                                       review = $false; reviewSince = 0; finishedAt = $s.finishedAt; seen = $now; buttons = @($t) }
+  }
+}
+
 function Scan {
   $now = Now-Ms
   $fg = [AimonWin]::GetForegroundWindow()
@@ -149,11 +216,13 @@ function Scan {
     $procs = @(Get-Process -Name $a.procs)
     $wins = @($procs | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
     $diag.Add(("{0} App：行程 {1} 個、視窗 {2} 個" -f $a.ai, $procs.Count, $wins.Count))
-    if ($wins.Count -eq 0) { continue }
+    if ($wins.Count -eq 0) { if ($a.ai -eq 'claude') { $bg.Clear() }; continue }
     $names = New-Object System.Collections.Generic.List[string]
     foreach ($p in $wins) { $names.AddRange((Get-ButtonNames $p.MainWindowHandle)) }
     $focused = [bool]($procs | Where-Object { $_.Id -eq $fgPid })
-    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now (Get-View $names)
+    $view = Get-View $names
+    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view
+    if ($a.ai -eq 'claude') { Update-ClaudeBg $wins $focused ($view -replace '\s*[，,]\s*(重新命名工作階段|rename.*)$', '') $now }
   }
 
   # ---- 瀏覽器分頁 ----

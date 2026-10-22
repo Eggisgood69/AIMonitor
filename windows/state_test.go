@@ -412,6 +412,40 @@ func TestNoDuplicateDotWhileAppLags(t *testing.T) {
 	}
 }
 
+// Claude App 裡切到別的對話：原本的對話改由側邊欄「執行中」回報（app:claude:bg:<標題>）
+func TestClaudeAppBackgroundChat(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan(nil)
+	*now = now.Add(time.Minute)
+	app := Item{Key: "app:claude", AI: "claude", Focused: true}
+	bg := Item{Key: "app:claude:bg:Chat A", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{app, bg})
+	if f := s.BuildFrame(); f.St != "working" || len(f.O) != 0 {
+		t.Fatalf("background chat running: main light working: %+v", f)
+	}
+	*now = now.Add(30 * time.Second)
+	bg = Item{Key: "app:claude:bg:Chat A", AI: "claude", FinishedAt: ms(*now)}
+	s.ApplyScan([]Item{app, bg})
+	if f := s.BuildFrame(); f.St != "done" {
+		t.Fatalf("background chat finished: done until viewed: %+v", f)
+	}
+	if d := s.TakeFinished(); len(d) != 1 || d[0].AI != "claude" {
+		t.Fatalf("counted once in stats: %+v", d)
+	}
+	*now = now.Add(5 * time.Minute)
+	s.ApplyScan([]Item{app, bg})
+	if f := s.BuildFrame(); f.St != "done" {
+		t.Fatalf("still unseen: %+v", f)
+	}
+	// 點開它：亮 8 秒後熄
+	bg.Focused = true
+	s.ApplyScan([]Item{app, bg})
+	*now = now.Add(doneShowWhenViewed + time.Second)
+	if f := s.BuildFrame(); f.St != "idle" {
+		t.Fatalf("viewed: off: %+v", f)
+	}
+}
+
 func TestQuotaAndNoItems(t *testing.T) {
 	s, now := newTestState()
 	if f := s.BuildFrame(); f.AI != "none" {

@@ -10,8 +10,21 @@ $fqbn = 'esp32:esp32:esp32c3:CDCOnBoot=cdc'
 if (-not $AppOnly) {
   Write-Host '== 編譯韌體 ==' -ForegroundColor Cyan
   $out = Join-Path $root 'build\firmware'
-  arduino-cli compile --fqbn $fqbn --output-dir $out (Join-Path $root 'firmware\aimon')
+  # 公開的韌體檔不要內嵌本機路徑：Arduino 核心用 __FILE__ 記下原始檔完整路徑（C:\Users\<使用者>\AppData\...），換成 ~
+  $noPath = "-fmacro-prefix-map=$env:USERPROFILE=~"
+  $cliArgs = @('compile', '--fqbn', $fqbn, '--output-dir', $out,
+    '--build-property', "compiler.c.extra_flags=$noPath", '--build-property', "compiler.cpp.extra_flags=$noPath",
+    (Join-Path $root 'firmware\aimon'))
+  arduino-cli @cliArgs
   if ($LASTEXITCODE) { throw '韌體編譯失敗' }
+  # 編譯快取裡的舊 .o 不會因為參數改了就重編：還看得到本機路徑就整個重編一次
+  $hasPath = { [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $out 'aimon.ino.bin'))).IndexOf($env:USERPROFILE, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+  if (& $hasPath) {
+    Write-Host '韌體裡還有本機路徑（舊的編譯快取），整個重新編譯' -ForegroundColor Yellow
+    arduino-cli @cliArgs --clean
+    if ($LASTEXITCODE) { throw '韌體編譯失敗' }
+    if (& $hasPath) { throw "韌體裡還有本機路徑（$env:USERPROFILE）" }
+  }
 
   $ver = (Select-String -Path (Join-Path $root 'firmware\aimon\aimon.ino') -Pattern '#define FW_VERSION "([^"]+)"').Matches[0].Groups[1].Value
   Copy-Item (Join-Path $out 'aimon.ino.bin') (Join-Path $root 'windows\fw\aimon-app.bin') -Force

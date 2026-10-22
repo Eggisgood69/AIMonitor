@@ -179,4 +179,4 @@ extension/                      Chrome 擴充功能（選用，Mac 用）
 ## 授權
 
 MIT License，見 [LICENSE](LICENSE)。
-螢幕使用的 Inter 字型（`firmware/aimon/fonts.h`）採用 SIL Open Font License，不在 MIT 範圍內。
+螢幕使用的 Inter 字型（`firmware/tools/fonts/Inter-Variable.ttf`，以及由它產生的 `firmware/aimon/fonts.h`）採用 SIL Open Font License 1.1，不在 MIT 範圍內，授權全文見 [firmware/tools/fonts/OFL.txt](firmware/tools/fonts/OFL.txt)。

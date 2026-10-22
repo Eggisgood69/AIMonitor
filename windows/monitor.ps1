@@ -110,7 +110,7 @@ function Get-View($names) {
   return [string]($names | Where-Object { $_ -match '重新命名|[Rr]ename' } | Select-Object -First 1)
 }
 
-function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now, [string]$view = '') {
+function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now, [string]$view = '', [bool]$busy = $false) {
   if (-not $items.ContainsKey($key)) {
     $items[$key] = @{ key = $key; ai = $ai; gen = $false; genSince = 0; genOffAt = 0; review = $false; reviewSince = 0; finishedAt = 0 }
   }
@@ -122,7 +122,8 @@ function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$n
   $reviews = @($names | Where-Object { $_ -match $REVIEW_RE })
   # 除錯畫面只列 30 個：判斷依據（停止 / 允許）排最前面，才不會被一般按鈕擠掉
   $s.buttons = @(@($stops) + @($reviews) + @($names) | Select-Object -Unique | Select-Object -First 30)
-  $g = $stops.Count -gt 0
+  # $busy：Claude App 側邊欄說畫面上這個對話「執行中」（停止鈕在跑工具等時候會暫時不見）
+  $g = $stops.Count -gt 0 -or $busy
   $r = $reviews.Count -gt 0
   # 停止按鈕會短暫消失，要連續消失 1.5 秒才算真的結束
   if ($g) {
@@ -199,6 +200,7 @@ function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
     $items['app:claude:bg:' + $t] = @{ key = 'app:claude:bg:' + $t; ai = 'claude'; focused = [bool]($s.viewedAt -and $focused); gen = $s.gen; genSince = $s.genSince;
                                        review = $false; reviewSince = 0; finishedAt = $s.finishedAt; seen = $now; buttons = @($t) }
   }
+  return ($mode -eq 'chat' -and $view -and $running.ContainsKey($view))   # 畫面上的對話是否執行中
 }
 
 function Scan {
@@ -221,8 +223,9 @@ function Scan {
     foreach ($p in $wins) { $names.AddRange((Get-ButtonNames $p.MainWindowHandle)) }
     $focused = [bool]($procs | Where-Object { $_.Id -eq $fgPid })
     $view = Get-View $names
-    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view
-    if ($a.ai -eq 'claude') { Update-ClaudeBg $wins $focused ($view -replace '\s*[，,]\s*(重新命名工作階段|rename.*)$', '') $now }
+    $busy = $false
+    if ($a.ai -eq 'claude') { $busy = [bool](Update-ClaudeBg $wins $focused ($view -replace '\s*[，,]\s*(重新命名工作階段|rename.*)$', '') $now) }
+    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view $busy
   }
 
   # ---- 瀏覽器分頁 ----

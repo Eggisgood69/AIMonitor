@@ -33,6 +33,7 @@ windows/                   Go 程式（Windows only，WebView2）
   tray_windows.go          系統匣圖示
   flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app）
   fw/aimon-app.bin, fw/version.txt  內建到 exe 的韌體（build.ps1 會自動更新）
+enclosure/solidworks/      3D 列印外殼（使用者自己用 SolidWorks 畫，設計中）：原始檔、export/ 匯出檔；reference/ 網路下載的參考模型不公開（.gitignore）
 extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維護）
 ```
 

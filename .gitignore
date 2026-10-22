@@ -1,3 +1,9 @@
 build/
 *.ppm
 firmware/preview/*.o
+
+# SolidWorks 開檔時的鎖定檔 / 暫存檔；網路下載的參考模型不公開
+~$*
+*.SLDBAK
+*.swbak
+enclosure/solidworks/reference/

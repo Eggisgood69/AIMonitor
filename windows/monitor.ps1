@@ -173,14 +173,22 @@ function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
       }
     } catch {}
   }
+  # 這次在跑的背景對話
+  $add = @()
   if ($mode -eq 'chat') {
-    foreach ($t in $running.Keys) {
-      if ($t -eq $view) { continue }
-      if (-not $bg.ContainsKey($t)) { $bg[$t] = @{ gen = $false; genSince = 0; genOffAt = 0; finishedAt = 0; viewedAt = 0 } }
-      $s = $bg[$t]
-      if (-not $s.gen) { $s.gen = $true; $s.genSince = $now; $s.viewedAt = 0 }
-      $s.genOffAt = 0
-    }
+    $add = @($running.Keys | Where-Object { $_ -ne $view })
+    # 記下畫面上的聊天對話：切到 Code 模式時它還在跑，就轉成背景對話（不然沒人追蹤它）
+    $script:chatView = $view
+    $script:chatViewBusy = [bool]($view -and $running.ContainsKey($view))
+  } elseif ($mode -eq 'code' -and $chatBusy -and $script:chatViewBusy) {
+    $add = @($script:chatView)
+    $script:chatViewBusy = $false
+  }
+  foreach ($t in $add) {
+    if (-not $bg.ContainsKey($t)) { $bg[$t] = @{ gen = $false; genSince = 0; genOffAt = 0; finishedAt = 0; viewedAt = 0 } }
+    $s = $bg[$t]
+    if (-not $s.gen) { $s.gen = $true; $s.genSince = $now; $s.viewedAt = 0 }
+    $s.genOffAt = 0
   }
   foreach ($t in @($bg.Keys)) {
     $s = $bg[$t]
@@ -255,6 +263,8 @@ function Scan {
 }
 $script:diagText = ''
 $script:fgName = ''
+$script:chatView = ''
+$script:chatViewBusy = $false
 
 
 function Get-StateJson {

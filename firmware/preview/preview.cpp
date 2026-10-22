@@ -63,8 +63,6 @@ int main() {
   for (int pg = 1; pg <= 3; pg++) {
     Frame f; f.brand = brandIndex("claude"); f.st = S_WORKING; f.p5 = 68; f.pw = 12;
     f.r5 = 1792226400 + 2 * 3600 + 600; f.rw = 1792226400 + 3 * 86400 + 4 * 3600;
-    float hv[] = {5, 8, 12, 12, 18, 25, 31, 33, 40, 44, 47, 52, 55, 58, 63, 68};
-    for (float v : hv) f.hist[f.nHist++] = v;
     f.today[0] = {0, 12, 1083}; f.today[1] = {1, 4, 372}; f.today[2] = {2, 1, 48}; f.nToday = 3;
     g_frame = f; g_ms = 900000; g_lastFrameMs = g_ms - 500; g_page = pg;
     g_epochOffset = 1792226400 - g_ms / 1000;

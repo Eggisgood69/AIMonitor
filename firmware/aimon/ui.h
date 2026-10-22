@@ -79,7 +79,6 @@ struct Frame {
   float p5 = -1, pw = -1;
   uint32_t r5 = 0, rw = 0;
   Other others[5]; int nOthers = 0;
-  float hist[24]; int nHist = 0;          // 5 小時額度的歷史（由電腦端提供，畫折線用）
   struct Today { int brand; int count; uint32_t secs; } today[3]; int nToday = 0;   // 今日統計
 };
 
@@ -313,7 +312,10 @@ static bool ringAnimating() {
 // 額度環：下方留一個開口（像儀表），從開口左側開始順時針增加
 static const float GAUGE_GAP = 56.0f;                 // 開口角度
 static const float GAUGE_START = 180.0f + GAUGE_GAP / 2, GAUGE_SPAN = 360.0f - GAUGE_GAP;
-static void progressRing(float r, float hw, float pct, uint32_t col) {
+
+// 原本的畫法（drawWideLine 拼 76 段）：每個像素都要算浮點距離，ESP32-C3 沒有 FPU，一條畫面要 130-170 ms，
+// 這段時間外環沒辦法更新（呼吸會頓）。只在查表用的記憶體配置失敗時才用
+static void progressRingSlow(float r, float hw, float pct, uint32_t col) {
   uint32_t track = mix(C_BG, col, 0.20f);
   float e = GAUGE_START + GAUGE_SPAN;
   ringArc(r, hw, GAUGE_START, e, track, track);
@@ -325,6 +327,157 @@ static void progressRing(float r, float hw, float pct, uint32_t col) {
   ringArc(r, hw, GAUGE_START, a1, mix(col, C_BG, 0.25f), col);
   band.fillSmoothCircle(px(r, GAUGE_START - 90), py(r, GAUGE_START - 90) - OY, hw, mix(col, C_BG, 0.25f));
   band.fillSmoothCircle(px(r, a1 - 90), py(r, a1 - 90) - OY, hw, col);
+}
+
+// ---- 額度環的快速繪製（跟外環一樣先算好、之後只查表）----
+// 開機時（gaugeInit）算好環上每個像素的角度與到圓心的距離，之後每個像素只做整數運算與混色；
+// 只有圓頭附近幾百個像素要開根號。距離以像素中心（x + 0.5）計算，跟外環一樣；
+// 原本的 drawWideLine 只吃整數座標，端點被捨去小數，結果也等於以像素中心為準，所以畫出來跟原本一樣
+// 舊畫法多段線重疊、邊緣混色好幾次，環實際上粗約 0.4 px：邊緣各放寬一點，看起來一樣粗
+static const float GAUGE_AA = 0.7f;
+struct GaugeLut {
+  float r0 = 0;              // 涵蓋 r0 ~ r0 + 2 * (hw + 1)（環寬 + 抗鋸齒）
+  RingSeg seg[H][2];
+  uint8_t segN[H];
+  uint16_t* ang = nullptr;   // 角度，1/16 度（0 = 12 點鐘，順時針）
+  uint8_t* dist = nullptr;   // 距離 - r0，1/16 px
+  bool failed = false;       // 記憶體不夠：改用舊畫法，不要每次都重試
+};
+static GaugeLut g_gauge[2];  // [0] 5 小時（R_USAGE），[1] 每週（額度詳細頁的內圈）
+
+static GaugeLut* gaugeLut(float r, float hw) {
+  GaugeLut& L = g_gauge[r < R_USAGE - 1 ? 1 : 0];
+  if (L.ang || L.failed) return L.ang ? &L : nullptr;
+  L.r0 = r - hw - 1;
+  const float r1 = r + hw + 1, a2 = L.r0 * L.r0, b2 = r1 * r1;
+  int total = 0;
+  for (int y = 0; y < H; y++) {                    // 每一列在環上的像素範圍（最多左右兩段）
+    L.segN[y] = 0;
+    const float dy = y + 0.5f - CY;
+    for (int x = 0, run = -1; x <= W; x++) {
+      const float dx = x + 0.5f - CX, d2 = dx * dx + dy * dy;
+      const bool in = x < W && d2 >= a2 && d2 < b2;
+      if (in && run < 0) run = x;
+      if (in || run < 0) continue;
+      if (L.segN[y] < 2) {
+        RingSeg& sg = L.seg[y][L.segN[y]++];
+        sg.x0 = run; sg.n = x - run; sg.off = total;
+        total += x - run;
+      }
+      run = -1;
+    }
+  }
+  L.ang = (uint16_t*)malloc(total * sizeof(uint16_t));
+  L.dist = (uint8_t*)malloc(total);
+  if (!L.ang || !L.dist) { free(L.ang); free(L.dist); L.ang = nullptr; L.dist = nullptr; L.failed = true; return nullptr; }
+  // 以像素中心算，上下左右對稱（x ↔ 239 - x、y ↔ 239 - y）：只算右下象限再鏡射到另外三個，
+  // 浮點運算少 4 倍（沒有 FPU，全部自己算一圈要 0.7 秒）
+  auto at = [&](int x, int y) {
+    for (int s = 0; s < L.segN[y]; s++) {
+      const RingSeg& sg = L.seg[y][s];
+      if (x >= sg.x0 && x < sg.x0 + sg.n) return sg.off + x - sg.x0;
+    }
+    return -1;
+  };
+  for (int y = CY; y < H; y++) {
+    const float dy = y + 0.5f - CY;
+    for (int s = 0; s < L.segN[y]; s++) {
+      const RingSeg& sg = L.seg[y][s];
+      for (int x = sg.x0 > CX ? sg.x0 : CX; x < sg.x0 + sg.n; x++) {
+        const float dx = x + 0.5f - CX, d = sqrtf(dx * dx + dy * dy);
+        const int a = (int)((atan2f(dy, dx) * RAD_TO_DEG + 90) * 16 + 0.5f);   // 右下象限：90 ~ 180 度
+        int dv = (int)((d - L.r0) * 16 + 0.5f);
+        if (dv > 255) dv = 255;
+        const int mx = W - 1 - x, my = H - 1 - y;
+        const int q[4][3] = {{x, y, a}, {mx, y, 5760 - a}, {x, my, 2880 - a}, {mx, my, a + 2880}};
+        for (const auto& m : q) {
+          const int i = at(m[0], m[1]);
+          if (i < 0) continue;
+          L.ang[i] = (uint16_t)(((m[2] % 5760) + 5760) % 5760);
+          L.dist[i] = (uint8_t)dv;
+        }
+      }
+    }
+  }
+  return &L;
+}
+
+// 開機時先建好兩圈的表（第一次翻到額度詳細頁才建的話，那一下會卡 0.7 秒）
+static void gaugeInit() {
+  gaugeLut(R_USAGE, HW_USAGE);
+  gaugeLut(R_USAGE - 14, HW_USAGE);
+}
+
+// 圓頭：到端點 (cx, cy) 的距離 → 不透明度 0..256
+static inline int capAlpha(int x, int y, float cx, float cy, float hw) {
+  const float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+  const int a = (int)((hw + GAUGE_AA - sqrtf(dx * dx + dy * dy)) * 256);
+  return a < 0 ? 0 : (a > 256 ? 256 : a);
+}
+static inline uint32_t blend888(uint32_t u, uint32_t c, int a) {   // a = 0..256
+  const int b = 256 - a;
+  return ((((u >> 16) & 0xFF) * b + ((c >> 16) & 0xFF) * a) >> 8) << 16 |
+         ((((u >> 8) & 0xFF) * b + ((c >> 8) & 0xFF) * a) >> 8) << 8 |
+         (((u & 0xFF) * b + (c & 0xFF) * a) >> 8);
+}
+
+static void progressRing(float r, float hw, float pct, uint32_t col) {
+  GaugeLut* L = band.getColorDepth() == 16 ? gaugeLut(r, hw) : nullptr;
+  if (!L) { progressRingSlow(r, hw, pct, col); return; }
+  const uint32_t track = mix(C_BG, col, 0.20f), c0 = mix(col, C_BG, 0.25f);
+  const float p = pct > 100 ? 100 : pct;
+  const int rr = (int)((r - L->r0) * 16 + 0.5f);          // 環的中心線
+  const int edge = (int)((hw + GAUGE_AA) * 16 + 0.5f);     // 距中心線這麼遠以外完全透明
+  const int start = (int)(GAUGE_START * 16 + 0.5f) % 5760, span = (int)(GAUGE_SPAN * 16 + 0.5f);
+  const int end = pct > 0 ? (int)(span * p / 100 + 0.5f) : -1;   // 進度的終點（-1 = 沒有進度）
+  const int CAP = 6 * 16;                                   // 圓頭延伸到端點外約 3.6°，6° 以外不用算
+  const float sx = px(r, GAUGE_START - 90), sy = py(r, GAUGE_START - 90);
+  const float tx = px(r, GAUGE_START + GAUGE_SPAN - 90), ty = py(r, GAUGE_START + GAUGE_SPAN - 90);
+  const float ex = px(r, GAUGE_START + GAUGE_SPAN * p / 100 - 90), ey = py(r, GAUGE_START + GAUGE_SPAN * p / 100 - 90);
+  uint16_t* buf = (uint16_t*)band.getBuffer();              // 16 位元 sprite：RGB565 高低位元組對調
+  for (int y = OY; y < OY + BAND_H && y < H; y++) {
+    uint16_t* row = buf + (y - OY) * W;
+    for (int s = 0; s < L->segN[y]; s++) {
+      const RingSeg& sg = L->seg[y][s];
+      for (int i = 0; i < sg.n; i++) {
+        const int x = sg.x0 + i;
+        int dd = L->dist[sg.off + i] - rr;
+        if (dd < 0) dd = -dd;
+        int aR = (edge - dd) * 16;                          // 環的內外緣抗鋸齒（256 = 不透明）
+        if (aR <= 0) continue;
+        if (aR > 256) aR = 256;
+        int rel = L->ang[sg.off + i] - start;               // 從起點順時針的角度
+        if (rel < 0) rel += 5760;
+        const bool nearStart = rel >= 5760 - CAP;
+        // 底色軌道（整個 304°，兩端圓頭）
+        int a1;
+        if (rel <= span) a1 = aR;
+        else if (rel <= span + CAP) a1 = capAlpha(x, y, tx, ty, hw);
+        else if (nearStart) a1 = capAlpha(x, y, sx, sy, hw);
+        else continue;                                      // 開口
+        // 進度（起點顏色較暗、漸層到終點，兩端圓頭）
+        int a2 = 0;
+        uint32_t g = col;
+        if (end >= 0) {
+          if (rel <= end) {
+            a2 = aR;
+            const int t = end > 0 ? rel * 256 / end : 256;
+            g = blend888(c0, col, t);
+          } else if (rel <= end + CAP && !nearStart) a2 = capAlpha(x, y, ex, ey, hw);
+          if (nearStart) { a2 = capAlpha(x, y, sx, sy, hw); g = c0; }
+        }
+        if (!a1 && !a2) continue;
+        const uint16_t v = (uint16_t)((row[x] >> 8) | (row[x] << 8));
+        uint32_t u = ((v >> 11) & 0x1F) << 19 | ((v >> 13) & 0x07) << 16 |
+                     ((v >> 5) & 0x3F) << 10 | ((v >> 9) & 0x03) << 8 |
+                     (v & 0x1F) << 3 | ((v >> 2) & 0x07);
+        if (a1) u = blend888(u, track, a1);
+        if (a2) u = blend888(u, g, a2);
+        const uint16_t o = lgfx::color565((u >> 16) & 0xFF, (u >> 8) & 0xFF, u & 0xFF);
+        row[x] = (uint16_t)((o >> 8) | (o << 8));
+      }
+    }
+  }
 }
 
 // ---------------- Scene ----------------
@@ -433,35 +586,29 @@ static void drawUsagePage(uint32_t ms) {
   uint32_t c5 = f.p5 >= 90 ? C_RED : b.color;
   uint32_t cw = f.pw >= 90 ? C_RED : mix(b.color, 0xFFFFFF, 0.5f);
   progressRing(R_USAGE, HW_USAGE, f.p5, c5);
-  if (f.pw >= 0) progressRing(R_USAGE - 14, HW_USAGE, f.pw, cw);
+  if (f.pw >= 0) progressRing(R_USAGE - 14, HW_USAGE, f.pw, cw);   // 半徑要跟 gaugeInit 一致
+
+  // 由上往下：名稱、5 小時大數字、5 小時重置、本週＋重置；沒有本週時整組往下移，保持在環內置中
+  bool hasWeek = f.pw >= 0;
+  int dy = 14 + (hasWeek ? 0 : 16);
+  int yWeek = 134 + dy;
 
   char buf[40];
-  text(b.name, CX, 62, b.color, &fLabel.font);
+  text(b.name, CX, 50 + dy, b.color, &fLabel.font);
   snprintf(buf, sizeof buf, "%d", (int)(f.p5 + 0.5f));
-  bigValue(buf, true, 96);
-  String l5 = fmtLeft(f.r5);
-  snprintf(buf, sizeof buf, "5H%s%s", l5.length() ? "  ·  " : "", l5.c_str());
-  text(buf, CX, 125, C_LABEL2, &fTiny.font);
+  bigValue(buf, true, 84 + dy);
+  String l5 = fmtLeft(f.r5);   // 倒數一律寫 RESETS，避免「5H · 16M」被看成 5 小時 16 分
+  snprintf(buf, sizeof buf, "5-HOUR%s%s", l5.length() ? " · RESETS " : "", l5.c_str());
+  text(buf, CX, 116 + dy, C_LABEL2, &fTiny.font);
 
-  // 折線（最近 5 小時）
-  if (f.nHist >= 2) {
-    const int x0 = CX - 50, w = 100, y0 = 155, h = 20;
-    band.drawFastHLine(x0, y0 - OY, w, mix(C_BG, C_GRAY, 0.35f));
-    float prevX = 0, prevY = 0;
-    for (int i = 0; i < f.nHist; i++) {
-      float v = f.hist[i] < 0 ? 0 : (f.hist[i] > 100 ? 100 : f.hist[i]);
-      float x = x0 + (float)w * i / (f.nHist - 1), y = y0 - h * v / 100.0f;
-      if (i) band.drawWideLine(prevX, prevY - OY, x, y - OY, 1.1f, c5);
-      prevX = x; prevY = y;
-    }
-    band.fillSmoothCircle(prevX, prevY - OY, 2.5f, c5);
-  }
-  if (f.pw >= 0) {
+  // 本週分兩行：一行寫不下（內環裡的寬度不夠），也跟上面的 5 小時分得開
+  if (hasWeek) {
+    snprintf(buf, sizeof buf, "WEEK %d%%", (int)(f.pw + 0.5f));
+    text(buf, CX, yWeek, cw, &fTiny.font);
     String lw = fmtLeft(f.rw);
-    snprintf(buf, sizeof buf, "WEEK %d%%%s%s", (int)(f.pw + 0.5f), lw.length() ? "  ·  " : "", lw.c_str());
-    text(buf, CX, 170, cw, &fTiny.font);
+    if (lw.length()) text((String("RESETS ") + lw).c_str(), CX, yWeek + 15, C_LABEL2, &fTiny.font);
   }
-  pageDots(186);
+  pageDots(196);
 }
 
 // 今日統計頁

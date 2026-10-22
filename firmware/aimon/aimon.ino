@@ -17,7 +17,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.7.2"
+#define FW_VERSION "1.8.2"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -209,8 +209,6 @@ static void handleLine(Stream* src, const String& line) {
     f.today[f.nToday].secs = d[2] | 0UL;
     f.nToday++;
   }
-  JsonArray hs = doc["h"].as<JsonArray>();
-  for (JsonVariant v : hs) { if (f.nHist >= 24) break; f.hist[f.nHist++] = v.as<float>(); }
   // 需要你處理的狀態：自動回到狀態頁
   if ((f.st == S_REVIEW || f.st == S_ERROR || (f.st == S_WORKING && g_frame.st != S_WORKING)) && g_page != 0) g_page = 0;
   g_frame = f;
@@ -285,6 +283,7 @@ void setup() {
   loadFonts();
   g_ringDirect = true;
   ringInit();
+  gaugeInit();
   band.setColorDepth(16);
   if (!band.createSprite(W, BAND_H)) { band.setColorDepth(8); band.createSprite(W, BAND_H); }
   render();

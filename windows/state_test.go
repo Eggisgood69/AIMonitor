@@ -495,15 +495,3 @@ func TestRealUsagePayload(t *testing.T) {
 		t.Fatalf("real payload: ok=%v %+v", ok, q)
 	}
 }
-
-func TestHistory(t *testing.T) {
-	s, now := newTestState()
-	for i := 0; i <= 30; i++ { // 每 6 分鐘一筆，共 3 小時，從 10% 漲到 70%
-		s.SetQuota("claude", Quota{P5: 10 + float64(i)*2, PW: 5})
-		*now = now.Add(6 * time.Minute)
-	}
-	f := s.BuildFrame()
-	if len(f.H) < 10 || f.H[len(f.H)-1] != 70 || f.H[0] > f.H[len(f.H)-1] {
-		t.Fatalf("history: %v", f.H)
-	}
-}

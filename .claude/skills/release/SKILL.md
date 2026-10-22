@@ -41,16 +41,28 @@ git diff --stat HEAD   # 再加上尚未 commit 的改動
 
 韌體編譯大約要 1～3 分鐘，用背景執行或給足 timeout。`build.ps1` 會依序：編韌體 → 複製到 `windows/fw/` → 產生 `firmware/aimon-usb-esp32c3.bin` → `go test` → 編出 `windows/AIMonitor.exe`。任何一步失敗都會丟例外，把錯誤原文貼給使用者，不要略過測試。
 
-## 3. 燒錄（只有韌體改了才需要）
+## 3. 安裝與燒錄（建置成功後直接做，不用問）
 
-有兩條路，先問使用者要哪一種：
+使用者要求「以後都你幫我更新」：建置成功後自己把新版裝好、韌體燒進螢幕，不要再請使用者雙擊 exe 或按更新。
 
-- **透過 AIMonitor 一鍵更新（建議）**：雙擊新的 `windows/AIMonitor.exe`，它會取代執行中的舊版，設定視窗會顯示「可更新」，按下去即可。這也順便驗證了 flasher.go 的更新流程。
-- **直接用 arduino-cli 燒**：`./build.ps1 -Flash COMx`。
-  - 先請使用者在系統匣按「結束程式」，否則序列埠被占用，會出現「燒錄失敗」。
-  - 不知道是哪個 COM 埠時，用 `arduino-cli board list` 找；可能還有別的 USB 裝置（例如 COM3），看清楚是 ESP32-C3 那個。
+1. 找螢幕的 COM 埠：看 USB VID，螢幕（ESP32-C3）是 `VID_303A`；`VID_1A86` 那個是別的裝置（平常在 COM3），不要燒它：
+   ```powershell
+   Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match '\(COM\d+\)' } | Select-Object Name, PNPDeviceID
+   ```
+2. 請執行中的 AIMonitor 正常結束（跟系統匣「結束程式」同一個事件，會存好狀態；不要直接砍程序），否則序列埠被占用：
+   ```powershell
+   $ev = $null
+   if ([System.Threading.EventWaitHandle]::TryOpenExisting('Local\AIMonitorQuit', [ref]$ev)) { [void]$ev.Set(); $ev.Dispose() }
+   for ($i = 0; $i -lt 50 -and (Get-Process AIMonitor -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 200 }
+   ```
+3. 韌體有改才燒，用 `build.ps1` 剛編好的檔案，不必重編：
+   `arduino-cli upload -p COMx --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc' --input-dir build\firmware firmware\aimon`
+4. 安裝並啟動：把 `windows\AIMonitor.exe` 複製到 `%LOCALAPPDATA%\AIMonitor\AIMonitor.exe`，再 `Start-Process` 那一份
+   （從安裝位置、不帶參數啟動 → 不會跳出設定視窗）
+5. 確認：`%LOCALAPPDATA%\AIMonitor\aimonitor.log` 最後幾行要有 `start v<新版>`、`connected COMx`、`screen answered (fw <新韌體>)`
 
-燒完請使用者看螢幕確認：開機正常、不是全黑、外環呼吸燈順暢。螢幕全黑的話，參考 CLAUDE.md「燒錄」那段的已知問題。
+只改電腦端時跳過第 3 步。燒錄失敗或螢幕沒回應就把錯誤原文給使用者；螢幕全黑參考 CLAUDE.md「燒錄」那段的已知問題。
+改到 `flasher.go`（一鍵更新）時，這條路不會測到它，要另外請使用者在設定視窗按「更新」驗證。
 
 ## 4. Commit
 
@@ -81,5 +93,5 @@ push 到 GitHub 之前，先把這次（以及上次 push 之後所有還沒 pus
 
 最後簡短告訴使用者：
 - 新版本號（電腦端／韌體）
-- 測試與建置是否通過
-- 下一步要使用者做什麼（雙擊 exe、按更新、看螢幕）
+- 測試與建置是否通過、已安裝並燒錄（log 裡螢幕回報的韌體版本）
+- 請使用者看螢幕確認改的地方

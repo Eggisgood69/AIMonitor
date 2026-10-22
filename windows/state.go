@@ -61,15 +61,9 @@ type Frame struct {
 	Bri   int             `json:"bri,omitempty"`  // 背光亮度 5-255
 	Rot   int             `json:"rot"`            // 螢幕方向 0-3（×90°）
 	Led   int             `json:"led"`            // 外接 WS2812 亮度 0-100（0 = 關閉）
-	H     []float64       `json:"h,omitempty"`    // 最近 5 小時的 5 小時額度（折線用）
 	D     [][]interface{} `json:"d,omitempty"`    // 今日統計 [[ai, 次數, 秒數], ...]
 	Note  string          `json:"note,omitempty"` // 額度重置提醒（螢幕上的短字）
 	NK    string          `json:"nk,omitempty"`   // soon / reset
-}
-
-type sample struct {
-	t  time.Time
-	p5 float64
 }
 
 type Finish struct {
@@ -90,39 +84,11 @@ type State struct {
 	done     []Finish
 	items    map[string]*Item
 	quota    map[string]*Quota
-	hist     map[string][]sample
 	now      func() time.Time
 }
 
 func NewState() *State {
-	return &State{genAcc: map[string]int64{}, items: map[string]*Item{}, quota: map[string]*Quota{}, hist: map[string][]sample{}, now: time.Now}
-}
-
-// 最近 5 小時的額度，等分成 n 格（每格取該時段最後一筆，沒有資料就沿用前一格）
-func (s *State) history(ai string, n int) []float64 {
-	h := s.hist[ai]
-	now := s.now()
-	start := now.Add(-5 * time.Hour)
-	if len(h) < 2 || h[len(h)-1].t.Sub(h[0].t) < 10*time.Minute {
-		return nil
-	}
-	out := make([]float64, 0, n)
-	last := -1.0
-	j := 0
-	for i := 0; i < n; i++ {
-		end := start.Add(time.Duration(i+1) * 5 * time.Hour / time.Duration(n))
-		for j < len(h) && !h[j].t.After(end) {
-			last = h[j].p5
-			j++
-		}
-		if last >= 0 {
-			out = append(out, round1(last))
-		}
-	}
-	if len(out) < 2 {
-		return nil
-	}
-	return out
+	return &State{genAcc: map[string]int64{}, items: map[string]*Item{}, quota: map[string]*Quota{}, now: time.Now}
 }
 
 // 主燈的優先順序：「你沒看到的事」優先，你正在看的對話自己看得到。
@@ -296,14 +262,6 @@ func (s *State) SetQuota(ai string, q Quota) {
 	defer s.mu.Unlock()
 	q.T = s.now()
 	s.quota[ai] = &q
-	if q.P5 >= 0 {
-		h := append(s.hist[ai], sample{q.T, q.P5})
-		cut := q.T.Add(-5 * time.Hour)
-		for len(h) > 0 && h[0].t.Before(cut) {
-			h = h[1:]
-		}
-		s.hist[ai] = h
-	}
 }
 
 func (s *State) GetQuota(ai string) *Quota {
@@ -452,7 +410,6 @@ func (s *State) BuildFrame() Frame {
 		if p5 >= 0 {
 			v := round1(p5)
 			f.P5, f.R5 = &v, q.R5
-			f.H = s.history(ai, 20)
 		}
 		if pw >= 0 {
 			v := round1(pw)

@@ -39,9 +39,12 @@ $HOST_RE = '^(https?://)?(www\.)?(claude\.ai|chatgpt\.com|chat\.openai\.com|gemi
 $STOP_RE   = '^(stop( (response|responding|generating|streaming|generation))?|停止.{0,6}|中止.{0,4}|停止 .{0,8})$'
 # 排除：Claude App 背景任務的「停止此任務」（不是生成中）、分享 / 錄音 / 朗讀等
 $STOP_NOT_RE = '(分享|共用|錄|播放|朗讀|語音|任務|share|record|play|read aloud|voice|sharing|task)'
-$REVIEW_RE = '^(allow|allow once|allow always|always allow|allow for this chat|approve|允許|允許一次|一律允許|永遠允許|允許這次|核准)$'
+# 允許按鈕的說法常變（允許一次、允許這次、允許本次工作階段、Allow for this chat…）：「允許 / allow」開頭的短名稱都算
+$REVIEW_RE = '^(allow( .{1,30})?|always allow|approve|允許.{0,8}|一律允許|永遠允許|核准)$'
 # Claude App 側邊欄：背景在跑的對話旁有「執行中」狀態（橘點）；上方模式切換也會變成「Code，執行中」
 $BUSY_RE = '^(.*[，,]\s*)?(執行中|running)$'
+# 背景聊天在等你允許：側邊欄是「等待輸入」，Code 模式時模式按鈕是「Claude，正在等待您的輸入」
+$WAIT_RE = '^(.*[，,]\s*)?(等待輸入|正在等待您的輸入|waiting for (your )?input|needs? (your )?input)$'
 
 function Now-Ms { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
 
@@ -106,11 +109,13 @@ function Url-To-AI([string]$url) {
 }
 
 # 畫面上是哪個對話：Claude App 標題列的「<對話名稱>，重新命名工作階段」按鈕（瀏覽器用網址）
+# 只取對話名稱：按鈕是「<名稱>，重新命名工作階段」，載入中還會多「，對話載入後即可重新命名」
 function Get-View($names) {
-  return [string]($names | Where-Object { $_ -match '重新命名|[Rr]ename' } | Select-Object -First 1)
+  $n = [string]($names | Where-Object { $_ -match '重新命名|[Rr]ename' } | Select-Object -First 1)
+  return ($n -replace '\s*[，,]\s*(重新命名|[Rr]ename).*$', '')
 }
 
-function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now, [string]$view = '', [bool]$busy = $false) {
+function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now, [string]$view = '', [bool]$busy = $false, [bool]$wait = $false) {
   if (-not $items.ContainsKey($key)) {
     $items[$key] = @{ key = $key; ai = $ai; gen = $false; genSince = 0; genOffAt = 0; review = $false; reviewSince = 0; finishedAt = 0 }
   }
@@ -124,7 +129,7 @@ function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$n
   $s.buttons = @(@($stops) + @($reviews) + @($names) | Select-Object -Unique | Select-Object -First 30)
   # $busy：Claude App 側邊欄說畫面上這個對話「執行中」（停止鈕在跑工具等時候會暫時不見）
   $g = $stops.Count -gt 0 -or $busy
-  $r = $reviews.Count -gt 0
+  $r = $reviews.Count -gt 0 -or $wait
   # 停止按鈕會短暫消失，要連續消失 1.5 秒才算真的結束
   if ($g) {
     if (-not $s.gen) { $s.gen = $true; $s.genSince = $now }
@@ -148,13 +153,16 @@ function Is-Selected($e) {
   return $false
 }
 
-# Claude App 的背景對話（一般聊天）：切到別的對話後畫面上就沒有停止鈕，改看側邊欄的「執行中」。
+# Claude App 的背景對話（一般聊天）：切到別的對話後畫面上就沒有停止鈕，改看側邊欄對話旁的狀態：
+# 「執行中」= 生成中、「等待輸入」= 在等你允許（亮黃燈）。出錯時狀態只會消失，跟完成分不出來（只能當完成）。
 # 每個背景對話一個項目 app:claude:bg:<標題>；畫面上正在看的那個由 app:claude 負責。
-# Code 模式時側邊欄列的是 Claude Code 對話（hooks 已經有），只看「Claude」模式按鈕有沒有「執行中」
+# Code 模式時側邊欄列的是 Claude Code 對話（hooks 已經有），只看「Claude」模式按鈕的「執行中」「正在等待您的輸入」
 function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
   $mode = ''
   $chatBusy = $false
+  $chatWait = $false
   $running = @{}
+  $waiting = @{}
   foreach ($p in $wins) {
     try {
       $els = $UIA::FromHandle($p.MainWindowHandle).FindAll([System.Windows.Automation.TreeScope]::Descendants, $sideCond)
@@ -165,31 +173,41 @@ function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
           if ($n -match '^Claude') {
             if (Is-Selected $e) { $mode = 'chat' }
             if ($n -match $BUSY_RE) { $chatBusy = $true }
+            if ($n -match $WAIT_RE) { $chatWait = $true }
           } elseif ($n -match '^Code' -and (Is-Selected $e)) { $mode = 'code' }
-        } elseif ($n -match $BUSY_RE) {
+        } elseif ($n -match $BUSY_RE -or $n -match $WAIT_RE) {
           $b = $walker.GetPreviousSibling($e)
-          if ($b -and $b.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $b.Current.Name) { $running[$b.Current.Name.Trim()] = $true }
+          if ($b -and $b.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $b.Current.Name) {
+            $t = $b.Current.Name.Trim()
+            $running[$t] = $true
+            if ($n -match $WAIT_RE) { $waiting[$t] = $true }
+          }
         }
       }
     } catch {}
   }
-  # 這次在跑的背景對話
+  # 這次在跑（或在等你允許）的背景對話
   $add = @()
   if ($mode -eq 'chat') {
     $add = @($running.Keys | Where-Object { $_ -ne $view })
     # 記下畫面上的聊天對話：切到 Code 模式時它還在跑，就轉成背景對話（不然沒人追蹤它）
     $script:chatView = $view
     $script:chatViewBusy = [bool]($view -and $running.ContainsKey($view))
-  } elseif ($mode -eq 'code' -and $chatBusy -and $script:chatViewBusy) {
+    $script:chatViewWait = [bool]($view -and $waiting.ContainsKey($view))
+  } elseif ($mode -eq 'code' -and ($chatBusy -or $chatWait) -and $script:chatViewBusy) {
     $add = @($script:chatView)
     $script:chatViewBusy = $false
   }
   foreach ($t in $add) {
-    if (-not $bg.ContainsKey($t)) { $bg[$t] = @{ gen = $false; genSince = 0; genOffAt = 0; finishedAt = 0; viewedAt = 0 } }
+    if (-not $bg.ContainsKey($t)) {
+      $bg[$t] = @{ gen = $false; genSince = 0; genOffAt = 0; finishedAt = 0; viewedAt = 0; review = $false; reviewSince = 0 }
+      if ($mode -eq 'code') { $bg[$t].review = $script:chatViewWait }   # 剛從聊天模式轉過來：沿用當時的狀態
+    }
     $s = $bg[$t]
     if (-not $s.gen) { $s.gen = $true; $s.genSince = $now; $s.viewedAt = 0 }
     $s.genOffAt = 0
   }
+  $anyReview = [bool]($bg.Values | Where-Object { $_.gen -and $_.review })
   foreach ($t in @($bg.Keys)) {
     $s = $bg[$t]
     if ($mode -eq 'chat' -and $t -eq $view) {
@@ -198,17 +216,23 @@ function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
       if ($focused -and -not $s.viewedAt) { $s.viewedAt = $now }
     }
     if ($s.viewedAt -and $now - $s.viewedAt -gt 10000) { $bg.Remove($t); continue }
-    $still = if ($mode -eq 'chat') { $running.ContainsKey($t) } elseif ($mode -eq 'code') { $chatBusy } else { $s.gen }
+    $still = if ($mode -eq 'chat') { $running.ContainsKey($t) } elseif ($mode -eq 'code') { $chatBusy -or $chatWait } else { $s.gen }
+    # 在等你允許：聊天模式看這一列；Code 模式分不出是哪個對話，模式按鈕說在等就沿用（沒有人標著的話全部標上）
+    $wait = if ($mode -eq 'chat') { $waiting.ContainsKey($t) } elseif ($mode -eq 'code') { $chatWait -and ($s.review -or -not $anyReview) } else { $s.review }
+    if ($wait -and -not $s.review) { $s.reviewSince = $now }
+    $s.review = [bool]($wait -and $s.gen)
     if ($s.gen -and -not $still) {
-      # 跟停止鈕一樣，要連續 1.5 秒沒有「執行中」才算完成
+      # 跟停止鈕一樣，要連續 1.5 秒沒有狀態才算完成
       if (-not $s.genOffAt) { $s.genOffAt = $now }
-      if ($now - $s.genOffAt -gt 1500) { $s.gen = $false; $s.finishedAt = $now }
+      if ($now - $s.genOffAt -gt 1500) { $s.gen = $false; $s.review = $false; $s.finishedAt = $now }
     }
     if (-not $s.gen -and $s.finishedAt -and $now - $s.finishedAt -gt 12 * 3600000) { $bg.Remove($t); continue }
     $items['app:claude:bg:' + $t] = @{ key = 'app:claude:bg:' + $t; ai = 'claude'; focused = [bool]($s.viewedAt -and $focused); gen = $s.gen; genSince = $s.genSince;
-                                       review = $false; reviewSince = 0; finishedAt = $s.finishedAt; seen = $now; buttons = @($t) }
+                                       review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; seen = $now; buttons = @($t) }
   }
-  return ($mode -eq 'chat' -and $view -and $running.ContainsKey($view))   # 畫面上的對話是否執行中
+  # 畫面上的對話：側邊欄說它執行中 / 在等你允許（停止鈕、允許鈕暫時讀不到時也不會中斷）
+  $onView = $mode -eq 'chat' -and $view
+  return @{ busy = [bool]($onView -and $running.ContainsKey($view)); wait = [bool]($onView -and $waiting.ContainsKey($view)) }
 }
 
 function Scan {
@@ -231,9 +255,9 @@ function Scan {
     foreach ($p in $wins) { $names.AddRange((Get-ButtonNames $p.MainWindowHandle)) }
     $focused = [bool]($procs | Where-Object { $_.Id -eq $fgPid })
     $view = Get-View $names
-    $busy = $false
-    if ($a.ai -eq 'claude') { $busy = [bool](Update-ClaudeBg $wins $focused ($view -replace '\s*[，,]\s*(重新命名工作階段|rename.*)$', '') $now) }
-    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view $busy
+    $side = @{ busy = $false; wait = $false }
+    if ($a.ai -eq 'claude') { $side = Update-ClaudeBg $wins $focused $view $now }
+    Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view $side.busy $side.wait
   }
 
   # ---- 瀏覽器分頁 ----
@@ -265,6 +289,7 @@ $script:diagText = ''
 $script:fgName = ''
 $script:chatView = ''
 $script:chatViewBusy = $false
+$script:chatViewWait = $false
 
 
 function Get-StateJson {

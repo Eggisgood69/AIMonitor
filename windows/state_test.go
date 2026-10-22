@@ -282,6 +282,40 @@ func TestClaudeAppPairing(t *testing.T) {
 	}
 }
 
+// 實測情境（10-22 23:20）：正看著 Claude App 裡的 Claude Code 對話時斷線出錯（StopFailure）。
+// App 那邊只看到停止鈕消失（像完成），原本 2 秒後就被綠燈蓋掉；應該紅燈亮滿 8 秒
+func TestClaudeAppPairedErrorWhileViewing(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan(nil)
+	*now = now.Add(time.Minute)
+	app := Item{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)}
+	cc := Item{Key: "cc:2fa1a3af", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{app, cc})
+	*now = now.Add(10 * time.Second)
+	failedAt := *now
+	cc = Item{Key: "cc:2fa1a3af", AI: "claude", FinishedAt: ms(*now), Failed: true, Msg: "CONNECTION"}
+	s.ApplyScan([]Item{app, cc})
+	if f := s.BuildFrame(); f.St != "error" {
+		t.Fatalf("StopFailure → red: %+v", f)
+	}
+	*now = now.Add(2 * time.Second)
+	app = Item{Key: "app:claude", AI: "claude", Focused: true, FinishedAt: ms(*now)}
+	s.ApplyScan([]Item{app, cc})
+	if f := s.BuildFrame(); f.St != "error" || len(f.O) != 0 {
+		t.Fatalf("app's stop button gone: still red, no green dot: %+v", f)
+	}
+	*now = failedAt.Add(doneShowWhenViewed - time.Second)
+	s.ApplyScan([]Item{app, cc})
+	if f := s.BuildFrame(); f.St != "error" {
+		t.Fatalf("red for 8 s while viewing: %+v", f)
+	}
+	*now = failedAt.Add(doneShowWhenViewed + time.Second)
+	s.ApplyScan([]Item{app, cc})
+	if f := s.BuildFrame(); f.St != "idle" {
+		t.Fatalf("viewed error → off after 8 s: %+v", f)
+	}
+}
+
 // 實測情境（15:48）：空氣清淨機的對話在背景完成，之後你在別的對話來回聊。
 // 完成後 1 分鐘內綠燈恆亮；之後排到生成中後面（看得到呼吸燈），沒有 AI 在跑時又回到綠燈恆亮
 func TestBackgroundDoneDemotes(t *testing.T) {

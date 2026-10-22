@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.13、韌體 1.8.2
+- 目前：AIMonitor 1.9.14、韌體 1.8.2
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -103,7 +103,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   `app:claude:bg:<標題>`（正在看的那個由 app:claude 負責；點開已完成的亮 8 秒後移除）。只在「Claude」模式（RadioButton 選取）看側邊欄；
   Code 模式的側邊欄是 Claude Code 對話（hooks 已有），改看「Claude，執行中」模式按鈕；
   切到 Code 模式時，剛才畫面上還在跑的聊天對話要轉成背景對話（`$script:chatView`），否則沒人追蹤、主燈會被別的完成蓋過。
-  正在看的對話停止鈕會間歇消失（實測一次 25 秒），側邊欄說它執行中就也算生成中（`Update-Item` 的 `$busy`），否則主燈會被別的完成蓋過
+  正在看的對話停止鈕會間歇消失（實測一次 25 秒），側邊欄說它執行中就也算生成中（`Update-Item` 的 `$busy`），否則主燈會被別的完成蓋過。
+  在等你允許時側邊欄是「等待輸入」、Code 模式的模式按鈕是「Claude，正在等待您的輸入」（`$WAIT_RE`）→ 亮黃燈（`$wait`）；
+  允許按鈕說法常變（「允許本次工作階段」等），`$REVIEW_RE` 認「允許 / allow」開頭的短名稱。
+  背景聊天出錯（例如斷網）時側邊欄狀態只會消失，跟完成分不出來，只能當完成（對話內才有「重試」）
+- 正看著 Claude App 裡的 Claude Code 對話時出錯：StopFailure 跟 App 停止鈕消失配對成同一個對話，
+  App 那項不要亮完成蓋掉紅燈（state.go `matchClaudeApp`），紅燈亮 8 秒
 - hook 伺服器（127.0.0.1:47322）只收不帶 Origin、Content-Type 是 JSON 的請求，網頁送不進來（`ccRequestAllowed`）
 - Claude Code 對話狀態存在 `%LOCALAPPDATA%\AIMonitor\cc-sessions.json`，重啟後讀回（等你回覆 / 允許時對話不會再送事件，不存的話黃燈會消失）；
   讀回來的「生成中」10 分鐘沒新事件就當作重啟期間已結束（`ccRestoredStale`）

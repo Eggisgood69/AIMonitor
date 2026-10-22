@@ -210,6 +210,10 @@ func (s *State) matchClaudeApp() {
 			} else {
 				it.doneUntil = it.FinishedAt + doneShowWhenViewed.Milliseconds() // 看著它完成
 			}
+			if it.Failed {
+				app.doneUntil = 0 // 看著它出錯：App 那邊只看到停止鈕消失（像完成），不要蓋掉紅燈
+				app.pairedFin = app.FinishedAt
+			}
 		} else if app.doneUntil == forever || app.pairedFin == app.FinishedAt {
 			app.doneUntil = 0 // 同一件事：App 這項不亮
 			app.pairedFin = app.FinishedAt

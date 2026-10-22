@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.9、韌體 1.7.2
+- 目前：AIMonitor 1.9.10、韌體 1.7.2
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -75,6 +75,9 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）
 - Gemini 用量頁是獨立網址 `/usage`；背景 WebView 禁止開新視窗（曾經一直點到「瞭解詳情」跳窗）
+- 背景 WebView 省記憶體（providers_windows.go 開頭）：完整網頁一個 300-500 MB，平常停在 idle 頁——ChatGPT `robots.txt`
+  （同網站的小頁面，providers.js 一樣會注入、帶 cookie 打 API），讀不到才開一次完整頁面（30 分鐘最多一次）；Gemini 讀的時候才開 `/usage`，讀完換 `about:blank`。
+  完整頁面 90 秒沒讀到就回 idle 頁。實測私有記憶體 1113 → 460 MB。Claude 本來就停在 `/api/organizations`（JSON 頁）
 - ChatGPT 的用量其實是 Codex 的額度（wham/usage），ChatGPT 聊天也有上限，但 OpenAI 不公開剩餘量
 - 多個序列埠時（例如另一個 USB 裝置在 COM3），韌體更新只用目前已連線並回應 hello 的那個埠
 - 燒錄（flasher.go）：**不要送 FLASH_END(1)**，它會讓 ROM 直接跳進韌體、螢幕卡在全黑；

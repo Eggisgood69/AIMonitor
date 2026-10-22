@@ -1,6 +1,10 @@
 package main
 
 // ChatGPT / Gemini：各用一個隱藏的內建瀏覽器視窗保持登入，定時讀取用量。
+//
+// 省記憶體：完整的網頁一個就吃 300-500 MB，平常停在 idle 頁——
+//   - ChatGPT：同網站的極小頁面（robots.txt），一樣能帶登入 cookie 打 API。讀不到時開一次完整頁面（過 Cloudflare 驗證、刷新登入）
+//   - Gemini：用量只能從 /usage 頁面上讀，所以讀的時候才開，讀完換成空白頁
 
 import (
 	_ "embed"
@@ -20,8 +24,34 @@ var providersJS string
 
 type provView struct {
 	ai, name, url string
+	idle          string // 平常停的頁面（見檔案開頭）
 	w             webview2.WebView
 	hwnd          uintptr
+	// 以下由 provMu 保護
+	full      bool      // 目前開著完整頁面
+	fullAt    time.Time // 開完整頁面的時間（太久沒讀到就回 idle 頁）
+	fullTried time.Time // ChatGPT：上次因為讀不到而開完整頁面的時間
+	idleAt    time.Time // 回 idle 頁的時間
+	replyAt   time.Time // 上次收到 providers.js 回報的時間
+}
+
+const (
+	fullTimeout  = 90 * time.Second // 完整頁面開著這麼久還沒讀到用量：回 idle 頁
+	fullRetryGap = 30 * time.Minute // ChatGPT 小頁面讀不到時，最多這麼久開一次完整頁面
+)
+
+// 切換頁面（呼叫時要持有 provMu；實際的 Navigate 排到主視窗的執行緒）
+func (p *provView) goFull(why string) {
+	p.full, p.fullAt = true, time.Now()
+	if why != "" {
+		logf("%s: open full page (%s)", p.ai, why)
+	}
+	wv.Dispatch(func() { p.w.Navigate(p.url) })
+}
+
+func (p *provView) goIdle() {
+	p.full, p.idleAt = false, time.Now()
+	wv.Dispatch(func() { p.w.Navigate(p.idle) })
 }
 
 type provStatus struct {
@@ -61,8 +91,8 @@ func subclassHide(h uintptr) {
 // 在主執行緒（wv.Run 之前）呼叫
 func createProviders() {
 	for _, p := range []*provView{
-		{ai: "chatgpt", name: "ChatGPT", url: "https://chatgpt.com/"},
-		{ai: "gemini", name: "Gemini", url: "https://gemini.google.com/usage"},
+		{ai: "chatgpt", name: "ChatGPT", url: "https://chatgpt.com/", idle: "https://chatgpt.com/robots.txt"},
+		{ai: "gemini", name: "Gemini", url: "https://gemini.google.com/usage", idle: "about:blank", full: true},
 	} {
 		w := webview2.NewWithOptions(webview2.WebViewOptions{
 			DataPath:      filepath.Join(appDir, "WebView2"),
@@ -80,7 +110,13 @@ func createProviders() {
 		ai := p.ai
 		w.Bind("aimonUsage", func(raw string) string { onProviderUsage(ai, raw); return "ok" })
 		w.Init(providersJS)
-		w.Navigate(p.url)
+		if p.full {
+			p.fullAt = time.Now()
+			w.Navigate(p.url) // Gemini：開機先讀一次
+		} else {
+			p.idleAt = time.Now()
+			w.Navigate(p.idle)
+		}
 		provs[p.ai] = p
 	}
 }
@@ -90,21 +126,50 @@ func pollProviders(only string) {
 	if wv == nil {
 		return
 	}
-	wv.Dispatch(func() {
-		for ai, p := range provs {
-			if only == "" || only == ai {
-				p.w.Eval("window.__aimonPoll && window.__aimonPoll()")
-			}
+	provMu.Lock()
+	defer provMu.Unlock()
+	for ai, p := range provs {
+		if only != "" && only != ai {
+			continue
 		}
-	})
+		if !p.full && p.idle == "about:blank" {
+			p.goFull("") // Gemini：開用量頁，載入後 providers.js 會自己讀
+			continue
+		}
+		wv.Dispatch(func() { p.w.Eval("window.__aimonPoll && window.__aimonPoll()") })
+	}
 }
 
+// 開著完整頁面的重新整理（idle 頁不用）
 func reloadProviders() {
-	wv.Dispatch(func() {
-		for _, p := range provs {
-			p.w.Navigate(p.url)
+	provMu.Lock()
+	defer provMu.Unlock()
+	for _, p := range provs {
+		if p.full {
+			wv.Dispatch(func() { p.w.Navigate(p.url) })
 		}
-	})
+	}
+}
+
+// 讀完一次之後：result = ok（讀到用量）/ out（沒登入）/ fail（其他）
+//   - 完整頁面：讀到用量或確定沒登入就回 idle 頁；失敗先留著（例如 Cloudflare 驗證還在跑），fullTimeout 後再回去
+//   - ChatGPT 小頁面讀不到：開一次完整頁面（fullRetryGap 內最多一次，沒帳號的人才不會一直開）
+//
+// 登入視窗開著時不動（登入完成時 onProviderUsage 會隱藏視窗並回 idle 頁）
+func afterProviderRead(ai, result string) {
+	provMu.Lock()
+	defer provMu.Unlock()
+	p, st := provs[ai], provSt[ai]
+	if p == nil || st == nil || st.LoginMode {
+		return
+	}
+	switch {
+	case p.full && result != "fail":
+		p.goIdle()
+	case !p.full && result != "ok" && time.Since(p.fullTried) > fullRetryGap:
+		p.fullTried = time.Now()
+		p.goFull("idle page: " + result)
+	}
 }
 
 func showProvider(ai string) {
@@ -114,6 +179,7 @@ func showProvider(ai string) {
 	}
 	provMu.Lock()
 	provSt[ai].LoginMode = true
+	p.full, p.fullAt = true, time.Now()
 	provMu.Unlock()
 	wv.Dispatch(func() {
 		p.w.Navigate(p.url)
@@ -158,6 +224,9 @@ func onProviderUsage(ai, raw string) {
 		provMu.Unlock()
 		return
 	}
+	if p := provs[ai]; p != nil {
+		p.replyAt = time.Now()
+	}
 	if d.Diag != "" {
 		st.Diag = d.Diag
 		if len(st.Diag) > 1500 {
@@ -168,9 +237,14 @@ func onProviderUsage(ai, raw string) {
 		st.Err = d.Error
 		provMu.Unlock()
 		logf("%s usage error: %s", ai, d.Error)
+		afterProviderRead(ai, "fail")
 		return
 	}
 	hideNow := false
+	result := "fail"
+	if d.Login != nil && !*d.Login {
+		result = "out"
+	}
 	if d.Login != nil {
 		if *d.Login {
 			st.Login = "in"
@@ -183,6 +257,7 @@ func onProviderUsage(ai, raw string) {
 		}
 	}
 	if d.Quota != nil && (d.Quota.P5 >= 0 || d.Quota.PW >= 0) {
+		result = "ok"
 		st.Err = ""
 		st.Note = d.Quota.Plan
 		st.WLabel = "本週"
@@ -211,9 +286,14 @@ func onProviderUsage(ai, raw string) {
 			go func() {
 				time.Sleep(1500 * time.Millisecond)
 				wv.Dispatch(func() { procShowWindow.Call(p.hwnd, swHide) })
+				provMu.Lock()
+				p.goIdle() // 登入完成：視窗藏起來後回 idle 頁
+				provMu.Unlock()
 			}()
 		}
+		return
 	}
+	afterProviderRead(ai, result)
 }
 
 func providersStatus() map[string]interface{} {
@@ -246,6 +326,21 @@ func providerLoop() {
 		for _, ai := range waiting {
 			pollProviders(ai)
 		}
+		// 完整頁面開太久還沒讀到（例如網路斷了、頁面改版）：回 idle 頁，下次讀的時候再開
+		provMu.Lock()
+		for ai, p := range provs {
+			if p.full && !provSt[ai].LoginMode && time.Since(p.fullAt) > fullTimeout {
+				logf("%s: no usage from full page in %v, back to idle page", ai, fullTimeout)
+				p.goIdle()
+			}
+			// ChatGPT 小頁面載入後完全沒回報（providers.js 載入後 4 秒會自己讀一次）：當作讀不到
+			if !p.full && p.idle != "about:blank" && time.Since(p.idleAt) > time.Minute && p.replyAt.Before(p.idleAt) &&
+				time.Since(p.fullTried) > fullRetryGap {
+				p.fullTried = time.Now()
+				p.goFull("idle page: no reply")
+			}
+		}
+		provMu.Unlock()
 		if t%1800 == 0 {
 			reloadProviders()
 		} else if t%180 == 0 {

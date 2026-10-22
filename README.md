@@ -119,6 +119,8 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 
 這些都是網站內部、非公開的資料，網站改版時可能需要調整；讀不到時設定視窗會顯示「詳細資訊」，截圖給開發者即可。Google 有時會擋內建瀏覽器的登入，若 Gemini 登不進去請回報。
 
+讀額度用的背景網頁平常不開完整的聊天介面（ChatGPT 停在同網站的極小頁面，Gemini 只在讀的時候開用量頁、讀完就關），整個程式大約佔 450 MB 記憶體、CPU 約 1%。
+
 ## Claude Code（Agent 模式：Claude App 的 Code 分頁或終端機）
 
 在設定視窗打開「**連接 Claude Code**」，AIMonitor 會在 `~/.claude/settings.json` 加入 Claude Code 官方的 hooks（http 類型，送到 `http://127.0.0.1:47322/cc`；修改前會備份成 `settings.json.aimonitor-backup`，關掉開關就會移除）。之後新開的 Claude Code 工作階段：

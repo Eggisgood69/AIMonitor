@@ -529,3 +529,17 @@ func TestRealUsagePayload(t *testing.T) {
 		t.Fatalf("real payload: ok=%v %+v", ok, q)
 	}
 }
+
+// 紀錄用：誰亮著
+func TestStateLights(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan([]Item{{Key: "app:claude", AI: "claude", Focused: true, Gen: true}, {Key: "web:gemini", AI: "gemini"}})
+	if l := s.Lights(); l != "app:claude=working*" {
+		t.Fatalf("lights: %q", l)
+	}
+	*now = now.Add(time.Second)
+	s.ApplyScan([]Item{{Key: "app:claude", AI: "claude", Focused: true, Gen: true}, {Key: "web:gemini", AI: "gemini", Gen: true}})
+	if l := s.Lights(); l != "app:claude=working* web:gemini=working" {
+		t.Fatalf("lights: %q", l)
+	}
+}

@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.16、韌體 1.8.2
+- 目前：AIMonitor 1.9.17、韌體 1.8.2
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -120,6 +120,8 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 - USB 接收緩衝要設大（`Serial.setRxBufferSize(2048)`，在 begin 之前）：一行畫面資料 400-600 位元組，預設 256；
   畫一條畫面時沒人讀 USB（韌體 1.8.2 前最重 177-220 ms，現在約 15 ms），緩衝小就會截斷那一行（舊韌體 Disconnected 的主因）。
   負荷數字寫在 AIMonitor 紀錄：`screen load`（每 10 分鐘）、`screen dropped`、`screen rebooted`
+- 追查燈號看紀錄：`frame:` 只記主燈顏色，`lights:`（state.go `Lights`）記每個沒在待命的項目「key=狀態」，`*` = 正在看；
+  背景聊天的 key 含對話標題（只寫在本機紀錄）
 - 螢幕顯示 Disconnected = 有收到資料但 20 秒沒解析到畫面（寫入不會失敗）：serialLoop 每 15 秒送 hello，
   40 秒沒回應就記錄「screen not answering」並 `resetScreen`（最多每 2 分鐘一次）
 - 更新：從專案資料夾啟動新版、取代執行中的舊版時加 `--updated`，安靜換掉不開設定視窗；第一次安裝或舊版沒在跑才 `--welcome` 開視窗

@@ -441,6 +441,24 @@ func (s *State) Snapshot() []map[string]interface{} {
 	return out
 }
 
+// 紀錄用：每個沒在待命的項目「key=狀態」（主燈只看得到顏色，追查是誰亮著要靠這個）；你正在看的加 *
+func (s *State) Lights() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	nowMs := s.now().UnixMilli()
+	var out []string
+	for _, it := range s.items {
+		if st, _ := status(it, nowMs); st != "idle" {
+			if it.Focused {
+				st += "*"
+			}
+			out = append(out, it.Key+"="+st)
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, " ")
+}
+
 // claude.ai 用量 API 的回應 → Quota
 func parseClaudeUsage(raw json.RawMessage) (Quota, bool) {
 	// 回應裡有很多其他欄位（null、物件、布林…），只挑需要的兩個解析

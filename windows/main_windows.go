@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.9.16"
+const version = "1.9.17"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -606,6 +606,7 @@ var (
 	lastFrameJSON string
 	lastFrameSent time.Time
 	lastFrame     Frame
+	lastLights    string // 受 lastFrameMu 保護
 )
 
 func sendFrameNow() { pushFrame(true) }
@@ -618,6 +619,13 @@ func pushFrame(force bool) {
 		return
 	}
 	f := state.BuildFrame()
+	l := state.Lights() // 誰亮著、亮什麼（主燈只記顏色，分不出是哪一項）
+	lastFrameMu.Lock()
+	if l != lastLights {
+		lastLights = l
+		logf("lights: %s", l)
+	}
+	lastFrameMu.Unlock()
 	f.Saver = saverMin()
 	f.Bri = brightness()
 	settingsMu.Lock()

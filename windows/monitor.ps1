@@ -3,6 +3,7 @@
 # 用 Windows 內建的 UI Automation 讀取畫面上的按鈕：
 #   - Claude / ChatGPT 桌面 App
 #   - Chrome / Edge / Brave / Firefox 等瀏覽器裡的 claude.ai、chatgpt.com、gemini.google.com 分頁
+#   - Google 試算表裡的 Claude for Sheets 側欄（算成 Claude）
 # 「停止」按鈕 = 生成中，「允許」按鈕 = 需審核，停止按鈕消失 = 完成。
 # 每秒輸出一行 JSON 到 stdout 給 AIMonitor.exe。
 #
@@ -33,6 +34,10 @@ $APPS = @(
 $BROWSERS = @('chrome', 'msedge', 'brave', 'opera', 'vivaldi', 'firefox', 'arc')
 $HOSTS = [ordered]@{ 'claude.ai' = 'claude'; 'chatgpt.com' = 'chatgpt'; 'chat.openai.com' = 'chatgpt'; 'gemini.google.com' = 'gemini' }
 $HOST_RE = '^(https?://)?(www\.)?(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com)(/|$|\?)'
+# Google 試算表：Claude for Sheets 側欄（生成時「Stop」、等允許時「Allow once」）。試算表也有 Gemini 側欄，
+# 所以只在看得到 Claude 側欄自己的按鈕時才算；除錯清單只留判斷用的按鈕（工具列很多、帳戶按鈕有 email）
+$SHEETS_RE = '^(https?://)?docs\.google\.com/spreadsheets/'
+$SHEETS_CLAUDE = @('Model and response options', 'Queue message', 'Ask before edits', 'Chat history')
 
 # 「停止生成」按鈕 → 生成中；「允許 / 核准」按鈕 → 需審核
 # Gemini 的停止鈕名稱各語言版本不同（例如「停止回覆」「停止產生回覆」），所以「停止 / Stop 開頭的短名稱」都算
@@ -92,7 +97,7 @@ function Get-Url([IntPtr]$hwnd) {
       try {
         $vp = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
         $v = [string]$vp.Current.Value
-        if ($v -match $HOST_RE) { $omni[$k] = $e; return $v }
+        if ($v -match $HOST_RE -or $v -match $SHEETS_RE) { $omni[$k] = $e; return $v }
         # 看起來像網址的輸入框（網址列）
         if (-not $fallback -and $v -match '^\S+\.\S+$') { $fallback = $e }
       } catch {}
@@ -103,6 +108,7 @@ function Get-Url([IntPtr]$hwnd) {
 }
 
 function Url-To-AI([string]$url) {
+  if ($url -match $SHEETS_RE) { return 'claude' }
   if ($url -notmatch $HOST_RE) { return $null }
   $h = $Matches[3]
   return $HOSTS[$h]
@@ -274,8 +280,16 @@ function Scan {
       continue
     }
     $key = 'web:' + $ai
-    if (-not $agg.ContainsKey($key)) { $agg[$key] = @{ ai = $ai; focused = $false; view = $url; names = (New-Object System.Collections.Generic.List[string]) } }
-    $agg[$key].names.AddRange((Get-ButtonNames $h))
+    $view = $url
+    $names = Get-ButtonNames $h
+    if ($url -match $SHEETS_RE) {
+      $key = 'web:claude:sheets'
+      $view = $url -replace '[#?].*$', ''   # 換工作表、選儲存格會改 #gid= / range=，不算換對話
+      $claude = @($names | Where-Object { $SHEETS_CLAUDE -contains $_ }).Count -gt 0
+      $names = [System.Collections.Generic.List[string]]@($names | Where-Object { $claude -and ($_ -match $STOP_RE -or $_ -match $REVIEW_RE) })
+    }
+    if (-not $agg.ContainsKey($key)) { $agg[$key] = @{ ai = $ai; focused = $false; view = $view; names = (New-Object System.Collections.Generic.List[string]) } }
+    if ($names.Count) { $agg[$key].names.AddRange($names) }
     if ($h -eq $fg) { $agg[$key].focused = $true }
   }
   foreach ($key in $agg.Keys) { Update-Item $key $agg[$key].ai $agg[$key].focused $agg[$key].names $now $agg[$key].view }

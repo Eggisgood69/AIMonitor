@@ -100,7 +100,7 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 - **系統匣圖示**：右下角的圓形圖示會跟著狀態變色（外圈 = 狀態燈、中間 = 目前的 AI），滑鼠停上去可看到狀態與額度。左鍵打開設定視窗，右鍵有選單（播放測試畫面、重新讀取額度、結束程式）。Windows 11 第一次可能藏在「^」裡，可以把它拖到工作列上。
 - **再打開設定視窗**：點系統匣圖示，或再雙擊一次 AIMonitor.exe。關閉視窗只是隱藏，程式不會結束。
 - **換電腦**：把 `AIMonitor.exe` 放在隨身碟或雲端硬碟，到新電腦雙擊一次、登入一次即可。
-- **偵測範圍**：Claude 桌面 App、ChatGPT 桌面 App，以及 Chrome / Edge / Brave / Firefox 裡的 claude.ai、chatgpt.com、gemini.google.com 分頁。
+- **偵測範圍**：Claude 桌面 App、ChatGPT 桌面 App，以及 Chrome / Edge / Brave / Firefox 裡的 claude.ai、chatgpt.com、gemini.google.com 分頁；Google 試算表裡的 Claude for Sheets 側欄也算 Claude（生成中、等你允許、完成都會亮）。
 - **不需要**安裝 Chrome 擴充功能。如果之前有裝，請到 `chrome://extensions` **移除**它，否則兩邊會搶同一個 USB 序列埠。
 
 ### Mac 或不想裝 exe：Chrome 擴充功能（選用）

@@ -38,6 +38,8 @@ type ccSession struct {
 	Failed      bool   // 上一次是因為 API 錯誤結束（StopFailure）
 	ErrMsg      string // 螢幕上的短字，例如 RATE LIMIT
 	Last        time.Time
+	Transcript  string    // 對話紀錄檔（.jsonl），用來發現你按了中斷
+	checkedAt   time.Time // 上次看紀錄檔的時間（不存檔）
 }
 
 type ClaudeCode struct {
@@ -116,6 +118,59 @@ type ccEvent struct {
 	Error            json.RawMessage `json:"error"` // StopFailure 的錯誤種類（rate_limit、server_error …）
 	ToolName         string          `json:"tool_name"`
 	ToolInput        json.RawMessage `json:"tool_input"`
+	TranscriptPath   string          `json:"transcript_path"`
+}
+
+// 你按了中斷（Esc / 停止）時 Claude Code 不送 Stop，綠燈會一直亮：
+// 改看對話紀錄檔，最後一則對話是「[Request interrupted by user…」就當作停了
+const ccInterruptCheck = 2 * time.Second
+
+func ccInterrupted(path string) bool {
+	if !strings.EqualFold(filepath.Ext(path), ".jsonl") {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	const tail = 64 << 10
+	if st, err := f.Stat(); err == nil && st.Size() > tail {
+		f.Seek(st.Size()-tail, 0)
+	}
+	b := make([]byte, tail)
+	n, _ := f.Read(b)
+	lines := bytes.Split(b[:n], []byte{'\n'})
+	for i := len(lines) - 1; i >= 0; i-- {
+		var l struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(lines[i], &l) != nil || (l.Type != "user" && l.Type != "assistant") {
+			continue // 第一行可能被切斷；其他種類（附件、系統紀錄…）不算對話
+		}
+		if l.Type != "user" {
+			return false
+		}
+		text := string(l.Message.Content)
+		var parts []struct {
+			Type, Text string
+		}
+		if json.Unmarshal(l.Message.Content, &parts) == nil {
+			text = ""
+			for _, p := range parts {
+				if p.Type == "text" {
+					text += p.Text
+				}
+			}
+		} else {
+			json.Unmarshal(l.Message.Content, &text)
+		}
+		return strings.HasPrefix(strings.TrimSpace(text), "[Request interrupted by user")
+	}
+	return false
 }
 
 // Claude 問你問題用的工具（看工具，不看按鈕文字：按鈕每次都不一樣）
@@ -186,6 +241,9 @@ func (c *ClaudeCode) Handle(body []byte) error {
 	}
 	if e.Cwd != "" {
 		s.Cwd = e.Cwd
+	}
+	if e.TranscriptPath != "" {
+		s.Transcript = e.TranscriptPath
 	}
 	s.Last = now
 	startGen := func() {
@@ -271,6 +329,13 @@ func (c *ClaudeCode) Items() []Item {
 		if s.Gen && !s.Review && !c.loadedAt.IsZero() && s.Last.Before(c.loadedAt) && now.Sub(c.loadedAt) > ccRestoredStale {
 			s.Gen = false // 讀回來的生成中一直沒新事件：重啟期間已經結束了（不算完成，不亮綠燈）
 			changed = true
+		}
+		if (s.Gen || s.Review) && s.Transcript != "" && now.Sub(s.checkedAt) >= ccInterruptCheck {
+			s.checkedAt = now
+			if ccInterrupted(s.Transcript) {
+				s.Gen, s.Review, s.Waiting, s.Asking, s.AskAfter = false, false, false, false, false // 你自己停的：不亮完成
+				changed = true
+			}
 		}
 		idle := !s.Gen && !s.Review
 		// 很久沒動靜的工作階段就移除（終端機直接關掉時不一定有 SessionEnd）

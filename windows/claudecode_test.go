@@ -401,3 +401,31 @@ func TestClaudeCodeSettingsPatch(t *testing.T) {
 		t.Fatal("broken json should fail")
 	}
 }
+
+// 你按了中斷：Claude Code 不送 Stop，看對話紀錄檔最後一則
+func TestClaudeCodeInterrupted(t *testing.T) {
+	c := NewClaudeCode()
+	now := time.Date(2026, 10, 23, 16, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	tr := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(tr, []byte(`{"type":"user","message":{"role":"user","content":"幫我建立 PR"}}`+"\n"), 0o644)
+	body, _ := json.Marshal(map[string]string{"session_id": "abcdef123456", "hook_event_name": "UserPromptSubmit", "transcript_path": tr})
+	if err := c.Handle(body); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(3 * time.Second)
+	if it := c.Items()[0]; !it.Gen {
+		t.Fatalf("still working: %+v", it)
+	}
+	f, _ := os.OpenFile(tr, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}` + "\n")
+	f.WriteString(`{"type":"queue-operation"}` + "\n")
+	f.Close()
+	if it := c.Items()[0]; !it.Gen {
+		t.Fatalf("checked less than 2s ago, should wait: %+v", it)
+	}
+	now = now.Add(3 * time.Second)
+	if it := c.Items()[0]; it.Gen || it.Review || it.FinishedAt != 0 {
+		t.Fatalf("interrupted should go idle without done: %+v", it)
+	}
+}

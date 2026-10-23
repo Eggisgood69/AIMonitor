@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.15、韌體 1.8.2
+- 目前：AIMonitor 1.9.16、韌體 1.8.2
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -88,6 +88,8 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 - 燒錄（flasher.go）：**不要送 FLASH_END(1)**，它會讓 ROM 直接跳進韌體、螢幕卡在全黑；
   寫完用 `rebootToApp`（先進燒錄模式再 RTS 重置）。Windows usbser.sys 只改 RTS 不會送出，
   `SetRTS` 之後要再設一次 DTR（esptool 同樣做法）。卡住的韌體單純 RTS 重置救不回來
+- Claude Code 被中斷（Esc / 停止鈕）時不送 Stop，綠燈會一直亮：hook 事件帶的 `transcript_path`（對話紀錄 .jsonl）
+  在生成中 / 需審核時每 2 秒看結尾，最後一則對話是「[Request interrupted by user…」就熄（不算完成，claudecode.go `ccInterrupted`）
 - Claude Code hooks：按下允許時沒有任何事件；`permission_prompt` 通知在提示等了約 6 秒才送（只送一次）
 - Claude 問你問題不是權限提示（只有 Stop）：看 PreToolUse 的工具判斷（`ccAskKind`）——AskUserQuestion / ExitPlanMode 題目出現就亮黃燈，
   Claude App「下一步」方塊是 wrap_up 工具帶 `ask`，Stop 時亮黃燈、送出下一則訊息才熄。不要靠按鈕文字（每次都不一樣）

@@ -42,8 +42,8 @@ $SHEETS_CLAUDE = @('Model and response options', 'Queue message', 'Ask before ed
 # 「停止生成」按鈕 → 生成中；「允許 / 核准」按鈕 → 需審核
 # Gemini 的停止鈕名稱各語言版本不同（例如「停止回覆」「停止產生回覆」），所以「停止 / Stop 開頭的短名稱」都算
 $STOP_RE   = '^(stop( (response|responding|generating|streaming|generation))?|停止.{0,6}|中止.{0,4}|停止 .{0,8})$'
-# 排除：Claude App 背景任務的「停止此任務」（不是生成中）、分享 / 錄音 / 朗讀等
-$STOP_NOT_RE = '(分享|共用|錄|播放|朗讀|語音|任務|share|record|play|read aloud|voice|sharing|task)'
+# 排除：Claude App 背景任務的「停止此任務」、預覽伺服器的「停止此伺服器」（都不是生成中）、分享 / 錄音 / 朗讀等
+$STOP_NOT_RE = '(分享|共用|錄|播放|朗讀|語音|任務|伺服器|share|record|play|read aloud|voice|sharing|task|server)'
 # 允許按鈕的說法常變（允許一次、允許這次、允許本次工作階段、Allow for this chat…）：「允許 / allow」開頭的短名稱都算
 $REVIEW_RE = '^(allow( .{1,30})?|always allow|approve|允許.{0,8}|一律允許|永遠允許|核准)$'
 # Claude App 側邊欄：背景在跑的對話旁有「執行中」狀態（橘點）；上方模式切換也會變成「Code，執行中」

@@ -543,3 +543,24 @@ func TestStateLights(t *testing.T) {
 		t.Fatalf("lights: %q", l)
 	}
 }
+
+// 實測（10-30 22:14:27）：看著 App 裡的 Claude Code 對話完成，App 那項晚 2 秒完成、排到主燈，Claude Code 那項變成多出來的小圓點
+func TestClaudeAppViewedDoneNoExtraDot(t *testing.T) {
+	s, now := newTestState()
+	app := Item{Key: "app:claude", AI: "claude", Focused: true, Gen: true, GenSince: ms(*now)}
+	cc := Item{Key: "cc:0cccab18", AI: "claude", Gen: true, GenSince: ms(*now)}
+	s.ApplyScan([]Item{app, cc})
+	*now = now.Add(10 * time.Second)
+	cc.Gen, cc.FinishedAt = false, ms(*now)
+	s.ApplyScan([]Item{app, cc})
+	*now = now.Add(2 * time.Second)
+	app.Gen, app.FinishedAt = false, ms(*now)
+	s.ApplyScan([]Item{app, cc})
+	for i := 0; i < 8; i++ { // App 完成的當下到 8 秒後熄燈，都只有一個燈
+		if f := s.BuildFrame(); len(f.O) != 0 {
+			t.Fatalf("%ds: one conversation should be one light: %+v (%s)", i, f, s.Lights())
+		}
+		*now = now.Add(time.Second)
+		s.ApplyScan([]Item{app, cc})
+	}
+}

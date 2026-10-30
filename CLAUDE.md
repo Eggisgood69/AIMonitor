@@ -57,7 +57,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.17、韌體 1.8.2
+- 目前：AIMonitor 1.9.18、韌體 1.8.2
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -97,7 +97,9 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   背景生成中 > 正在看的生成中 > 背景完成（1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機。**不跳 Windows 通知**（使用者不要，已移除）。
   正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）
 - Claude Code hooks 不知道你在看哪個對話：Stop 與 Claude App 停止鈕消失的時間差 4 秒內 = 同一個對話（`matchClaudeApp`），
-  只亮一個綠燈、切回 App 一起熄。Claude App 背景任務的「停止此任務」不算生成中（monitor.ps1 `$STOP_NOT_RE`）
+  只亮一個綠燈、切回 App 一起熄。Claude App 背景任務的「停止此任務」、預覽伺服器的「停止此伺服器」不算生成中（monitor.ps1 `$STOP_NOT_RE`；
+  沒排除的話 App 那項一直是生成中，跟 Claude Code 的完成對不上，多出一顆小圓點）。
+  主燈選到 `app:claude` 時，有狀態相同的 Claude Code 對話就改用它（看著它完成時 App 晚 1-2 秒完成、排在前面，不換的話 Claude Code 那項變成多餘的點）
 - 在 Claude App / 瀏覽器裡切換對話時停止鈕也會消失：monitor.ps1 記下生成時畫面上的對話
   （App 標題列「…，重新命名工作階段」按鈕、瀏覽器網址），換了對話就不算完成。
   今日統計：App 的完成等 4 秒，跟 Claude Code 同時完成的只算一次（state.go `flushPending`）

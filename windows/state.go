@@ -347,13 +347,14 @@ func (s *State) BuildFrame() Frame {
 				break
 			}
 		}
-		// 跟到 Claude App 時，畫面上的對話通常也是一個 Claude Code 對話：用它（名稱清楚、小圓點不重複）
-		if main.it.Key == "app:claude" {
-			for i := range list {
-				if strings.HasPrefix(list[i].it.Key, "cc:") && list[i].st == main.st {
-					main = &list[i]
-					break
-				}
+	}
+	// 主燈是 Claude App 時，畫面上的對話通常也是一個 Claude Code 對話：用它（名稱清楚、小圓點不重複）。
+	// 你看著它完成時兩項都是完成，App 那項晚 1-2 秒、排在前面；不換的話 Claude Code 那項會變成多出來的小圓點
+	if main != nil && main.it.Key == "app:claude" {
+		for i := range list {
+			if strings.HasPrefix(list[i].it.Key, "cc:") && list[i].st == main.st {
+				main = &list[i]
+				break
 			}
 		}
 	}

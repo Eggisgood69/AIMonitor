@@ -64,7 +64,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.2、韌體 1.10.2（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.11.5、韌體 1.10.5（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -106,6 +106,8 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   - 外環跟著 TE 腳（GPIO13，60 Hz）寫，避免撕裂；一格外環約 12 ms，重畫中每格外環之後先畫一條（`stripSinceRing`），否則字永遠不更新。
     sprite 裡的外環用螢幕上最後一格的亮度（`g_ringShownMs`），不會一條一條閃
   - 防烙印：文字與小圓點每 2 分鐘在 9 個位置間挪動（`g_shX/g_shY`，最多 2 個設計像素）
+  - 外環整圈畫進畫面緩衝（`ringDraw`，涵蓋半徑 110.5 以外），其他東西畫在那裡會被每一格外環蓋掉：螢幕保護的額度弧放在 107.5（`drawClock`），
+    只畫已用的部分、不畫軌道（使用者要的；LCD 維持原樣），用原色（調暗時很暗的顏色會變成一點一點）
   - 額度環查表的距離在 466 用 1/8 px（`GAUGE_DQ`，1/16 會超過 uint8）
   - 待機 / 未連線的暗灰外環在 AMOLED 上看起來偏綠；未連線本來就會灰色慢呼吸（不是錯誤）
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。

@@ -604,9 +604,16 @@ static void drawClock(uint32_t ms, bool pageMode) {
   if (!pageMode && linkAlive() && g_frame.p5 >= 0) {
     const Brand& b = BRANDS[g_frame.brand];
     float p = g_frame.p5 > 100 ? 100 : g_frame.p5;
-    uint32_t col = mix(C_BG, p >= 90 ? C_RED : b.color, 0.55f);
-    ringArc(S(112), S(1.5f), GAUGE_START, GAUGE_START + GAUGE_SPAN, mix(C_BG, col, 0.25f), mix(C_BG, col, 0.25f));
-    if (p > 0) ringArc(S(112), S(1.5f), GAUGE_START, GAUGE_START + GAUGE_SPAN * p / 100, col, col);
+#if LCD_W > 240
+    // AMOLED：外環整圈畫進畫面緩衝（RING_R0 以外，含加寬的段約 110.5），弧放在 112 會被蓋掉、斷斷續續 → 往內移到外環區域外。
+    // 調暗時很暗的顏色也會變成一點一點：用原色、線粗一點；只畫已用的部分，不畫軌道（使用者要的）
+    const float r = S(107.5f), lit = 1.0f, trk = 0.0f, hw = S(2.0f);
+#else
+    const float r = S(112), lit = 0.55f, trk = 0.25f, hw = S(1.5f);
+#endif
+    uint32_t col = mix(C_BG, p >= 90 ? C_RED : b.color, lit);
+    if (trk > 0) ringArc(r, hw, GAUGE_START, GAUGE_START + GAUGE_SPAN, mix(C_BG, col, trk), mix(C_BG, col, trk));
+    if (p > 0) ringArc(r, hw, GAUGE_START, GAUGE_START + GAUGE_SPAN * p / 100, col, col);
   }
 
   char buf[16];

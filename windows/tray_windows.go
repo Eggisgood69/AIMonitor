@@ -199,9 +199,7 @@ func trayMenu() {
 var stNames = map[string]string{"idle": "待命", "done": "完成", "working": "生成中", "review": "需要審核", "error": "錯誤"}
 
 func trayState() (key, tip string, ring, center uint32, dim bool) {
-	serMu.Lock()
-	conn := serStat.Connected
-	serMu.Unlock()
+	conn := anyScreenConnected()
 	lastFrameMu.Lock()
 	f := lastFrame
 	lastFrameMu.Unlock()

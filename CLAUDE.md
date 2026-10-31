@@ -5,8 +5,10 @@
 
 ## 這是什麼
 
-ESP32-C3 1.28 吋圓形螢幕（ESP32-2424S012N，GC9A01 240×240，無觸控）透過 USB 序列埠，
-顯示 Claude / ChatGPT / Gemini 的生成狀態（外圈燈號）與額度用量。電腦端是單一執行檔 `AIMonitor.exe`。
+圓形螢幕透過 USB 序列埠，顯示 Claude / ChatGPT / Gemini 的生成狀態（外圈燈號）與額度用量。電腦端是單一執行檔 `AIMonitor.exe`。
+支援兩種螢幕（同一份韌體原始碼，依編譯目標自動選，`config.h`），可以同時接好幾塊，內容一樣：
+- `c3`：ESP32-2424S012N（ESP32-C3、GC9A01 1.28 吋 240×240 LCD，無觸控）
+- `s3a175`：Waveshare ESP32-S3-Touch-AMOLED-1.75（ESP32-S3R8、CO5300 1.75 吋 466×466 AMOLED，QSPI；觸控 / 電池 / 音訊沒用到）
 
 - 外圈狀態燈：生成中綠色慢呼吸、完成綠燈恆亮（不要白閃）、需審核黃色快呼吸、錯誤紅色雙閃、待命暗灰
 - 額度環：5 小時額度，下方留 56° 開口，從開口左側順時針增加；每週額度只顯示文字
@@ -17,12 +19,13 @@ ESP32-C3 1.28 吋圓形螢幕（ESP32-2424S012N，GC9A01 240×240，無觸控）
 
 ```
 firmware/aimon/aimon.ino   韌體主程式（序列埠協定、BOOT 鍵、分條重畫 + 60fps 外環）
-firmware/aimon/ui.h        所有畫面（韌體與 preview 共用）
+firmware/aimon/ui.h        所有畫面（韌體與 preview 共用）；照 240 設計，S() / SI() 等比例放大到 LCD_W
 firmware/aimon/fonts.h     由 firmware/tools/fontgen.py 產生（Inter，SIL OFL；授權全文 firmware/tools/fonts/OFL.txt，散布字型要一起附上）
-firmware/aimon/config.h    腳位、亮度
+firmware/aimon/fonts466.h  AMOLED 用的放大字型（`fontgen.py 466`）
+firmware/aimon/config.h    兩種板子的腳位、亮度（`#if CONFIG_IDF_TARGET_ESP32S3`）
 firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）
 windows/                   Go 程式（Windows only，WebView2）
-  main_windows.go          進入點、設定、序列埠連線、指令（onCmd）、狀態 JSON（uiStatusJSON）
+  main_windows.go          進入點、設定、序列埠連線（每個埠一條，runScreen）、指令（onCmd）、狀態 JSON（uiStatusJSON）
   state.go                 偵測結果 → 送給螢幕的 Frame（可跨平台測試）
   monitor.ps1              UI Automation 偵測桌面 App / 瀏覽器分頁的「停止」「允許」按鈕
   providers.js / providers_windows.go   ChatGPT（wham/usage）與 Gemini（gemini.google.com/usage）用量
@@ -31,8 +34,8 @@ windows/                   Go 程式（Windows only，WebView2）
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
   stats.go                 今日統計（stats.json，保留 7 天）
   tray_windows.go          系統匣圖示
-  flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app）
-  fw/aimon-app.bin, fw/version.txt  內建到 exe 的韌體（build.ps1 會自動更新）
+  flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符）
+  fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/solidworks/      3D 列印外殼（使用者自己用 SolidWorks 畫，設計中）：原始檔、export/ 匯出檔；reference/ 網路下載的參考模型不公開（.gitignore）
 extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維護）
 ```
@@ -49,8 +52,9 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   ```
 
 日常：
-- `./build.ps1`：編譯韌體 → 更新 `windows/fw/` → 測試並編譯 `windows/AIMonitor.exe`
-- `./build.ps1 -Flash COM5`：另外直接把韌體燒進螢幕（先在 AIMonitor 系統匣按「結束程式」，否則序列埠被占用）
+- `./build.ps1`：編譯兩種韌體（`build/firmware/<hw>/`）→ 更新 `windows/fw/` 與 `firmware/aimon-usb-*.bin` → 測試並編譯 `windows/AIMonitor.exe`
+- `./build.ps1 -Flash COM5`：另外直接把韌體燒進螢幕，用 esptool chip_id 自動判斷種類（或 `-Board s3a175`）。先在 AIMonitor 系統匣按「結束程式」，否則序列埠被占用
+- S3 的 FQBN：`esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB`（核心一樣 2.0.9）
 - 只改電腦端：`cd windows; go test ./...; go build -trimpath -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
 - 雙擊新的 AIMonitor.exe 會自動取代執行中的舊版並安裝到 `%LOCALAPPDATA%\AIMonitor`
 
@@ -58,12 +62,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.9.18、韌體 1.8.2
+- 目前：AIMonitor 1.10.0、韌體 1.9.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
 電腦 → 螢幕：`{ai, st, msg, p5, pw, r5, rw, age, now, tz, saver, bri, rot, led, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`led` = 外接 WS2812 亮度 0-100）
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零）、`{"ev":"btn"}`（長按 BOOT）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms；韌體 1.9.0 前沒有 `hw` = c3）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -76,6 +80,16 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   之後只做整數混色，最重的一條 7-15 ms。表約 50 KB（剩餘記憶體 255 → 198 KB）。
   以像素中心算距離才會跟舊畫法對齊（`drawWideLine` 只吃整數座標），邊緣多 0.2 px（`GAUGE_AA`）補回舊畫法重疊造成的粗細
 - 螢幕方向存在 NVS（Preferences "aimon"/"rot"）
+- AMOLED（CO5300，LovyanGFX 1.2.33 的 `Panel_CO5300` + `Bus_SPI` 四線）：
+  - 直接寫到螢幕的範圍 x、y、寬、高都要是**偶數**（`LCD_EVEN`）：x / 寬奇數 LovyanGFX 會整段丟掉，y / 高奇數面板會亂掉（全白）。
+    外環兩列一組推（`RING_ROWS`，兩列取聯集、每個像素照實際距離查色），sprite 每條 40 列；所以外環也畫進 sprite（`g_ringDirect = false`），不用透明色挖空
+  - QSPI 下 LovyanGFX 的 DMA 路徑、以及 **64 位元組以下**的寫入（改塞 SPI 暫存器那條路）都會畫壞：bus `dma_channel = 0`，外環每段加寬到 > 64 位元組（右側 3 點鐘曾有一條暗線）
+  - 面板記憶體 472 欄、從第 6 欄開始（`offset_x = 6`）；放開重置後要多等 150 ms 再送初始化（不然偶爾開機全白，`Panel_CO5300_466`）
+  - 外環跟著 TE 腳（GPIO13，60 Hz）寫，避免撕裂；一格外環約 12 ms，重畫中每格外環之後先畫一條（`stripSinceRing`），否則字永遠不更新。
+    sprite 裡的外環用螢幕上最後一格的亮度（`g_ringShownMs`），不會一條一條閃
+  - 防烙印：文字與小圓點每 2 分鐘在 9 個位置間挪動（`g_shX/g_shY`，最多 2 個設計像素）
+  - 額度環查表的距離在 466 用 1/8 px（`GAUGE_DQ`，1/16 會超過 uint8）
+  - 待機 / 未連線的暗灰外環在 AMOLED 上看起來偏綠；未連線本來就會灰色慢呼吸（不是錯誤）
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）
@@ -85,7 +99,10 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   （同網站的小頁面，providers.js 一樣會注入、帶 cookie 打 API），讀不到才開一次完整頁面（30 分鐘最多一次）；Gemini 讀的時候才開 `/usage`，讀完換 `about:blank`。
   完整頁面 90 秒沒讀到就回 idle 頁。實測私有記憶體 1113 → 460 MB。Claude 本來就停在 `/api/organizations`（JSON 頁）
 - ChatGPT 的用量其實是 Codex 的額度（wham/usage），ChatGPT 聊天也有上限，但 OpenAI 不公開剩餘量
-- 多個序列埠時（例如另一個 USB 裝置在 COM3），韌體更新只用目前已連線並回應 hello 的那個埠
+- 好幾塊螢幕：serialLoop 每 2 秒看插著的埠，每個埠一個 `runScreen` 連線，`queueFrame` 送給所有螢幕；設定視窗每塊一行。
+  12 秒沒回應的埠（例如 COM3 的 CH340 別的裝置）記成 `quietPort`：已經有螢幕連上時就不再去開它，直到拔掉重插
+- 韌體更新只用已連線並回應 hello 的埠（`pickFirmwareTarget`），依 `hw` 選韌體，只暫停那個埠（`fwPort`）；
+  `FlashApp` 先讀 ROM magic 暫存器（0x40001000）比對映像檔標頭的晶片 ID（C3 = 5、S3 = 9），不符就不擦除
 - 燒錄（flasher.go）：**不要送 FLASH_END(1)**，它會讓 ROM 直接跳進韌體、螢幕卡在全黑；
   寫完用 `rebootToApp`（先進燒錄模式再 RTS 重置）。Windows usbser.sys 只改 RTS 不會送出，
   `SetRTS` 之後要再設一次 DTR（esptool 同樣做法）。卡住的韌體單純 RTS 重置救不回來
@@ -137,3 +154,5 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
 - 其他提案：額度快用完警告、夜間自動調暗、生成太久提醒
+- AMOLED：觸控（CST9217，I2C SDA 15 / SCL 14、INT 11、RST 40）點一下換頁；目前只用 BOOT 鍵
+- 好幾塊螢幕時方向、亮度、外接 LED 是共用設定（frame 裡的 rot / bri / led），還不能每塊分開設

@@ -7,13 +7,28 @@
 //   內環 = 5 小時額度（有資料時）
 //   中央 = AI 名稱、大數字、狀態
 
+#ifndef LCD_W
+#define LCD_W 240                  // 螢幕寬高（圓形，正方形畫面）
+#endif
+#ifndef LCD_EVEN
+#define LCD_EVEN 0                 // 1 = 直接寫到螢幕的範圍 x、y、寬、高都要是偶數（CO5300：不對齊會亂掉）
+#endif
+#if LCD_W == 466
+#include "fonts466.h"
+#else
 #include "fonts.h"
+#endif
 #ifndef SAVER_MIN
 #define SAVER_MIN 5
 #endif
 
-static const int W = 240, H = 240, CX = 120, CY = 120, BAND_H = 40;   // 分 6 條畫（每條很快，中間穿插呼吸燈）
-static int OY = 0;                 // 240x40 緩衝分 6 條畫，目前在畫哪一條
+static const int W = LCD_W, H = LCD_W, CX = W / 2, CY = H / 2, BAND_H = 40;   // 分條畫（每條很快，中間穿插呼吸燈）
+static int OY = 0;                 // W×BAND_H 緩衝一條一條畫，目前在畫哪一條
+
+// 版面照 240×240 設計，其他尺寸等比例放大：S() / SI() = 設計座標 → 像素
+static constexpr float UI_K = LCD_W / 240.0f;
+static constexpr float S(float v) { return v * UI_K; }
+static constexpr int SI(float v) { return (int)(v * UI_K + (v < 0 ? -0.5f : 0.5f)); }
 
 // ---------------- Apple 深色模式系統色 ----------------
 static const uint32_t C_BG      = 0x000000;
@@ -134,7 +149,11 @@ static void ringArc(float r, float halfW, float a0, float a1, uint32_t c0, uint3
 }
 static void ringFull(float r, float halfW, uint32_t c) { ringArc(r, halfW, 0, 360, c, c); }
 
+// 防烙印（AMOLED）：文字與小圓點整體挪幾個像素，由韌體定時換位置；外環、額度環不動
+static int g_shX = 0, g_shY = 0;
+
 static void text(const char* s, int x, int y, uint32_t col, const lgfx::IFont* font, textdatum_t datum = middle_center) {
+  x += g_shX; y += g_shY;
   band.setFont(font);
   band.setTextDatum(datum);
   band.setTextColor(col);
@@ -183,8 +202,8 @@ static float ringLevel(St st, uint32_t ms) {
 }
 
 // 外環（狀態燈）幾何：用整數半徑的實心環，可直接畫到螢幕上，整圈同時變化
-static const int RS_OUT = 119, RS_IN = 113;           // 環本體
-static const float R_USAGE  = 104.5f, HW_USAGE = 6.0f; // 內環：5 小時額度（98.5 ~ 110.5，緊貼外環）
+static const int RS_OUT = 119, RS_IN = 113;           // 環本體（設計座標）
+static constexpr float R_USAGE = S(104.5f), HW_USAGE = S(6.0f); // 內環：5 小時額度（98.5 ~ 110.5，緊貼外環）
 
 // 依目前狀態算外環顏色與亮度
 static void ringParams(uint32_t ms, uint32_t& col, float& k) {
@@ -198,55 +217,91 @@ static void ringParams(uint32_t ms, uint32_t& col, float& k) {
 // 每一格只要算 64 色的調色盤，再一列一列整段送到螢幕：
 //   - 一次畫完約 3 ms，可以跑到 60 fps，呼吸燈很順
 //   - 整圈用同一個亮度，不會有上下半圈不同步
-static const float RING_R0 = 111.0f, RING_R1 = 121.0f;   // 外環區域（環內緣 ~ 螢幕邊）
-static const int RING_LV = 40;                              // 距離等級數（(RING_R1-RING_R0)*4）
+static constexpr float RING_R0 = S(111.0f), RING_R1 = S(121.0f);   // 外環區域（環內緣 ~ 螢幕邊）
+static constexpr int RING_LV = (int)((RING_R1 - RING_R0) * 4 + 0.5f); // 距離等級數（1/4 px 一級）
 struct RingSeg { int16_t x0, n; uint16_t off; };
-static RingSeg g_rseg[H][2];
+static constexpr int RING_ROWS = LCD_EVEN ? 2 : 1;        // 每段幾列（CO5300：y 與高度也要偶數，兩列一起送）
+static RingSeg g_rseg[H][2];                                // 每 RING_ROWS 列記在第一列，其餘列沒有段
 static uint8_t g_rsegN[H];
-static uint8_t* g_rlv = nullptr;                            // 每個外環像素的距離等級
+static uint8_t* g_rlv = nullptr;                            // 每個外環像素的距離等級（每段 n × RING_ROWS 個）
 static bool g_ringDirect = false;                          // 韌體：外環直接畫到螢幕（sprite 這區留空）
 static bool g_ringKeyed = false;                           // 這次畫面有沒有把外環區域留空
 static const uint16_t RING_KEY = 0x0821;                   // 「透明」用的顏色（幾乎黑）
 
+// 第 y 列在外環區域的範圍 [L, R]；hole = 中間有環內不碰的範圍 [a, b]
+static bool ringRow(int y, int& L, int& R, bool& hole, int& a, int& b) {
+  const float dy = y + 0.5f - CY;
+  if (fabsf(dy) >= RING_R1) return false;
+  const float xo = sqrtf(RING_R1 * RING_R1 - dy * dy);
+  L = (int)floorf(CX - xo); R = (int)ceilf(CX + xo) - 1;
+  if (L < 0) L = 0;
+  if (R > W - 1) R = W - 1;
+  hole = fabsf(dy) < RING_R0;
+  if (hole) {
+    const float xi = sqrtf(RING_R0 * RING_R0 - dy * dy);
+    a = (int)floorf(CX - xi + 0.5f); b = (int)ceilf(CX + xi - 0.5f) - 1;
+  }
+  return true;
+}
+
 static void ringInit() {
   if (g_rlv) return;
-  // 先數像素
+  // 先排好每一段（RING_ROWS 列取聯集），再算每個像素的距離
   int total = 0;
   for (int y = 0; y < H; y++) {
-    float dy = y + 0.5f - CY;
-    if (fabsf(dy) >= RING_R1) continue;
-    float xo = sqrtf(RING_R1 * RING_R1 - dy * dy);
-    if (fabsf(dy) < RING_R0) { float xi = sqrtf(RING_R0 * RING_R0 - dy * dy); total += 2 * ((int)ceilf(xo - xi) + 2); }
-    else total += (int)(2 * xo) + 4;
+    g_rsegN[y] = 0;
+    if (y % RING_ROWS) continue;
+    int L = W, R = -1, a = -1, b = W;
+    bool any = false, hole = true;
+    for (int r = y; r < y + RING_ROWS && r < H; r++) {
+      int l1, r1, a1, b1; bool h1;
+      if (!ringRow(r, l1, r1, h1, a1, b1)) continue;
+      any = true;
+      if (l1 < L) L = l1;
+      if (r1 > R) R = r1;
+      if (!h1) hole = false;
+      else { if (a1 > a) a = a1; if (b1 < b) b = b1; }    // 環內：幾列都在環內的部分才不碰
+    }
+    if (!any) continue;
+    // outer0 / outer1：這一端是環的外側（螢幕邊，本來就是黑的）還是內側
+    auto addSeg = [&](int x0, int x1, bool outer0, bool outer1) {
+      if (LCD_EVEN) {                   // 對齊偶數：往外側多畫一格黑的，內側少畫一格（那格在環內緣以內，也是黑的）
+        if (x0 & 1) x0 += outer0 ? -1 : 1;
+        if (!(x1 & 1)) x1 += outer1 ? 1 : -1;
+        // 64 位元組以下的寫入，LovyanGFX 改塞 SPI 暫存器送出，走 QSPI 會畫壞（外環右側一條暗線）：
+        // 太短就加寬，先往外側（螢幕邊），到邊了才往內側（環內緣以內，也是黑的）
+        while (x1 >= x0 && (x1 - x0 + 1) * RING_ROWS * 2 <= 64) {
+          if (outer0 && x0 >= 2) x0 -= 2;
+          else if (outer1 && x1 <= W - 3) x1 += 2;
+          else if (!outer0) x0 -= 2;
+          else x1 += 2;
+        }
+      }
+      if (x1 < x0) return;
+      RingSeg& sg = g_rseg[y][g_rsegN[y]++];
+      sg.x0 = x0; sg.n = x1 - x0 + 1; sg.off = total;
+      total += sg.n * RING_ROWS;
+    };
+    if (hole) {
+      addSeg(L, a - 1, true, false);
+      addSeg(b + 1, R, false, true);
+    } else addSeg(L, R, true, true);
   }
   g_rlv = (uint8_t*)malloc(total);
   if (!g_rlv) return;
-  int off = 0;
-  for (int y = 0; y < H; y++) {
-    g_rsegN[y] = 0;
-    float dy = y + 0.5f - CY;
-    if (fabsf(dy) >= RING_R1) continue;
-    float xo = sqrtf(RING_R1 * RING_R1 - dy * dy);
-    int L = (int)floorf(CX - xo), R = (int)ceilf(CX + xo) - 1;
-    if (L < 0) L = 0;
-    if (R > W - 1) R = W - 1;
-    auto addSeg = [&](int x0, int x1) {
-      if (x1 < x0) return;
-      RingSeg& sg = g_rseg[y][g_rsegN[y]++];
-      sg.x0 = x0; sg.n = x1 - x0 + 1; sg.off = off;
-      for (int x = x0; x <= x1; x++) {
-        float dx = x + 0.5f - CX, d = sqrtf(dx * dx + dy * dy);
-        int lv = (int)((d - RING_R0) * 4);
-        g_rlv[off++] = lv < 0 ? 0 : (lv >= RING_LV ? RING_LV - 1 : lv);
+  for (int y = 0; y < H; y++)
+    for (int s = 0; s < g_rsegN[y]; s++) {
+      const RingSeg& sg = g_rseg[y][s];
+      uint8_t* lv = g_rlv + sg.off;
+      for (int r = 0; r < RING_ROWS; r++) {
+        const float dy = y + r + 0.5f - CY;
+        for (int x = sg.x0; x < sg.x0 + sg.n; x++) {
+          const float dx = x + 0.5f - CX, d = sqrtf(dx * dx + dy * dy);
+          const int v = (int)((d - RING_R0) * 4);              // 環內緣以內 → 0（黑）
+          *lv++ = v < 0 ? 0 : (v >= RING_LV ? RING_LV - 1 : v);
+        }
       }
-    };
-    if (fabsf(dy) < RING_R0) {
-      float xi = sqrtf(RING_R0 * RING_R0 - dy * dy);
-      int a = (int)floorf(CX - xi + 0.5f), b = (int)ceilf(CX + xi - 0.5f) - 1;   // 內圈以內不碰
-      addSeg(L, a - 1);
-      addSeg(b + 1, R);
-    } else addSeg(L, R);
-  }
+    }
 }
 
 // 依目前狀態算 64 色調色盤（距離 → 顏色）
@@ -255,7 +310,7 @@ static void ringPalette(uint32_t ms, uint16_t* pal) {
   ringParams(ms, col, k);
   uint32_t track = mix(C_BG, col, (linkAlive() && g_frame.st != S_IDLE) ? 0.16f : 0.22f);
   uint32_t body = k <= 0.01f ? track : mix(track, col, k);
-  const float E1 = RS_IN - 0.5f, E2 = RS_OUT + 0.5f;          // 環本體 112.5 ~ 119.5
+  const float E1 = S(RS_IN - 0.5f), E2 = S(RS_OUT + 0.5f);    // 環本體 112.5 ~ 119.5（設計座標）
   for (int i = 0; i < RING_LV; i++) {
     float d = RING_R0 + (i + 0.5f) / 4.0f;
     uint32_t glow = C_BG;                                       // 不再往內發光，讓額度環緊貼外環
@@ -274,31 +329,34 @@ static void ringDraw(lgfx::LovyanGFX& g, int yoff, int rows, uint32_t ms) {
   ringInit();
   if (!g_rlv) return;
   static uint16_t pal[RING_LV];
-  static uint16_t line[W];
+  static uint16_t line[W * RING_ROWS];
   ringPalette(ms, pal);
   for (int y = yoff; y < yoff + rows && y < H; y++) {
     for (int s = 0; s < g_rsegN[y]; s++) {
       const RingSeg& sg = g_rseg[y][s];
       const uint8_t* lv = g_rlv + sg.off;
-      for (int i = 0; i < sg.n; i++) line[i] = pal[lv[i]];
-      g.pushImage(sg.x0, y - yoff, sg.n, 1, (const lgfx::rgb565_t*)line);
+      for (int i = 0; i < sg.n * RING_ROWS; i++) line[i] = pal[lv[i]];
+      g.pushImage(sg.x0, y - yoff, sg.n, RING_ROWS, (const lgfx::rgb565_t*)line);
     }
   }
 }
 
 // 畫面（sprite）裡的外環：韌體模式下只留空（之後直接畫到螢幕），預覽程式則直接畫進去
+// g_ringLive：韌體把外環也畫進 sprite 時（AMOLED），用螢幕上最後一次畫的亮度，推上去才不會一條一條閃
+static bool g_ringLive = false;
+static uint32_t g_ringShownMs = 0;
 static void statusRingBand(uint32_t ms) {
-  if (!g_ringDirect) { ringDraw(band, OY, BAND_H, ms); return; }
+  if (!g_ringDirect) { ringDraw(band, OY, BAND_H, g_ringLive && g_ringShownMs ? g_ringShownMs : ms); return; }
   ringInit();
   if (!g_rlv) return;
-  for (int y = OY; y < OY + BAND_H; y++)
+  for (int y = OY; y < OY + BAND_H && y < H; y++)
     for (int s = 0; s < g_rsegN[y]; s++)
-      band.drawFastHLine(g_rseg[y][s].x0, y - OY, g_rseg[y][s].n, RING_KEY);
+      band.fillRect(g_rseg[y][s].x0, y - OY, g_rseg[y][s].n, RING_ROWS, RING_KEY);
   g_ringKeyed = true;
 }
 
 // 整圈直接畫到螢幕（呼吸燈每一格）
-static void statusRingOn(lgfx::LovyanGFX& g, int yoff, uint32_t ms) { ringDraw(g, yoff, H, ms); }
+static void statusRingOn(lgfx::LovyanGFX& g, int yoff, uint32_t ms) { g_ringShownMs = ms; ringDraw(g, yoff, H, ms); }
 
 // 外環是否需要動畫（呼吸、閃爍、剛完成的亮光）
 static bool ringAnimating() {
@@ -335,12 +393,13 @@ static void progressRingSlow(float r, float hw, float pct, uint32_t col) {
 // 原本的 drawWideLine 只吃整數座標，端點被捨去小數，結果也等於以像素中心為準，所以畫出來跟原本一樣
 // 舊畫法多段線重疊、邊緣混色好幾次，環實際上粗約 0.4 px：邊緣各放寬一點，看起來一樣粗
 static const float GAUGE_AA = 0.7f;
+static constexpr int GAUGE_DQ = 2 * (HW_USAGE + 1) * 16 < 256 ? 16 : 8;   // 距離每 px 幾級（環寬要放得進 uint8）
 struct GaugeLut {
   float r0 = 0;              // 涵蓋 r0 ~ r0 + 2 * (hw + 1)（環寬 + 抗鋸齒）
   RingSeg seg[H][2];
   uint8_t segN[H];
   uint16_t* ang = nullptr;   // 角度，1/16 度（0 = 12 點鐘，順時針）
-  uint8_t* dist = nullptr;   // 距離 - r0，1/16 px
+  uint8_t* dist = nullptr;   // 距離 - r0，1/GAUGE_DQ px
   bool failed = false;       // 記憶體不夠：改用舊畫法，不要每次都重試
 };
 static GaugeLut g_gauge[2];  // [0] 5 小時（R_USAGE），[1] 每週（額度詳細頁的內圈）
@@ -386,7 +445,7 @@ static GaugeLut* gaugeLut(float r, float hw) {
       for (int x = sg.x0 > CX ? sg.x0 : CX; x < sg.x0 + sg.n; x++) {
         const float dx = x + 0.5f - CX, d = sqrtf(dx * dx + dy * dy);
         const int a = (int)((atan2f(dy, dx) * RAD_TO_DEG + 90) * 16 + 0.5f);   // 右下象限：90 ~ 180 度
-        int dv = (int)((d - L.r0) * 16 + 0.5f);
+        int dv = (int)((d - L.r0) * GAUGE_DQ + 0.5f);
         if (dv > 255) dv = 255;
         const int mx = W - 1 - x, my = H - 1 - y;
         const int q[4][3] = {{x, y, a}, {mx, y, 5760 - a}, {x, my, 2880 - a}, {mx, my, a + 2880}};
@@ -405,7 +464,7 @@ static GaugeLut* gaugeLut(float r, float hw) {
 // 開機時先建好兩圈的表（第一次翻到額度詳細頁才建的話，那一下會卡 0.7 秒）
 static void gaugeInit() {
   gaugeLut(R_USAGE, HW_USAGE);
-  gaugeLut(R_USAGE - 14, HW_USAGE);
+  gaugeLut(R_USAGE - S(14), HW_USAGE);
 }
 
 // 圓頭：到端點 (cx, cy) 的距離 → 不透明度 0..256
@@ -426,8 +485,8 @@ static void progressRing(float r, float hw, float pct, uint32_t col) {
   if (!L) { progressRingSlow(r, hw, pct, col); return; }
   const uint32_t track = mix(C_BG, col, 0.20f), c0 = mix(col, C_BG, 0.25f);
   const float p = pct > 100 ? 100 : pct;
-  const int rr = (int)((r - L->r0) * 16 + 0.5f);          // 環的中心線
-  const int edge = (int)((hw + GAUGE_AA) * 16 + 0.5f);     // 距中心線這麼遠以外完全透明
+  const int rr = (int)((r - L->r0) * GAUGE_DQ + 0.5f);    // 環的中心線
+  const int edge = (int)((hw + GAUGE_AA) * GAUGE_DQ + 0.5f);   // 距中心線這麼遠以外完全透明
   const int start = (int)(GAUGE_START * 16 + 0.5f) % 5760, span = (int)(GAUGE_SPAN * 16 + 0.5f);
   const int end = pct > 0 ? (int)(span * p / 100 + 0.5f) : -1;   // 進度的終點（-1 = 沒有進度）
   const int CAP = 6 * 16;                                   // 圓頭延伸到端點外約 3.6°，6° 以外不用算
@@ -443,7 +502,7 @@ static void progressRing(float r, float hw, float pct, uint32_t col) {
         const int x = sg.x0 + i;
         int dd = L->dist[sg.off + i] - rr;
         if (dd < 0) dd = -dd;
-        int aR = (edge - dd) * 16;                          // 環的內外緣抗鋸齒（256 = 不透明）
+        int aR = (edge - dd) * (256 / GAUGE_DQ);            // 環的內外緣抗鋸齒（256 = 不透明）
         if (aR <= 0) continue;
         if (aR > 256) aR = 256;
         int rel = L->ang[sg.off + i] - start;               // 從起點順時針的角度
@@ -483,30 +542,30 @@ static void progressRing(float r, float hw, float pct, uint32_t col) {
 // ---------------- Scene ----------------
 static void bigValue(const char* num, bool percent, int y) {
   int w = textW(num, &fNum.font);
-  int uw = percent ? textW("%", &fUnit.font) + 2 : 0;
+  int uw = percent ? textW("%", &fUnit.font) + SI(2) : 0;
   int x = CX - (w + uw) / 2;
   text(num, x, y, C_LABEL, &fNum.font, middle_left);
-  if (percent) text("%", x + w + 2, y + 8, C_LABEL2, &fUnit.font, middle_left);
+  if (percent) text("%", x + w + SI(2), y + SI(8), C_LABEL2, &fUnit.font, middle_left);
 }
 
 static void statusLine(St st, int y, uint32_t ms) {
   const char* s = ST_TITLE[st];
   uint32_t col = st == S_IDLE ? C_LABEL2 : stColor(st);
   int tw = textW(s, &fLabel.font);
-  int x = CX - (tw + 12) / 2;
-  band.fillSmoothCircle(x + 4, y - OY, 3.5f, col);
-  text(s, x + 12, y + 1, col, &fLabel.font, middle_left);
+  int x = CX - (tw + SI(12)) / 2;
+  band.fillSmoothCircle(x + S(4) + g_shX, y + g_shY - OY, S(3.5f), col);
+  text(s, x + SI(12), y + SI(1), col, &fLabel.font, middle_left);
 }
 
 static void othersRow(const Frame& f) {
   // 其他對話：排在額度環下方的缺口裡（同一個半徑、跟環一樣粗），只用顏色（綠 = 完成、黃 = 需審核、紅 = 錯誤），空心 = 生成中
   // 順序由電腦端排好（要你處理的在前），從左邊開始排
-  const float r = HW_USAGE, step = 16.0f / R_USAGE * RAD_TO_DEG;
+  const float r = HW_USAGE, step = S(16) / R_USAGE * RAD_TO_DEG;
   for (int i = 0; i < f.nOthers; i++) {
     float deg = 90 + ((f.nOthers - 1) / 2.0f - i) * step;
     float x = px(R_USAGE, deg), y = py(R_USAGE, deg) - OY;
     band.fillSmoothCircle(x, y, r, stColor(f.others[i].st));
-    if (f.others[i].st == S_WORKING) band.fillSmoothCircle(x, y, r - 2.2f, C_BG);
+    if (f.others[i].st == S_WORKING) band.fillSmoothCircle(x, y, r - S(2.2f), C_BG);
   }
 }
 
@@ -526,7 +585,7 @@ static void drawClock(uint32_t ms, bool pageMode) {
   if (pageMode) statusRingBand(ms);
   uint32_t now = nowEpoch();
   if (!now) {                             // 還不知道時間：只畫一個慢慢呼吸的小點
-    band.fillSmoothCircle(CX, CY - OY, 4, mix(C_BG, C_GRAY, 0.2f + 0.4f * breath(ms, 5000)));
+    band.fillSmoothCircle(CX, CY - OY, S(4), mix(C_BG, C_GRAY, 0.2f + 0.4f * breath(ms, 5000)));
     return;
   }
   uint32_t t = now + g_tz;
@@ -539,35 +598,35 @@ static void drawClock(uint32_t ms, bool pageMode) {
   uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
   uint32_t dd = doy - (153 * mp + 2) / 5 + 1, mon = mp < 10 ? mp + 3 : mp - 9;
   // 整組（時間、日期、額度、重置）垂直置中；沒有額度資料時只有時間和日期
-  const int dx = 0, dy = (linkAlive() && g_frame.p5 >= 0) ? -26 : -14;
+  const int dx = 0, dy = (linkAlive() && g_frame.p5 >= 0) ? SI(-26) : SI(-14);
 
   // 細細的 Claude 額度弧（螢幕保護時）
   if (!pageMode && linkAlive() && g_frame.p5 >= 0) {
     const Brand& b = BRANDS[g_frame.brand];
     float p = g_frame.p5 > 100 ? 100 : g_frame.p5;
     uint32_t col = mix(C_BG, p >= 90 ? C_RED : b.color, 0.55f);
-    ringArc(112, 1.5f, GAUGE_START, GAUGE_START + GAUGE_SPAN, mix(C_BG, col, 0.25f), mix(C_BG, col, 0.25f));
-    if (p > 0) ringArc(112, 1.5f, GAUGE_START, GAUGE_START + GAUGE_SPAN * p / 100, col, col);
+    ringArc(S(112), S(1.5f), GAUGE_START, GAUGE_START + GAUGE_SPAN, mix(C_BG, col, 0.25f), mix(C_BG, col, 0.25f));
+    if (p > 0) ringArc(S(112), S(1.5f), GAUGE_START, GAUGE_START + GAUGE_SPAN * p / 100, col, col);
   }
 
   char buf[16];
   snprintf(buf, sizeof buf, "%02d:%02d", hh, mm);
-  text(buf, CX + dx, CY - 6 + dy, pageMode ? C_LABEL : 0xE6E6EA, &fClock.font);
+  text(buf, CX + dx, CY + SI(-6) + dy, pageMode ? C_LABEL : 0xE6E6EA, &fClock.font);
   char db[24];
   snprintf(db, sizeof db, "%u/%u  %s", (unsigned)mon, (unsigned)dd, WD[days % 7]);
-  text(db, CX + dx, CY + 36 + dy, pageMode ? C_LABEL2 : 0xA8A8B0, &fLabel.font);
+  text(db, CX + dx, CY + SI(36) + dy, pageMode ? C_LABEL2 : 0xA8A8B0, &fLabel.font);
   if (linkAlive() && g_frame.p5 >= 0) {
     snprintf(buf, sizeof buf, "%s %d%%", BRANDS[g_frame.brand].name, (int)(g_frame.p5 + 0.5f));
-    text(buf, CX + dx, CY + 58 + dy, C_LABEL2, &fTiny.font);
+    text(buf, CX + dx, CY + SI(58) + dy, C_LABEL2, &fTiny.font);
     String left = fmtLeft(g_frame.r5);   // 5 小時額度多久後重置
-    if (left.length()) text((String("RESETS ") + left).c_str(), CX + dx, CY + 74 + dy, C_LABEL2, &fTiny.font);
+    if (left.length()) text((String("RESETS ") + left).c_str(), CX + dx, CY + SI(74) + dy, C_LABEL2, &fTiny.font);
   }
 }
 
 static void pageDots(int y) {
-  int gap = 10, x0 = CX - (N_PAGES - 1) * gap / 2;
+  int gap = SI(10), x0 = CX - (N_PAGES - 1) * gap / 2;
   for (int i = 0; i < N_PAGES; i++)
-    band.fillSmoothCircle(x0 + i * gap, y - OY, i == g_page ? 3 : 2.2f, i == g_page ? C_LABEL : C_LABEL3);
+    band.fillSmoothCircle(x0 + i * gap + g_shX, y + g_shY - OY, i == g_page ? S(3) : S(2.2f), i == g_page ? C_LABEL : C_LABEL3);
 }
 
 // 額度詳細頁：5 小時（外環）＋本週（內環）＋今天的 5 小時用量折線
@@ -577,38 +636,38 @@ static void drawUsagePage(uint32_t ms) {
   const Frame& f = g_frame;
   const Brand& b = BRANDS[f.brand];
   if (f.p5 < 0) {
-    text(f.brand == N_BRANDS - 1 ? "Usage" : b.name, CX, 92, f.brand == N_BRANDS - 1 ? C_LABEL2 : b.color, &fName.font);
-    text("NO USAGE DATA", CX, 124, C_LABEL2, &fLabel.font);
-    text("ONLY CLAUDE PROVIDES IT", CX, 146, C_LABEL3, &fTiny.font);
-    pageDots(200);
+    text(f.brand == N_BRANDS - 1 ? "Usage" : b.name, CX, SI(92), f.brand == N_BRANDS - 1 ? C_LABEL2 : b.color, &fName.font);
+    text("NO USAGE DATA", CX, SI(124), C_LABEL2, &fLabel.font);
+    text("ONLY CLAUDE PROVIDES IT", CX, SI(146), C_LABEL3, &fTiny.font);
+    pageDots(SI(200));
     return;
   }
   uint32_t c5 = f.p5 >= 90 ? C_RED : b.color;
   uint32_t cw = f.pw >= 90 ? C_RED : mix(b.color, 0xFFFFFF, 0.5f);
   progressRing(R_USAGE, HW_USAGE, f.p5, c5);
-  if (f.pw >= 0) progressRing(R_USAGE - 14, HW_USAGE, f.pw, cw);   // 半徑要跟 gaugeInit 一致
+  if (f.pw >= 0) progressRing(R_USAGE - S(14), HW_USAGE, f.pw, cw);   // 半徑要跟 gaugeInit 一致
 
   // 由上往下：名稱、5 小時大數字、5 小時重置、本週＋重置；沒有本週時整組往下移，保持在環內置中
   bool hasWeek = f.pw >= 0;
-  int dy = 14 + (hasWeek ? 0 : 16);
-  int yWeek = 134 + dy;
+  int dy = SI(14 + (hasWeek ? 0 : 16));
+  int yWeek = SI(134) + dy;
 
   char buf[40];
-  text(b.name, CX, 50 + dy, b.color, &fLabel.font);
+  text(b.name, CX, SI(50) + dy, b.color, &fLabel.font);
   snprintf(buf, sizeof buf, "%d", (int)(f.p5 + 0.5f));
-  bigValue(buf, true, 84 + dy);
+  bigValue(buf, true, SI(84) + dy);
   String l5 = fmtLeft(f.r5);   // 倒數一律寫 RESETS，避免「5H · 16M」被看成 5 小時 16 分
   snprintf(buf, sizeof buf, "5-HOUR%s%s", l5.length() ? " · RESETS " : "", l5.c_str());
-  text(buf, CX, 116 + dy, C_LABEL2, &fTiny.font);
+  text(buf, CX, SI(116) + dy, C_LABEL2, &fTiny.font);
 
   // 本週分兩行：一行寫不下（內環裡的寬度不夠），也跟上面的 5 小時分得開
   if (hasWeek) {
     snprintf(buf, sizeof buf, "WEEK %d%%", (int)(f.pw + 0.5f));
     text(buf, CX, yWeek, cw, &fTiny.font);
     String lw = fmtLeft(f.rw);
-    if (lw.length()) text((String("RESETS ") + lw).c_str(), CX, yWeek + 15, C_LABEL2, &fTiny.font);
+    if (lw.length()) text((String("RESETS ") + lw).c_str(), CX, yWeek + SI(15), C_LABEL2, &fTiny.font);
   }
-  pageDots(196);
+  pageDots(SI(196));
 }
 
 // 今日統計頁
@@ -624,52 +683,52 @@ static void drawTodayPage(uint32_t ms) {
   band.fillScreen(C_BG);
   statusRingBand(ms);
   const Frame& f = g_frame;
-  text("TODAY", CX, 52, C_LABEL2, &fLabel.font);
+  text("TODAY", CX, SI(52), C_LABEL2, &fLabel.font);
   if (f.nToday == 0) {
-    text("No Activity", CX, 112, C_LABEL, &fName.font);
-    text("NOTHING GENERATED YET", CX, 146, C_LABEL3, &fTiny.font);
-    pageDots(200);
+    text("No Activity", CX, SI(112), C_LABEL, &fName.font);
+    text("NOTHING GENERATED YET", CX, SI(146), C_LABEL3, &fTiny.font);
+    pageDots(SI(200));
     return;
   }
   uint32_t maxS = 1, totS = 0; int totC = 0;
   for (int i = 0; i < f.nToday; i++) { if (f.today[i].secs > maxS) maxS = f.today[i].secs; totS += f.today[i].secs; totC += f.today[i].count; }
-  const int rowH = 36, y0 = 122 - (f.nToday - 1) * rowH / 2 - 4;
-  const int bx = 64, bw = 84;
+  const int rowH = SI(36), y0 = SI(122) - (f.nToday - 1) * rowH / 2 - SI(4);
+  const int bx = SI(64), bw = SI(84);
   for (int i = 0; i < f.nToday; i++) {
     const Frame::Today& t = f.today[i];
     const Brand& b = BRANDS[t.brand];
     int y = y0 + i * rowH;
     // 品牌圓點
-    band.fillSmoothCircle(48, y - OY, 9, b.color);
-    text(b.letter, 48, y + 1, 0x000000, &fTiny.font);
+    band.fillSmoothCircle(SI(48), y - OY, S(9), b.color);
+    text(b.letter, SI(48), y + SI(1), 0x000000, &fTiny.font);
     // 生成時間長條
-    band.fillSmoothRoundRect(bx, y - 4 - OY, bw, 8, 4, mix(C_BG, b.color, 0.22f));
+    band.fillSmoothRoundRect(bx, y - SI(4) - OY, bw, SI(8), SI(4), mix(C_BG, b.color, 0.22f));
     int w = (int)((float)bw * t.secs / maxS + 0.5f);
-    if (w < 8) w = 8;
-    band.fillSmoothRoundRect(bx, y - 4 - OY, w, 8, 4, b.color);
-    text(fmtDur(t.secs).c_str(), bx + bw + 8, y + 1, C_LABEL, &fLabel.font, middle_left);
+    if (w < SI(8)) w = SI(8);
+    band.fillSmoothRoundRect(bx, y - SI(4) - OY, w, SI(8), SI(4), b.color);
+    text(fmtDur(t.secs).c_str(), bx + bw + SI(8), y + SI(1), C_LABEL, &fLabel.font, middle_left);
     char c[20]; snprintf(c, sizeof c, "%d %s", t.count, t.count == 1 ? "REPLY" : "REPLIES");
-    text(c, bx, y + 15, C_LABEL2, &fTiny.font, middle_left);
+    text(c, bx, y + SI(15), C_LABEL2, &fTiny.font, middle_left);
   }
   char tot[32];
   snprintf(tot, sizeof tot, "TOTAL %d  ·  %s", totC, fmtDur(totS).c_str());
-  text(tot, CX, y0 + (f.nToday - 1) * rowH + 38, C_LABEL2, &fTiny.font);
-  pageDots(210);
+  text(tot, CX, y0 + (f.nToday - 1) * rowH + SI(38), C_LABEL2, &fTiny.font);
+  pageDots(SI(210));
 }
 
 static void drawScene(uint32_t ms) {
   if (g_saver) { drawClock(ms, false); return; }
   if (g_page == 1 && linkAlive()) { drawUsagePage(ms); return; }
   if (g_page == 2 && linkAlive()) { drawTodayPage(ms); return; }
-  if (g_page == 3 || g_page == 2) { drawClock(ms, true); pageDots(208); return; }
+  if (g_page == 3 || g_page == 2) { drawClock(ms, true); pageDots(SI(208)); return; }
   band.fillScreen(C_BG);
 
   if (!linkAlive()) {
     statusRingBand(ms);
-    text("AI Monitor", CX, 76, C_LABEL2, &fName.font);
-    bigValue("--", false, 113);
-    text(g_everConnected ? "Disconnected" : "Not Connected", CX, 150, C_LABEL2, &fLabel.font);
-    text("PLUG IN USB", CX, 172, C_LABEL3, &fTiny.font);
+    text("AI Monitor", CX, SI(76), C_LABEL2, &fName.font);
+    bigValue("--", false, SI(113));
+    text(g_everConnected ? "Disconnected" : "Not Connected", CX, SI(150), C_LABEL2, &fLabel.font);
+    text("PLUG IN USB", CX, SI(172), C_LABEL3, &fTiny.font);
     return;
   }
 
@@ -685,16 +744,16 @@ static void drawScene(uint32_t ms) {
     uint32_t uc = f.p5 >= 90 ? C_RED : b.color;
     progressRing(R_USAGE, HW_USAGE, f.p5, uc);
 
-    text(b.name, CX, 60, b.color, &fName.font);
+    text(b.name, CX, SI(60), b.color, &fName.font);
     snprintf(num, sizeof num, "%d", (int)(f.p5 + 0.5f));
-    bigValue(num, true, 106);
-    statusLine(f.st, 145, ms);
+    bigValue(num, true, SI(106));
+    statusLine(f.st, SI(145), ms);
 
     // 每週額度：只顯示文字
     if (f.pw >= 0) {
       char w[24];
       snprintf(w, sizeof w, "WEEK %d%%", (int)(f.pw + 0.5f));
-      text(w, CX, 167, f.pw >= 90 ? C_RED : C_LABEL2, &fTiny.font);
+      text(w, CX, SI(167), f.pw >= 90 ? C_RED : C_LABEL2, &fTiny.font);
     }
 
     String cap;
@@ -705,10 +764,10 @@ static void drawScene(uint32_t ms) {
       cap = left.length() ? String("RESETS ") + left : String("");
     }
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL3;
-    if (cap.length()) text(fitText(cap, 150, &fTiny.font).c_str(), CX, 185, capCol, &fTiny.font);
+    if (cap.length()) text(fitText(cap, SI(150), &fTiny.font).c_str(), CX, SI(185), capCol, &fTiny.font);
     if (f.nOthers > 0) othersRow(f);
   } else {
-    text(hasAI ? b.name : "No AI Tab", CX, 56, hasAI ? b.color : C_LABEL2, &fName.font);
+    text(hasAI ? b.name : "No AI Tab", CX, SI(56), hasAI ? b.color : C_LABEL2, &fName.font);
     if (hasAI) {
       uint32_t el = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
       if (el >= 3600) snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 3600), (unsigned)((el % 3600) / 60));
@@ -716,11 +775,11 @@ static void drawScene(uint32_t ms) {
     } else {
       strcpy(num, "--");
     }
-    bigValue(num, false, 106);
-    statusLine(f.st, 148, ms);
+    bigValue(num, false, SI(106));
+    statusLine(f.st, SI(148), ms);
     String cap = f.note.length() ? f.note : f.msg.length() ? f.msg : String(hasAI ? (f.st == S_IDLE ? "SINCE LAST REPLY" : "ELAPSED") : "OPEN CHATGPT, CLAUDE OR GEMINI");
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL2;
-    text(fitText(cap, 170, &fTiny.font).c_str(), CX, 173, capCol, &fTiny.font);
+    text(fitText(cap, SI(170), &fTiny.font).c_str(), CX, SI(173), capCol, &fTiny.font);
     if (f.nOthers > 0) othersRow(f);
   }
 }

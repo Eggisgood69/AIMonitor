@@ -1,6 +1,6 @@
 package main
 
-// 韌體更新：ESP32-C3 晶片內建（ROM）燒錄協定，與 esptool 相同。
+// 韌體更新：ESP32-C3 / ESP32-S3 晶片內建（ROM）燒錄協定，與 esptool 相同。
 // 只寫入應用程式區（0x10000），bootloader 與分割表維持不動。
 // 這個檔案不依賴 Windows（序列埠透過 flashPort 介面），可以用模擬的 ROM 做單元測試。
 
@@ -30,6 +30,7 @@ const (
 	cmdFlashData   = 0x03
 	cmdFlashEnd    = 0x04
 	cmdSync        = 0x08
+	cmdReadReg     = 0x0A
 	cmdSetParams   = 0x0B
 	cmdSpiAttach   = 0x0D
 	cmdChangeBaud  = 0x0F
@@ -37,8 +38,36 @@ const (
 
 	flashBlockSize = 0x400 // ROM 模式每包 1KB
 	appOffset      = 0x10000
-	flashSize      = 4 * 1024 * 1024
+	flashSize      = 4 * 1024 * 1024 // 兩種板子都至少 4MB；只用來讓 ROM 檢查範圍
+
+	chipDetectReg = 0x40001000 // ROM 的 magic 暫存器，用來分辨晶片（同 esptool）
+	chipC3        = 5          // 映像檔標頭的晶片 ID（esp_image_header_t.chip_id）
+	chipS3        = 9
 )
+
+var chipNames = map[int]string{chipC3: "ESP32-C3", chipS3: "ESP32-S3"}
+
+// 各晶片 app 分割區大小（build.ps1 用的分割表：C3 預設 4MB、S3 app3M_fat9M_16MB）
+var appMaxSize = map[int]int{chipC3: 0x140000, chipS3: 0x300000}
+
+// 韌體檔是給哪種晶片的（標頭第 12-13 位元組）
+func imageChip(img []byte) int {
+	if len(img) < 24 || img[0] != 0xE9 {
+		return -1
+	}
+	return int(binary.LittleEndian.Uint16(img[12:]))
+}
+
+// ROM magic 暫存器的值 → 晶片 ID（數值同 esptool 的 CHIP_DETECT_MAGIC_VALUE）
+func detectChip(magic uint32) int {
+	switch magic {
+	case 0x6921506F, 0x1B31506F, 0x4881606F, 0x4361606F:
+		return chipC3
+	case 0x9:
+		return chipS3
+	}
+	return -1
+}
 
 type esp struct {
 	p    flashPort
@@ -233,17 +262,30 @@ func FlashApp(p flashPort, usbJTAG bool, image []byte, progress FlashProgress, l
 	if logf == nil {
 		logf = func(string, ...interface{}) {}
 	}
-	if len(image) == 0 || len(image) > 0x140000 {
-		return errors.New("韌體檔案大小不正確")
-	}
-	if image[0] != 0xE9 {
+	chip := imageChip(image)
+	maxSize, known := appMaxSize[chip]
+	if !known {
 		return errors.New("韌體檔案格式不正確")
+	}
+	if len(image) > maxSize {
+		return errors.New("韌體檔案大小不正確")
 	}
 	e := &esp{p: p, logf: logf}
 	if err := e.connect(usbJTAG); err != nil {
 		return fmt.Errorf("進入燒錄模式失敗：%w", err)
 	}
 	logf("flash: synced")
+	// 燒錯晶片的韌體螢幕就開不了機：先確認螢幕的晶片
+	magic, _, err := e.command(cmdReadReg, le32(chipDetectReg), 0, time.Second)
+	if err != nil {
+		return fmt.Errorf("讀取晶片型號：%w", err)
+	}
+	if got := detectChip(magic); got != chip {
+		if name, ok := chipNames[got]; ok {
+			return fmt.Errorf("這個韌體是給 %s 的，螢幕是 %s", chipNames[chip], name)
+		}
+		return fmt.Errorf("無法辨識螢幕的晶片（0x%08X）", magic)
+	}
 
 	// 提高速度（內建 USB 不受影響；CH340 會變快）
 	if !usbJTAG {

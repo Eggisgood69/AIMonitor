@@ -27,7 +27,7 @@ git diff --stat HEAD   # 再加上尚未 commit 的改動
 
 升版後同步更新 `CLAUDE.md` 的「目前：AIMonitor x.y.z、韌體 x.y.z」那一行。
 
-`windows/fw/version.txt` 和 `windows/fw/aimon-app.bin` 不要手動改，`build.ps1` 會從 `FW_VERSION` 自動產生。
+`windows/fw/version.txt` 和 `windows/fw/aimon-<hw>.bin` 不要手動改，`build.ps1` 會從 `FW_VERSION` 自動產生（兩種螢幕共用版本號）。
 
 ## 2. 建置
 
@@ -39,13 +39,15 @@ git diff --stat HEAD   # 再加上尚未 commit 的改動
 | 只改電腦端 | `./build.ps1 -AppOnly` |
 | 有改韌體且要直接燒進螢幕 | `./build.ps1 -Flash COMx` |
 
-韌體編譯大約要 1～3 分鐘，用背景執行或給足 timeout。`build.ps1` 會依序：編韌體 → 複製到 `windows/fw/` → 產生 `firmware/aimon-usb-esp32c3.bin` → `go test` → 編出 `windows/AIMonitor.exe`。任何一步失敗都會丟例外，把錯誤原文貼給使用者，不要略過測試。
+韌體編譯兩種螢幕大約要 2～5 分鐘，用背景執行或給足 timeout。`build.ps1` 會依序：編兩種韌體（`build/firmware/c3`、`build/firmware/s3a175`）→ 複製到 `windows/fw/` → 產生 `firmware/aimon-usb-esp32c3.bin`、`firmware/aimon-usb-esp32s3-amoled175.bin` → `go test` → 編出 `windows/AIMonitor.exe`。
+（`go build` 偶爾會說 AIMonitor.exe「is not an object file」：剛產生的 exe 被防毒掃描鎖住，等幾秒再編一次就好。）任何一步失敗都會丟例外，把錯誤原文貼給使用者，不要略過測試。
 
 ## 3. 安裝與燒錄（建置成功後直接做，不用問）
 
 使用者要求「以後都你幫我更新」：建置成功後自己把新版裝好、韌體燒進螢幕，不要再請使用者雙擊 exe 或按更新。
 
-1. 找螢幕的 COM 埠：看 USB VID，螢幕（ESP32-C3）是 `VID_303A`；`VID_1A86` 那個是別的裝置（平常在 COM3），不要燒它：
+1. 找螢幕的 COM 埠：看 USB VID，兩種螢幕都是 `VID_303A`；`VID_1A86` 那個是別的裝置（平常在 COM3），不要燒它。
+   分辨是哪種螢幕：AIMonitor 紀錄的 `screen answered (fw …, hw c3|s3a175)`，或 `esptool --port COMx chip_id`（ESP32-C3 / ESP32-S3）：
    ```powershell
    Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match '\(COM\d+\)' } | Select-Object Name, PNPDeviceID
    ```
@@ -55,18 +57,19 @@ git diff --stat HEAD   # 再加上尚未 commit 的改動
    if ([System.Threading.EventWaitHandle]::TryOpenExisting('Local\AIMonitorQuit', [ref]$ev)) { [void]$ev.Set(); $ev.Dispose() }
    for ($i = 0; $i -lt 50 -and (Get-Process AIMonitor -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 200 }
    ```
-3. 韌體有改才燒，用 `build.ps1` 剛編好的檔案，不必重編：
-   `arduino-cli upload -p COMx --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc' --input-dir build\firmware firmware\aimon`
+3. 韌體有改才燒，用 `build.ps1` 剛編好的檔案，不必重編，**每塊螢幕都要燒**：
+   - 1.28 吋（c3）：`arduino-cli upload -p COMx --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc' --input-dir build\firmware\c3 firmware\aimon`
+   - AMOLED（s3a175）：`arduino-cli upload -p COMx --fqbn 'esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB' --input-dir build\firmware\s3a175 firmware\aimon`
 4. 安裝並啟動：把 `windows\AIMonitor.exe` 複製到 `%LOCALAPPDATA%\AIMonitor\AIMonitor.exe`，再 `Start-Process` 那一份
    （從安裝位置、不帶參數啟動 → 不會跳出設定視窗）
-5. 確認：`%LOCALAPPDATA%\AIMonitor\aimonitor.log` 最後幾行要有 `start v<新版>`、`connected COMx`、`screen answered (fw <新韌體>)`
+5. 確認：`%LOCALAPPDATA%\AIMonitor\aimonitor.log` 最後幾行要有 `start v<新版>`，以及每塊螢幕的 `connected COMx`、`screen answered (fw <新韌體>, hw …)`
 
 只改電腦端時跳過第 3 步。燒錄失敗或螢幕沒回應就把錯誤原文給使用者；螢幕全黑參考 CLAUDE.md「燒錄」那段的已知問題。
 改到 `flasher.go`（一鍵更新）時，這條路不會測到它，要另外請使用者在設定視窗按「更新」驗證。
 
 ## 4. Commit
 
-exe 和內建韌體都要進版控（`windows/AIMonitor.exe`、`windows/fw/*`、`firmware/aimon-usb-esp32c3.bin`），使用者是直接從 repo 拿 exe 的。
+exe 和內建韌體都要進版控（`windows/AIMonitor.exe`、`windows/fw/*`、`firmware/aimon-usb-*.bin`），使用者是直接從 repo 拿 exe 的。
 
 訊息格式沿用既有慣例，用繁體中文：
 

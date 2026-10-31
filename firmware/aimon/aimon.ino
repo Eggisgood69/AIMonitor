@@ -1,4 +1,7 @@
-// AI 狀態指示燈（USB 版） — ESP32-2424S012（ESP32-C3 + GC9A01 1.28" 圓形螢幕）
+// AI 狀態指示燈（USB 版）
+//   ESP32-2424S012（ESP32-C3 + GC9A01 1.28" 240×240 LCD）
+//   Waveshare ESP32-S3-Touch-AMOLED-1.75（ESP32-S3 + CO5300 1.75" 466×466 AMOLED）
+//   兩種板子共用這份程式，腳位與差異在 config.h（依編譯目標自動選）
 //
 // 插上 USB 就能用：不需要 Wi-Fi，也不需要任何設定。
 // 電腦端的 Chrome 擴充功能透過 USB 序列埠（115200）每次送一行 JSON（完整畫面狀態）：
@@ -17,11 +20,63 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.8.2"
+#define FW_VERSION "1.9.0"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
 
+#if BOARD_AMOLED
+// CO5300 466×466：控制器記憶體 472 欄，面板從第 6 欄開始（Waveshare BSP 的 set_gap(6, 0)）。
+// 初始化指令照 Waveshare BSP；開機先把亮度設 0，畫好黑畫面才亮起來
+struct Panel_CO5300_466 : public lgfx::Panel_CO5300 {
+  const uint8_t* getInitCommands(uint8_t listno) const override {
+    static constexpr uint8_t list0[] = {
+      // LovyanGFX 放開重置後只等 64 ms：面板還沒好時前面的換頁指令會被吃掉，
+      // 後面的設定寫到別頁 → 偶爾開機全白。先送個 NOP 再多等 150 ms
+      0x00, 0x80, 150,
+      0xFE, 1, 0x20,
+      0x19, 1, 0x10,
+      0x1C, 1, 0xA0,
+      0xFE, 1, 0x00,
+      0xC4, 1, 0x80,
+      0x3A, 1, 0x55,                     // RGB565
+      0x35, 1, 0x00,                     // TE on
+      0x53, 1, 0x20,
+      0x51, 1, 0x00,                     // 亮度 0
+      0x63, 1, 0xFF,
+      0x2A, 4, 0x00, 0x06, 0x01, 0xD7,   // 欄 6 ~ 471
+      0x2B, 4, 0x00, 0x00, 0x01, 0xD1,   // 列 0 ~ 465
+      0x11, 0x80, 120,                   // sleep out
+      0x29, 0x80, 20,                    // display on
+      0xFF, 0xFF,
+    };
+    return listno == 0 ? list0 : nullptr;
+  }
+};
+
+class LGFX : public lgfx::LGFX_Device {
+  Panel_CO5300_466 _panel;
+  lgfx::Bus_SPI    _bus;
+public:
+  LGFX() {
+    { auto c = _bus.config();
+      c.spi_host = SPI2_HOST; c.spi_mode = 0;
+      c.freq_write = LCD_SPI_HZ; c.freq_read = 20000000;
+      c.spi_3wire = true; c.use_lock = true; c.dma_channel = 0;   // 不用 DMA：QSPI 經 DMA 的小筆寫入（外環一段一段）會畫壞
+      c.pin_sclk = PIN_LCD_SCLK; c.pin_mosi = -1; c.pin_miso = -1; c.pin_dc = -1;
+      c.pin_io0 = PIN_LCD_D0; c.pin_io1 = PIN_LCD_D1; c.pin_io2 = PIN_LCD_D2; c.pin_io3 = PIN_LCD_D3;
+      _bus.config(c); _panel.setBus(&_bus); }
+    { auto c = _panel.config();
+      c.pin_cs = PIN_LCD_CS; c.pin_rst = PIN_LCD_RST; c.pin_busy = -1;
+      c.panel_width = LCD_W; c.panel_height = LCD_W; c.memory_width = 472; c.memory_height = LCD_W;
+      c.offset_x = 6; c.offset_y = 0;
+      c.offset_rotation = 0; c.readable = false; c.invert = false; c.rgb_order = false;
+      c.dlen_16bit = false; c.bus_shared = false;
+      _panel.config(c); }
+    setPanel(&_panel);
+  }
+};
+#else
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Panel_GC9A01 _panel;
   lgfx::Bus_SPI      _bus;
@@ -46,6 +101,7 @@ public:
     setPanel(&_panel);
   }
 };
+#endif
 
 static LGFX lcd;
 static LGFX_Sprite band(&lcd);
@@ -91,16 +147,18 @@ static Stream* lastSource = nullptr;
 // ---------------- 外接 WS2812（RX 腳）----------------
 // 顏色、亮度跟外環一樣（ringParams），每 16 ms 更新一次，值沒變就不送。
 static int g_ledPct = 0;          // 0 = 關閉，1-100 = 最大亮度 %
-static bool g_ledPin = false;     // RX 腳已經改成 LED 用（UART0 不再接收）
+static bool g_ledPin = !LISTEN_UART0;   // LED 腳可以用了（C3：RX 腳改成 LED 用，UART0 不再接收）
 
 static void ledSetPct(Stream* src, int pct) {
-#if ARDUINO_USB_CDC_ON_BOOT
+#if !LISTEN_UART0
+  (void)src;                               // LED 有自己的腳，不跟序列埠共用
+#elif ARDUINO_USB_CDC_ON_BOOT
   if (pct > 0 && src != &Serial) return;   // 走 UART0（CH340 板）連線時，RX 腳是通訊用的，不能接管
   if (pct > 0 && !g_ledPin) { Serial0.end(); g_ledPin = true; }
-  g_ledPct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
 #else
-  (void)src; (void)pct;                    // Serial 本身就是 UART0，RX 腳不能用
+  (void)src; (void)pct; return;            // Serial 本身就是 UART0，RX 腳不能用
 #endif
+  g_ledPct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
 }
 
 static void ledTick(uint32_t ms) {
@@ -129,16 +187,29 @@ static void ledTick(uint32_t ms) {
 // ---------------- 負荷統計（隨 hello 回報給電腦端，寫進 AIMonitor 紀錄）----------------
 static uint32_t g_maxLoopMs = 0;    // 上次回報之後，最長的一次 loop（畫一條畫面時 USB 沒人讀）
 static uint32_t g_maxStripMs = 0;   // 上次回報之後，最長的一條畫面重畫
+static uint32_t g_maxRingMs = 0;    // 上次回報之後，最長的一格外環（AMOLED 一格要十幾 ms）
 static uint32_t g_badLines = 0;     // 開機以來解析失敗的行（資料被截斷 / 丟掉）
 static uint32_t g_longLines = 0;    // 開機以來超過長度上限、整行丟掉的次數
 
+#ifdef PIN_LCD_TE
+// AMOLED：面板每開始掃描新的一張，TE 腳送一個脈衝（約 60 Hz）。外環在這之後馬上寫（約 3 ms，比面板掃描快），
+// 不然面板掃到一半時寫入，會半圈新、半圈舊（外圈出現一段錯開的缺口）
+static volatile uint32_t g_teUs = 0;
+static volatile uint32_t g_teN = 0;       // 上次回報之後的脈衝數（回報給電腦端，確認 TE 有訊號）
+static void IRAM_ATTR onTE() { g_teUs = micros(); g_teN++; }
+#endif
+
 static void sendHello(Stream* src) {
-  char b[160];
-  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
+  char b[192];
+  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
            (unsigned long)(millis() / 1000), (unsigned long)g_maxLoopMs, (unsigned long)g_maxStripMs,
            (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
+#ifdef PIN_LCD_TE
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu}", (unsigned long)g_teN, (unsigned long)g_maxRingMs);
+  g_teN = 0;
+#endif
   sendLine(src, b);
-  g_maxLoopMs = g_maxStripMs = 0;
+  g_maxLoopMs = g_maxStripMs = g_maxRingMs = 0;
 }
 
 static void handleLine(Stream* src, const String& line) {
@@ -233,7 +304,7 @@ static void pollReader(LineReader& r) {
 }
 
 static LineReader rdUsb(&Serial);
-#if ARDUINO_USB_CDC_ON_BOOT
+#if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0
 static LineReader rdUart(&Serial0);
 #endif
 
@@ -265,23 +336,47 @@ static void pollButton() {
   was = down;
 }
 
+// 外環這一格：0 = 還不用畫，1 = 現在畫，2 = 快到了、等面板（這次 loop 不要重畫其他東西）
+// stripWaiting：重畫進行中，而且上一格外環之後還沒畫過任何一條
+static int ringFrameState(uint32_t now, uint32_t lastRing, bool stripWaiting) {
+  if (!ringAnimating()) return 0;
+#ifdef PIN_LCD_TE
+  const uint32_t te = micros() - g_teUs;
+  if (g_teUs && te < 100000) {                    // 有 TE：跟著面板的節奏
+    // AMOLED 一格外環要十幾 ms，加上等 TE 會占滿整個 16.7 ms：重畫中每一格外環之後先畫一條，
+    // 不然重畫永遠排不到（外環照常呼吸，中間的字卻一直不更新）
+    if (stripWaiting) return 0;
+    if (now - lastRing < 10) return 0;            // 剛畫過，這段時間可以重畫一條
+    return te < 2000 ? 1 : 2;
+  }
+#endif
+  return now - lastRing >= 16 ? 1 : 0;            // 約 60 fps
+}
+
 void setup() {
   // 一行畫面資料約 400-600 位元組，預設接收緩衝只有 256：畫一條畫面的期間沒人讀，滿了後面就被丟掉 → 那行解析失敗
   Serial.setRxBufferSize(2048);
   Serial.begin(115200);
-#if ARDUINO_USB_CDC_ON_BOOT
+#if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0
   Serial0.setRxBufferSize(1024);
   Serial0.begin(115200);
 #endif
   pinMode(PIN_BTN, INPUT_PULLUP);
+#ifdef PIN_LCD_TE
+  pinMode(PIN_LCD_TE, INPUT);
+  attachInterrupt(PIN_LCD_TE, onTE, RISING);
+#endif
 
   lcd.init();
   { Preferences pf; pf.begin("aimon", true); g_rot = pf.getUChar("rot", 0) & 3; pf.end(); }
   lcd.setRotation(g_rot);
-  lcd.setBrightness(brightness);
   lcd.fillScreen(TFT_BLACK);
+  lcd.setBrightness(brightness);
   loadFonts();
-  g_ringDirect = true;
+  // 外環直接畫到螢幕，sprite 裡留空（透明色）。AMOLED 不行：透明色切出來的每一段要偶數對齊，
+  // 不對齊的整段會被丟掉 → 外環也畫進 sprite（每條重畫只要幾 ms，跟呼吸燈差一格看不出來）
+  g_ringDirect = !BOARD_AMOLED;
+  g_ringLive = BOARD_AMOLED;
   ringInit();
   gaugeInit();
   band.setColorDepth(16);
@@ -292,7 +387,7 @@ void setup() {
 void loop() {
   const uint32_t loopStart = millis();
   pollReader(rdUsb);
-#if ARDUINO_USB_CDC_ON_BOOT
+#if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0
   if (!g_ledPin) pollReader(rdUart);
 #endif
   pollButton();
@@ -312,6 +407,15 @@ void loop() {
     dirty = true;
   }
 
+#if BOARD_AMOLED
+  // 防烙印：AMOLED 長時間顯示一樣的字會留下殘影 → 文字每 2 分鐘換個位置（9 個位置輪流，最多偏 2 個設計像素）
+  {
+    static const int8_t SHIFT[9][2] = {{0, 0}, {2, 0}, {2, 2}, {0, 2}, {-2, 2}, {-2, 0}, {-2, -2}, {0, -2}, {2, -2}};
+    const int8_t* sh = SHIFT[(now / 120000UL) % 9];
+    if (SI(sh[0]) != g_shX || SI(sh[1]) != g_shY) { g_shX = SI(sh[0]); g_shY = SI(sh[1]); dirty = true; }
+  }
+#endif
+
   // 整個畫面：資料變了、或每秒一次（時間、倒數）。
   // 分成 6 條，每次 loop 只畫一條，中間照常更新呼吸燈 → 呼吸燈不會因為重畫數字而卡住
   static int strip = -1;            // -1 = 沒有在重畫
@@ -319,15 +423,20 @@ void loop() {
   if (strip < 0 && (dirty || now - lastFull >= (animating() ? 1000u : 5000u))) {
     strip = 0; stripMs = now; lastFull = now; dirty = false; g_anyKeyed = false;
   }
-  if (ringAnimating() && now - lastRing >= 16) {             // 約 60 fps
+  static bool stripSinceRing = false;   // 上一格外環之後畫過一條了
+  const int ringState = ringFrameState(now, lastRing, strip >= 0 && !stripSinceRing);
+  if (ringState == 1) {
     lcd.startWrite();
     statusRingOn(lcd, 0, now);
     lcd.endWrite();
     lastRing = now;
-  } else if (strip >= 0) {
+    stripSinceRing = false;
+    if (millis() - now > g_maxRingMs) g_maxRingMs = millis() - now;
+  } else if (ringState == 0 && strip >= 0) {
     OY = strip * BAND_H;
     const uint32_t t0 = millis();
     renderStrip(stripMs);
+    stripSinceRing = true;
     if (millis() - t0 > g_maxStripMs) g_maxStripMs = millis() - t0;
     OY = 0;
     if (++strip * BAND_H >= H) {

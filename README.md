@@ -38,13 +38,16 @@ Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型�
 
 | 項目 | 說明 |
 |---|---|
-| 螢幕板 | **ESP32-2424S012N**：ESP32-C3 + 1.28 吋圓形 IPS 螢幕（GC9A01，240×240）。網路商店搜尋「ESP32-2424S012」或「ESP32-C3 1.28 圓形螢幕」即可找到 |
+| 螢幕板（二選一） | **ESP32-2424S012N**：ESP32-C3 + 1.28 吋圓形 IPS 螢幕（GC9A01，240×240）。網路商店搜尋「ESP32-2424S012」或「ESP32-C3 1.28 圓形螢幕」即可找到 |
+| | **Waveshare ESP32-S3-Touch-AMOLED-1.75**：ESP32-S3 + 1.75 吋圓形 AMOLED（CO5300，466×466）。畫面跟 1.28 吋一樣，等比例放大，黑色更黑 |
 | USB 線 | USB-C **傳輸線**（只能充電的線電腦抓不到裝置） |
 | 電腦 | Windows 10 / 11（需要 WebView2，Windows 11 已內建） |
 
 - 型號最後的 **N** 是無觸控版，本專案就是用這個版本開發與測試；觸控版（**C**）螢幕相同，但沒有實測過。
 - 基本功能不需要焊接、不需要外接零件（外接 LED 是選配，見下方）：板子上的 **BOOT 鍵**就是操作按鈕（短按翻頁、長按標為已讀），**RST 鍵**用來重新開機。
 - 不需要 Wi-Fi：螢幕的電源和資料都走同一條 USB。
+- 兩種螢幕可以**同時接在同一台電腦**，顯示一樣的內容（例如一塊放桌上、一塊放螢幕旁）。
+- AMOLED 版：板上的觸控、電池、喇叭、麥克風、陀螺儀目前沒用到；操作一樣用 **BOOT 鍵**。AMOLED 長時間顯示同樣的畫面會烙印，所以文字每 2 分鐘會挪動幾個像素（看不太出來）。
 
 ### 選配：外接狀態 LED（WS2812）
 
@@ -63,6 +66,8 @@ Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型�
 | VCC / 5V | **3.3V**（排座沒有 5V，單顆 LED 用 3.3V 就夠亮） |
 | GND | GND |
 
+AMOLED 版：DIN 接 8-pin 排座的 **GPIO16**，電源接排座的 **3V3** / **GND**。
+
 - 不要接排座旁邊標 IO8 的圓形焊點：它是開機腳位，被拉低時「一鍵更新韌體」會進不了燒錄模式。
 - 接好後在 AIMonitor 設定視窗把「外接 LED」從「關閉」改成「暗」或「中」（預設關閉），按「播放測試畫面」就能看到各種燈號。需要韌體 1.7.0 以上。
 - LED 前面貼一小片霧面膠帶或描圖紙，光會比較均勻，不會只看到一個亮點。
@@ -76,7 +81,7 @@ Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型�
 1. 用 Chrome 開啟 <https://espressif.github.io/esptool-js/>
 2. 用 USB 接上螢幕，按 **Connect**，選擇裝置。
    - 如果連不上：按住板子的 BOOT 鍵，再按一下 RST 鍵，然後放開 BOOT，再試一次。
-3. Flash Address 填 **0x0**，檔案選 `firmware/aimon-usb-esp32c3.bin`，按 **Program**。
+3. Flash Address 填 **0x0**，檔案選 `firmware/aimon-usb-esp32c3.bin`（1.28 吋）或 `firmware/aimon-usb-esp32s3-amoled175.bin`（1.75 吋 AMOLED），按 **Program**。
 4. 完成後按一下 RST 鍵，畫面會出現 **Not Connected**。
 
 ### 方法 B：Arduino IDE
@@ -84,6 +89,8 @@ Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型�
 1. 安裝程式庫 **LovyanGFX** 和 **ArduinoJson**（v7）。
 2. 開啟 `firmware/aimon/aimon.ino`。
 3. Board 選 **ESP32C3 Dev Module**，並把 **USB CDC On Boot** 設成 **Enabled**。
+   AMOLED 版選 **ESP32S3 Dev Module**：USB CDC On Boot **Enabled**、USB Mode **Hardware CDC and JTAG**、PSRAM **OPI PSRAM**、Flash Size **16MB**、Partition Scheme **16M Flash (3MB APP/9.9MB FATFS)**。
+   程式會依板子自動選對的腳位與畫面尺寸（`config.h`）。
 4. 上傳。
 
 PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
@@ -94,7 +101,7 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
    - 如果出現「Windows 已保護您的電腦」：按「**其他資訊** → **仍要執行**」。這是因為這個程式沒有付費數位簽章。
 2. 它會自動安裝到 `%LOCALAPPDATA%\AIMonitor`，並設定成開機自動執行，然後打開設定視窗。之後雙擊新版來更新時，會安靜地取代執行中的舊版，不會再跳出設定視窗。
 3. 在設定視窗按「**登入 Claude**」，登入一次就好（建議用 Email 登入）。登入後就會自動在背景查詢額度。
-4. 插上螢幕，設定視窗會顯示「已連線（COMx）」。按「播放測試畫面」確認一下。
+4. 插上螢幕，設定視窗會顯示螢幕種類和連線的埠，例如「1.28 吋 LCD（COM5）」。同時接好幾塊螢幕時每塊一行。按「播放測試畫面」確認一下。
 
 之後這台電腦**插上螢幕就能用**：開機時程式會自動在背景執行，螢幕拔掉再插也會自動重新連線。
 
@@ -140,8 +147,8 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 
 ## 更新螢幕韌體
 
-AIMonitor 內建最新韌體。設定視窗「韌體」一欄顯示「可更新」時按「更新螢幕韌體」，大約 30 秒，螢幕會自動重新開機。不需要再用網頁燒錄器。
-（萬一更新失敗、螢幕沒反應：用「一、燒錄韌體」的網頁燒錄方式重燒 `aimon-usb-esp32c3.bin` 即可救回。）
+AIMonitor 內建兩種螢幕的最新韌體，會依螢幕回報的型號選對的那個（燒錄前也會再確認晶片，不會燒錯）。設定視窗「韌體」一欄顯示「可更新」時按「更新螢幕韌體」，大約 30 秒，螢幕會自動重新開機。接了好幾塊螢幕時每塊各有一個按鈕，更新其中一塊時其他螢幕照常顯示。不需要再用網頁燒錄器。
+（萬一更新失敗、螢幕沒反應：用「一、燒錄韌體」的網頁燒錄方式重燒完整韌體即可救回。）
 
 ## 偵測原理與限制
 
@@ -163,14 +170,15 @@ AIMonitor 內建最新韌體。設定視窗「韌體」一欄顯示「可更新�
 - `st`：`idle` / `done` / `working` / `review` / `error`
 - `led`（選用）：外接 WS2812 的亮度 0-100，0 = 關閉
 - 螢幕 20 秒沒收到資料，會顯示 **Disconnected**（從沒連上過時顯示 Not Connected）。AIMonitor 連線中每 15 秒送一次 `{"hello":1}`，40 秒沒回應就判定螢幕沒在處理資料，自動重開螢幕。
-- 送出 `{"hello":1}` 會收到 `{"aimon":2,"fw":…}`，韌體 1.7.2 起還會附上負荷統計（開機時間、最長迴圈與重畫時間、資料遺失次數、剩餘記憶體），AIMonitor 會寫進紀錄；按下 BOOT 鍵時，螢幕會送出 `{"ev":"btn"}`。
+- 送出 `{"hello":1}` 會收到 `{"aimon":2,"fw":…,"hw":…}`（`hw` 是螢幕種類：`c3` / `s3a175`，韌體 1.9.0 起才有），韌體 1.7.2 起還會附上負荷統計（開機時間、最長迴圈與重畫時間、資料遺失次數、剩餘記憶體），AIMonitor 會寫進紀錄；按下 BOOT 鍵時，螢幕會送出 `{"ev":"btn"}`。
 
 ## 檔案
 
 ```
-firmware/aimon-usb-esp32c3.bin  已編譯好的完整韌體（從 0x0 燒錄）
-firmware/aimon/                 原始碼（aimon.ino 主程式、ui.h 畫面、fonts.h 字型、config.h 亮度與腳位）
-firmware/tools/fontgen.py       重新產生字型（Inter, SIL OFL）
+firmware/aimon-usb-esp32c3.bin  已編譯好的完整韌體，1.28 吋 LCD（從 0x0 燒錄）
+firmware/aimon-usb-esp32s3-amoled175.bin  已編譯好的完整韌體，1.75 吋 AMOLED（從 0x0 燒錄）
+firmware/aimon/                 原始碼（aimon.ino 主程式、ui.h 畫面、fonts*.h 字型、config.h 亮度與兩種板子的腳位）
+firmware/tools/fontgen.py       重新產生字型（Inter, SIL OFL；`fontgen.py 466` 產生 AMOLED 用的放大版）
 firmware/preview/               重新產生 README 的預覽圖片（`build-preview.ps1`，開發用）
 windows/AIMonitor.exe           Windows 程式（每台電腦雙擊一次）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）
@@ -180,4 +188,4 @@ extension/                      Chrome 擴充功能（選用，Mac 用）
 ## 授權
 
 MIT License，見 [LICENSE](LICENSE)。
-螢幕使用的 Inter 字型（`firmware/tools/fonts/Inter-Variable.ttf`，以及由它產生的 `firmware/aimon/fonts.h`）採用 SIL Open Font License 1.1，不在 MIT 範圍內，授權全文見 [firmware/tools/fonts/OFL.txt](firmware/tools/fonts/OFL.txt)。
+螢幕使用的 Inter 字型（`firmware/tools/fonts/Inter-Variable.ttf`，以及由它產生的 `firmware/aimon/fonts.h`、`fonts466.h`）採用 SIL Open Font License 1.1，不在 MIT 範圍內，授權全文見 [firmware/tools/fonts/OFL.txt](firmware/tools/fonts/OFL.txt)。

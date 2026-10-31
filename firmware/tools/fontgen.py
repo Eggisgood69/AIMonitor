@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """把 TTF 轉成 LovyanGFX 可用的抗鋸齒 VLW 字型（C 陣列），只收錄需要的字元以節省空間。
-用法：python3 fontgen.py  → 產生 ../aimon/fonts.h
+用法：python3 fontgen.py      → 產生 ../aimon/fonts.h（240×240 螢幕）
+      python3 fontgen.py 466  → 產生 ../aimon/fonts466.h（466×466 螢幕，字級等比例放大）
 """
 import os
 import struct
+import sys
 from PIL import ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,10 +45,12 @@ def vlw(size, weight, chars):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    dst = os.path.join(here, "..", "aimon", "fonts.h")
+    res = int(sys.argv[1]) if len(sys.argv) > 1 else 240        # 螢幕寬度（像素）；字級是照 240 設計的
+    dst = os.path.join(here, "..", "aimon", "fonts.h" if res == 240 else "fonts%d.h" % res)
     with open(dst, "w") as f:
         f.write("#pragma once\n// 由 tools/fontgen.py 產生（Inter, SIL Open Font License）\n#include <stdint.h>\n\n")
         for name, size, weight, chars in FONTS:
+            size = int(round(size * res / 240))
             data = vlw(size, weight, chars)
             f.write("static const uint8_t %s[%d] = {\n" % (name, len(data)))
             for i in range(0, len(data), 24):

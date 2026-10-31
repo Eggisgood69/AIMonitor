@@ -203,10 +203,14 @@
     $("ver").textContent = "版本 " + s.version;
     $("copy").textContent = "© " + s.releaseYear + " " + s.author;
 
-    const ser = s.serial || {};
-    $("serial").innerHTML = ser.connected
-      ? `<span class="dot" style="background:#30d158"></span>已連線（${ser.port}）${ser.verified ? "" : `<div class="hint">尚未收到螢幕回覆（已收到 ${ser.rx || 0} bytes）</div>`}`
-      : `<span class="dot" style="background:#ff453a"></span>未偵測到<div class="hint">用 USB 線插上螢幕即可，會自動連線。若燒錄工具或 Chrome 擴充功能正在使用序列埠，請先關閉。</div>`;
+    // 螢幕可以同時接好幾個；還沒回應的埠（可能是其他 USB 裝置）只在沒有任何螢幕時顯示
+    const BOARD = { c3: "1.28 吋 LCD", s3a175: "1.75 吋 AMOLED" };
+    const allScr = s.screens || [], scr = allScr.filter((x) => x.verified);
+    $("serial").innerHTML = scr.length
+      ? scr.map((x) => `<div><span class="dot" style="background:#30d158"></span>${BOARD[x.hw || "c3"] || x.hw}（${x.port}）</div>`).join("")
+      : allScr.length
+        ? `<span class="dot" style="background:#ffd60a"></span>已連線（${allScr.map((x) => x.port).join("、")}）<div class="hint">尚未收到螢幕回覆（已收到 ${allScr.reduce((n, x) => n + (x.rx || 0), 0)} bytes）</div>`
+        : `<span class="dot" style="background:#ff453a"></span>未偵測到<div class="hint">用 USB 線插上螢幕即可，會自動連線。若燒錄工具或 Chrome 擴充功能正在使用序列埠，請先關閉。</div>`;
 
     const f = s.frame || {};
     $("frame").innerHTML = f.ai && f.ai !== "none"
@@ -262,22 +266,25 @@
       }
     }
 
-    // 螢幕韌體
-    const fw = s.firmware || {}, dev = ser.fw || "";
+    // 螢幕韌體（每個螢幕一行）
+    const fw = s.firmware || {};
     const less = (a, b) => { const x = (a || "0").split(".").map(Number), y = (b || "0").split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
     if (fw.running) {
-      $("fw").innerHTML = `${fw.msg || "更新中…"} ${fw.progress}%<div class="bar"><i style="width:${fw.progress}%;background:#0a84ff"></i></div><div class="hint">請不要拔掉 USB</div>`;
+      $("fw").innerHTML = `${fw.port ? fw.port + "：" : ""}${fw.msg || "更新中…"} ${fw.progress}%<div class="bar"><i style="width:${fw.progress}%;background:#0a84ff"></i></div><div class="hint">請不要拔掉 USB</div>`;
     } else if (fw.err) {
-      $("fw").innerHTML = `<span class="bad">更新失敗：${fw.err}</span><div class="btns" style="margin-top:8px"><button data-cmd="fwupdate">再試一次</button></div>`;
+      $("fw").innerHTML = `<span class="bad">更新失敗：${fw.err}</span><div class="btns" style="margin-top:8px"><button data-cmd="fwupdate${fw.port ? ":" + fw.port : ""}">再試一次</button></div>`;
     } else if (fw.msg) {
       $("fw").innerHTML = `<span class="ok">${fw.msg}</span>`;
-    } else if (!ser.connected) {
+    } else if (!scr.length) {
       $("fw").innerHTML = `<span class="muted">內建 ${fw.bundled}</span>`;
-    } else if (!dev || less(dev, fw.bundled)) {
-      $("fw").innerHTML = `${dev ? dev : "舊版"} <span class="muted">→ 可更新到 ${fw.bundled}</span>
-        <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="fwupdate">更新螢幕韌體</button></div>`;
     } else {
-      $("fw").innerHTML = `${dev} <span class="muted">· 已是最新 · <a href="#" data-cmd="fwupdate" style="color:inherit">重新寫入</a></span>`;
+      $("fw").innerHTML = scr.map((x) => {
+        const who = scr.length > 1 ? `<span class="muted">${x.port}：</span>` : "", dev = x.fw || "";
+        return !dev || less(dev, fw.bundled)
+          ? `<div>${who}${dev ? dev : "舊版"} <span class="muted">→ 可更新到 ${fw.bundled}</span>
+              <div class="btns" style="margin:6px 0 4px"><button class="primary" data-cmd="fwupdate:${x.port}">更新${scr.length > 1 ? " " + x.port : "螢幕韌體"}</button></div></div>`
+          : `<div>${who}${dev} <span class="muted">· 已是最新 · <a href="#" data-cmd="fwupdate:${x.port}" style="color:inherit">重新寫入</a></span></div>`;
+      }).join("");
     }
     const bri = $("bri");
     if (document.activeElement !== bri) bri.value = s.brightness || 160;

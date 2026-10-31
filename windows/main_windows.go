@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.9.18"
+const version = "1.10.0"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -318,31 +319,48 @@ func runMonitor(onScan func([]Item)) {
 	}
 }
 
-// ---------------- USB 螢幕 ----------------
+// ---------------- USB 螢幕（可以同時接好幾個，每個埠一條連線，畫面同時送給所有螢幕）----------------
 
 type serialStatus struct {
 	Connected bool   `json:"connected"`
 	Port      string `json:"port"`
 	Verified  bool   `json:"verified"`
 	FW        string `json:"fw"` // 螢幕回報的韌體版本（舊版不會回報）
+	HW        string `json:"hw"` // 板子型號（韌體 1.9.0 起回報；沒有 = c3）
 	RX        int    `json:"rx"` // 從螢幕收到的位元組數（除錯用）
+}
+
+// 板子型號：舊韌體不回報，當作原本的 C3 螢幕
+func (s serialStatus) Board() string {
+	if s.HW == "" {
+		return "c3"
+	}
+	return s.HW
+}
+
+// 一個連線中的螢幕
+type screenConn struct {
+	stat serialStatus // 受 serMu 保護
+	out  chan []byte  // 要送給這個螢幕的畫面
 }
 
 var (
 	serMu     sync.Mutex
-	serStat   serialStatus
-	frameCh   = make(chan []byte, 16)
+	screens   = map[string]*screenConn{} // 連線中（含還沒回應）的螢幕，以埠名稱為 key；受 serMu 保護
 	demoUntil time.Time
 	demoMu    sync.Mutex
 )
 
+// 各埠的連線狀態（serialLoop 與各埠的連線共用，受 portMu 保護）
 var (
-	skipPort     = map[string]time.Time{}
-	openErr      = map[string]string{} // 每個埠上次開啟失敗的原因（一樣的錯誤只記一次）
-	lastGoodPort string                // 上次成功連上螢幕的埠：優先嘗試
-	stuckCount   int                   // 連續幾次「一連上就寫入逾時」
-	lastAnswer   time.Time             // 螢幕最後一次回應 hello 的時間（只在 serialLoop 裡讀寫）
-	lastRecover  time.Time             // 上次因為「螢幕沒回應」自動重開的時間
+	portMu      sync.Mutex
+	running     = map[string]bool{}      // 這個埠正在連線中（不要重複開）
+	skipPort    = map[string]time.Time{} // 不回應的埠（其他 USB 裝置）暫時跳過
+	quietPort   = map[string]bool{}      // 試過、沒回應的埠：已經有螢幕連上時就不再去開它，直到拔掉重插
+	openErr     = map[string]string{}    // 每個埠上次開啟失敗的原因（一樣的錯誤只記一次）
+	stuckCount  = map[string]int{}       // 連續幾次「一連上就寫入逾時」
+	lastRecover = map[string]time.Time{} // 上次因為「螢幕沒回應」自動重開的時間
+	scrStats    = map[string]*screenStats{}
 )
 
 // 螢幕收得到資料、卻沒在解析（畫面顯示 Disconnected）時，寫入不會失敗，只能靠定時打招呼發現
@@ -350,159 +368,222 @@ const (
 	pingEvery     = 15 * time.Second // 連線中每 15 秒打一次招呼
 	noAnswerAfter = 40 * time.Second // 這麼久都沒回應 = 螢幕沒在解析資料
 	recoverGap    = 2 * time.Minute  // 自動重開螢幕最多每 2 分鐘一次，避免一直重開
+	quietSkip     = 2 * time.Minute  // 不回應的埠多久後再試（還沒有任何螢幕連上時）
 )
 
+// 所有連線中的螢幕（依埠名稱排序）
+func screenList() []serialStatus {
+	serMu.Lock()
+	defer serMu.Unlock()
+	out := make([]serialStatus, 0, len(screens))
+	for _, sc := range screens {
+		out = append(out, sc.stat)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Port < out[j].Port })
+	return out
+}
+
+func anyScreenConnected() bool {
+	serMu.Lock()
+	defer serMu.Unlock()
+	return len(screens) > 0
+}
+
+func verifiedScreens() int {
+	n := 0
+	for _, s := range screenList() {
+		if s.Verified {
+			n++
+		}
+	}
+	return n
+}
+
+// 每 2 秒看一次插著哪些埠，沒在連線的就開一條連線
 func serialLoop() {
 	for {
-		if pauseSerial.Load() { // 韌體更新中：讓出序列埠
-			time.Sleep(300 * time.Millisecond)
-			continue
-		}
 		ports := findDisplayPorts()
-		// 不回應的埠（其他 USB 裝置）暫時跳過；上次連上的埠排第一個
-		var cand []string
+		paused := fwPausedPort()
+		haveScreen := verifiedScreens() > 0
+		var start []string
+		portMu.Lock()
+		present := map[string]bool{}
 		for _, p := range ports {
-			if until, bad := skipPort[p]; !bad || time.Now().After(until) {
-				if p == lastGoodPort {
-					cand = append([]string{p}, cand...)
-				} else {
-					cand = append(cand, p)
-				}
+			present[p] = true
+		}
+		for p := range quietPort {
+			if !present[p] { // 拔掉了：重插時再試
+				delete(quietPort, p)
+				delete(skipPort, p)
 			}
 		}
-		multi := len(ports) > 1
-		var sp *serialPort
-		for _, p := range cand {
-			if s, err := openSerial(p); err == nil {
-				sp = s
-				delete(openErr, p)
-				break
-			} else if openErr[p] != err.Error() {
-				// 例如另一個 USB 裝置被別的程式占用：每 2 秒都會失敗，只在原因改變時記一次
-				openErr[p] = err.Error()
-				logf("open %s: %v", p, err)
+		for _, p := range ports {
+			if p == paused || running[p] {
+				continue
 			}
+			// 其他 USB 裝置（例如 CH340 的別的板子）：有螢幕在用時不去打擾它
+			if quietPort[p] && haveScreen {
+				continue
+			}
+			if until, bad := skipPort[p]; bad && time.Now().Before(until) {
+				continue
+			}
+			running[p] = true
+			start = append(start, p)
 		}
-		if sp == nil {
-			serMu.Lock()
-			serStat = serialStatus{}
-			serMu.Unlock()
-			time.Sleep(2 * time.Second)
-			continue
+		portMu.Unlock()
+		for _, p := range start {
+			go runScreen(p, len(ports) > 1)
 		}
-		logf("connected %s", sp.name)
-		serMu.Lock()
-		serStat = serialStatus{Connected: true, Port: sp.name}
-		serMu.Unlock()
-		sp.Write([]byte("{\"hello\":1}\n"))
-		sendFrameNow()
-		lastAnswer = time.Now()
-		sent := 0 // 上次回應之後送了幾個畫面（沒回應時記在紀錄裡）
-
-		buf := make([]byte, 512)
-		line := []byte{}
-		ok := true
-		why := "" // 斷線原因（記在紀錄裡）
-		lastHello := time.Now()
-		openedAt := time.Now()
-		for ok {
-			if pauseSerial.Load() {
-				why = "paused for firmware update"
-				break
-			}
-			// 還沒收到螢幕回覆：每 5 秒再打一次招呼
-			serMu.Lock()
-			ver := serStat.Verified
-			serMu.Unlock()
-			// 有好幾個序列埠、這個 12 秒都沒回應：可能不是螢幕，換下一個
-			if !ver && multi && time.Since(openedAt) > 12*time.Second {
-				skipPort[sp.name] = time.Now().Add(2 * time.Minute)
-				why = "did not answer, trying other ports"
-				break
-			}
-			if !ver && time.Since(lastHello) > 5*time.Second {
-				sp.Write([]byte("{\"hello\":1}\n"))
-				lastHello = time.Now()
-			}
-			if ver && time.Since(lastHello) > pingEvery {
-				sp.Write([]byte("{\"hello\":1}\n"))
-				lastHello = time.Now()
-			}
-			if ver && time.Since(lastAnswer) > noAnswerAfter {
-				why = fmt.Sprintf("screen not answering for %s, %d frames sent meanwhile", time.Since(lastAnswer).Round(time.Second), sent)
-				break
-			}
-			// 送出所有待送的畫面
-		drain:
-			for {
-				select {
-				case b := <-frameCh:
-					if err := sp.Write(b); err != nil {
-						ok = false
-						why = "write: " + err.Error()
-						break drain
-					}
-					sent++
-				default:
-					break drain
-				}
-			}
-			if !ok {
-				break
-			}
-			n, err := sp.Read(buf)
-			if err != nil {
-				why = "read: " + err.Error()
-				break
-			}
-			if n > 0 {
-				serMu.Lock()
-				serStat.RX += n
-				serMu.Unlock()
-			}
-			for _, c := range buf[:n] {
-				if c == '\n' || c == '\r' {
-					if handleDeviceLine(string(line)) {
-						lastAnswer, sent = time.Now(), 0
-					}
-					line = line[:0]
-				} else if len(line) < 1024 {
-					line = append(line, c)
-				}
-			}
-		}
-		sp.Close()
-		logf("disconnected %s after %s (%s)", sp.name, time.Since(openedAt).Round(time.Second), why)
-		// 一連上就寫入逾時 = 螢幕上沒有程式在讀（卡在燒錄模式或當機，畫面全黑）：連續 3 次就自動重置
-		if strings.HasPrefix(why, "write:") && time.Since(openedAt) < 5*time.Second {
-			stuckCount++
-		} else {
-			stuckCount = 0
-		}
-		if stuckCount >= 3 {
-			stuckCount = 0
-			logf("%s is not reading, resetting the screen", sp.name)
-			resetScreen(sp.name)
-		}
-		// 螢幕活著但沒在解析資料（畫面 Disconnected）：重開螢幕
-		if strings.HasPrefix(why, "screen not answering") {
-			if time.Since(lastRecover) > recoverGap {
-				lastRecover = time.Now()
-				logf("%s: resetting the screen (not answering)", sp.name)
-				resetScreen(sp.name)
-			} else {
-				logf("%s: still not answering, already reset %s ago; reconnecting only", sp.name, time.Since(lastRecover).Round(time.Second))
-			}
-		}
-		serMu.Lock()
-		serStat = serialStatus{}
-		serMu.Unlock()
-		time.Sleep(time.Second)
+		time.Sleep(2 * time.Second)
 	}
 }
 
-// 螢幕回報的負荷統計（韌體 1.7.2 起隨 hello 回應帶上；只在 serialLoop 裡讀寫）
-var scr struct {
+// 一個埠的連線：打招呼、送畫面、收螢幕的回應，斷線就結束（serialLoop 會再開）
+func runScreen(port string, multi bool) {
+	defer func() {
+		portMu.Lock()
+		delete(running, port)
+		portMu.Unlock()
+	}()
+	sp, err := openSerial(port)
+	portMu.Lock()
+	if err != nil {
+		// 例如另一個 USB 裝置被別的程式占用：每 2 秒都會失敗，只在原因改變時記一次
+		if openErr[port] != err.Error() {
+			openErr[port] = err.Error()
+			logf("open %s: %v", port, err)
+		}
+		portMu.Unlock()
+		return
+	}
+	delete(openErr, port)
+	portMu.Unlock()
+
+	logf("connected %s", port)
+	sc := &screenConn{stat: serialStatus{Connected: true, Port: port}, out: make(chan []byte, 16)}
+	serMu.Lock()
+	screens[port] = sc
+	serMu.Unlock()
+	sp.Write([]byte("{\"hello\":1}\n"))
+	sendFrameNow()
+	lastAnswer := time.Now() // 螢幕最後一次回應 hello 的時間
+	sent := 0                // 上次回應之後送了幾個畫面（沒回應時記在紀錄裡）
+
+	buf := make([]byte, 512)
+	line := []byte{}
+	ok := true
+	why := "" // 斷線原因（記在紀錄裡）
+	lastHello := time.Now()
+	openedAt := time.Now()
+	for ok {
+		if fwPausedPort() == port {
+			why = "paused for firmware update"
+			break
+		}
+		serMu.Lock()
+		ver := sc.stat.Verified
+		serMu.Unlock()
+		// 有好幾個序列埠、這個 12 秒都沒回應：可能不是螢幕，先跳過
+		if !ver && multi && time.Since(openedAt) > 12*time.Second {
+			portMu.Lock()
+			skipPort[port] = time.Now().Add(quietSkip)
+			quietPort[port] = true
+			portMu.Unlock()
+			why = "did not answer, skipping"
+			break
+		}
+		// 還沒收到螢幕回覆：每 5 秒再打一次招呼
+		if !ver && time.Since(lastHello) > 5*time.Second {
+			sp.Write([]byte("{\"hello\":1}\n"))
+			lastHello = time.Now()
+		}
+		if ver && time.Since(lastHello) > pingEvery {
+			sp.Write([]byte("{\"hello\":1}\n"))
+			lastHello = time.Now()
+		}
+		if ver && time.Since(lastAnswer) > noAnswerAfter {
+			why = fmt.Sprintf("screen not answering for %s, %d frames sent meanwhile", time.Since(lastAnswer).Round(time.Second), sent)
+			break
+		}
+		// 送出所有待送的畫面
+	drain:
+		for {
+			select {
+			case b := <-sc.out:
+				if err := sp.Write(b); err != nil {
+					ok = false
+					why = "write: " + err.Error()
+					break drain
+				}
+				sent++
+			default:
+				break drain
+			}
+		}
+		if !ok {
+			break
+		}
+		n, err := sp.Read(buf)
+		if err != nil {
+			why = "read: " + err.Error()
+			break
+		}
+		if n > 0 {
+			serMu.Lock()
+			sc.stat.RX += n
+			serMu.Unlock()
+		}
+		for _, c := range buf[:n] {
+			if c == '\n' || c == '\r' {
+				if handleDeviceLine(sc, string(line)) {
+					lastAnswer, sent = time.Now(), 0
+				}
+				line = line[:0]
+			} else if len(line) < 1024 {
+				line = append(line, c)
+			}
+		}
+	}
+	sp.Close()
+	serMu.Lock()
+	delete(screens, port)
+	serMu.Unlock()
+	logf("disconnected %s after %s (%s)", port, time.Since(openedAt).Round(time.Second), why)
+	// 一連上就寫入逾時 = 螢幕上沒有程式在讀（卡在燒錄模式或當機，畫面全黑）：連續 3 次就自動重置
+	portMu.Lock()
+	if strings.HasPrefix(why, "write:") && time.Since(openedAt) < 5*time.Second {
+		stuckCount[port]++
+	} else {
+		stuckCount[port] = 0
+	}
+	stuck := stuckCount[port] >= 3
+	if stuck {
+		stuckCount[port] = 0
+	}
+	notAnswering := strings.HasPrefix(why, "screen not answering")
+	since := time.Since(lastRecover[port])
+	recover := notAnswering && since > recoverGap
+	if recover {
+		lastRecover[port] = time.Now()
+	}
+	portMu.Unlock()
+	if stuck {
+		logf("%s is not reading, resetting the screen", port)
+		resetScreen(port)
+	}
+	// 螢幕活著但沒在解析資料（畫面 Disconnected）：重開螢幕
+	if recover {
+		logf("%s: resetting the screen (not answering)", port)
+		resetScreen(port)
+	} else if notAnswering {
+		logf("%s: still not answering, already reset %s ago; reconnecting only", port, since.Round(time.Second))
+	}
+	time.Sleep(time.Second)
+}
+
+// 螢幕回報的負荷統計（韌體 1.7.2 起隨 hello 回應帶上；每個埠一份，受 portMu 保護）
+type screenStats struct {
 	have              bool
 	up, bad, long     float64   // 上一次的開機秒數、累計解析失敗行數、累計過長丟掉的行數
 	winLoop, winStrip float64   // 這 10 分鐘內最長的 loop / 一條畫面重畫（毫秒）
@@ -512,6 +593,13 @@ var scr struct {
 
 // 只在有意義時寫紀錄：螢幕重開機、有資料被丟掉、每 10 分鐘一行摘要
 func noteScreenStats(port string, m map[string]interface{}) {
+	portMu.Lock()
+	defer portMu.Unlock()
+	scr := scrStats[port]
+	if scr == nil {
+		scr = &screenStats{}
+		scrStats[port] = scr
+	}
 	num := func(k string) float64 { v, _ := m[k].(float64); return v }
 	up, loop, strip, bad, long, heap := num("up"), num("loop"), num("strip"), num("bad"), num("long"), num("heap")
 	if scr.have && up+5 < scr.up {
@@ -554,7 +642,7 @@ func resetScreen(port string) {
 }
 
 // 處理螢幕送來的一行；回傳 true = 這是 hello 的回應（螢幕還在正常解析資料）
-func handleDeviceLine(l string) (answered bool) {
+func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 	l = strings.TrimSpace(l)
 	if !strings.HasPrefix(l, "{") {
 		return false
@@ -566,15 +654,17 @@ func handleDeviceLine(l string) (answered bool) {
 	if _, ok := m["aimon"]; ok {
 		answered = true
 		serMu.Lock()
-		if !serStat.Verified {
-			logf("%s: screen answered (fw %v)", serStat.Port, m["fw"])
+		if !sc.stat.Verified {
+			logf("%s: screen answered (fw %v, hw %v)", sc.stat.Port, m["fw"], m["hw"])
 		}
-		serStat.Verified = true
+		sc.stat.Verified = true
 		if fw, ok := m["fw"].(string); ok {
-			serStat.FW = fw
+			sc.stat.FW = fw
 		}
-		lastGoodPort = serStat.Port // 只在 serialLoop 裡讀寫
-		port := serStat.Port
+		if hw, ok := m["hw"].(string); ok {
+			sc.stat.HW = hw
+		}
+		port := sc.stat.Port
 		serMu.Unlock()
 		if _, ok := m["up"]; ok { // 韌體 1.7.2 起才有
 			noteScreenStats(port, m)
@@ -589,15 +679,23 @@ func handleDeviceLine(l string) (answered bool) {
 	return answered
 }
 
+// 畫面送給所有連線中的螢幕
 func queueFrame(b []byte) {
-	select {
-	case frameCh <- b:
-	default: // 佇列滿了（沒接螢幕）：丟掉最舊的
+	serMu.Lock()
+	defer serMu.Unlock()
+	for _, sc := range screens {
 		select {
-		case <-frameCh:
-		default:
+		case sc.out <- b:
+		default: // 佇列滿了（螢幕沒在讀）：丟掉最舊的
+			select {
+			case <-sc.out:
+			default:
+			}
+			select {
+			case sc.out <- b:
+			default:
+			}
 		}
-		frameCh <- b
 	}
 }
 
@@ -799,7 +897,7 @@ func onCmd(cmd string) string {
 	case "poll":
 		pollUsage()
 	case "fwupdate":
-		startFirmwareUpdate()
+		startFirmwareUpdate("")
 	case "login:chatgpt":
 		showProvider("chatgpt")
 	case "login:gemini":
@@ -843,6 +941,9 @@ func onCmd(cmd string) string {
 				sendFrameNow()
 			}
 		}
+		if strings.HasPrefix(cmd, "fwupdate:") { // 更新指定的螢幕（埠名稱）
+			startFirmwareUpdate(strings.TrimPrefix(cmd, "fwupdate:"))
+		}
 		if cmd == "cc-on" || cmd == "cc-off" {
 			ccCmd(cmd == "cc-on")
 		}
@@ -881,9 +982,11 @@ func onCmd(cmd string) string {
 }
 
 func uiStatusJSON() string {
-	serMu.Lock()
-	ss := serStat
-	serMu.Unlock()
+	scs := screenList()
+	var ss serialStatus // 舊的單一螢幕欄位：第一個螢幕
+	if len(scs) > 0 {
+		ss = scs[0]
+	}
 	loginMu.Lock()
 	ls := loginState
 	loginMu.Unlock()
@@ -899,7 +1002,7 @@ func uiStatusJSON() string {
 	md, ue := monitorDiag, usageErr
 	diagMu.Unlock()
 	b, _ := json.Marshal(map[string]interface{}{
-		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "login": ls, "quota": qj,
+		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": scs, "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(),

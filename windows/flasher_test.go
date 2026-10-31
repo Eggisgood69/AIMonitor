@@ -10,8 +10,9 @@ import (
 	"testing"
 )
 
-// 模擬 ESP32-C3 的 ROM 燒錄程式
+// 模擬 ESP32-C3 / S3 的 ROM 燒錄程式
 type fakeROM struct {
+	magic     uint32 // 晶片 magic 暫存器（預設 C3）
 	mu        sync.Mutex
 	out       []byte // 要回給電腦的資料
 	in        []byte // 收到但還沒解析完的資料
@@ -32,7 +33,7 @@ type fakeROM struct {
 }
 
 func newFakeROM(t *testing.T, needJTAG bool) *fakeROM {
-	f := &fakeROM{flash: bytes.Repeat([]byte{0xFF}, flashSize), needJTAG: needJTAG, failOnce: map[uint32]bool{3: true}, baud: 115200, t: t}
+	f := &fakeROM{flash: bytes.Repeat([]byte{0xFF}, flashSize), needJTAG: needJTAG, failOnce: map[uint32]bool{3: true}, baud: 115200, t: t, magic: 0x1B31506F}
 	// 韌體正常執行時會一直輸出 JSON（模擬雜訊）
 	f.out = append(f.out, []byte("{\"aimon\":2,\"fw\":\"1.1.0\"}\r\n")...)
 	return f
@@ -132,6 +133,11 @@ func (f *fakeROM) Write(b []byte) error {
 			for i := 0; i < 8; i++ {
 				f.reply(op, 0, nil, true)
 			}
+		case cmdReadReg:
+			if binary.LittleEndian.Uint32(data) != chipDetectReg {
+				f.t.Errorf("unexpected READ_REG %x", data)
+			}
+			f.reply(op, f.magic, nil, true)
 		case cmdSpiAttach, cmdSetParams:
 			f.reply(op, 0, nil, true)
 		case cmdChangeBaud:
@@ -172,10 +178,13 @@ func (f *fakeROM) Write(b []byte) error {
 	}
 }
 
-func testImage(n int) []byte {
+func testImage(n int) []byte { return testImageFor(n, chipC3) }
+
+func testImageFor(n, chip int) []byte {
 	img := make([]byte, n)
 	rand.New(rand.NewSource(1)).Read(img)
 	img[0] = 0xE9
+	binary.LittleEndian.PutUint16(img[12:], uint16(chip))
 	// 放一些需要 SLIP 跳脫的位元組
 	img[100], img[101], img[102] = 0xC0, 0xDB, 0xC0
 	return img
@@ -231,6 +240,38 @@ func TestFlashRejectsBadImage(t *testing.T) {
 	rom := newFakeROM(t, true)
 	if err := FlashApp(rom, true, []byte{1, 2, 3}, nil, nil); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestFlashS3(t *testing.T) {
+	rom := newFakeROM(t, true)
+	rom.magic = 0x9
+	img := testImageFor(1500*1024, chipS3) // 比 C3 的 app 分割區大
+	if err := FlashApp(rom, true, img, nil, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(rom.flash[appOffset:appOffset+len(img)], img) {
+		t.Fatal("flash content mismatch")
+	}
+}
+
+func TestFlashRejectsWrongChip(t *testing.T) {
+	// S3 的韌體不能燒進 C3（反之亦然）：在擦除之前就要擋下
+	for _, c := range []struct {
+		magic uint32
+		chip  int
+	}{{0x1B31506F, chipS3}, {0x9, chipC3}, {0x12345678, chipC3}} {
+		rom := newFakeROM(t, true)
+		rom.magic = c.magic
+		if err := FlashApp(rom, true, testImageFor(8*1024, c.chip), nil, t.Logf); err == nil {
+			t.Fatalf("magic %x chip %d: expected error", c.magic, c.chip)
+		}
+		if rom.wrote || rom.beginOff != 0 {
+			t.Fatalf("magic %x chip %d: flash must not be touched", c.magic, c.chip)
+		}
+	}
+	if FlashApp(newFakeROM(t, true), true, testImageFor(0x140000+1, chipC3), nil, nil) == nil {
+		t.Fatal("C3 image larger than its app partition should be rejected")
 	}
 }
 

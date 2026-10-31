@@ -64,12 +64,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.5、韌體 1.10.5（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.11.7、韌體 1.10.6（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
 電腦 → 螢幕：`{ai, st, msg, p5, pw, r5, rw, age, now, tz, saver, bri, rot, arot, led, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`）
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）；韌體 1.9.0 前沒有 `hw` = c3）、`{"ev":"btn"}`（長按 BOOT）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -119,7 +119,9 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   （同網站的小頁面，providers.js 一樣會注入、帶 cookie 打 API），讀不到才開一次完整頁面（30 分鐘最多一次）；Gemini 讀的時候才開 `/usage`，讀完換 `about:blank`。
   完整頁面 90 秒沒讀到就回 idle 頁。實測私有記憶體 1113 → 460 MB。Claude 本來就停在 `/api/organizations`（JSON 頁）
 - ChatGPT 的用量其實是 Codex 的額度（wham/usage），ChatGPT 聊天也有上限，但 OpenAI 不公開剩餘量
-- 好幾塊螢幕：serialLoop 每 2 秒看插著的埠，每個埠一個 `runScreen` 連線，`queueFrame` 送給所有螢幕；設定視窗每塊一行。
+- 好幾塊螢幕：serialLoop 每 2 秒看插著的埠，每個埠一個 `runScreen` 連線，`queueFrameEach` 把同一張畫面送給每塊螢幕；設定視窗每塊一行（方向 / 亮度 / LED 用「調整哪塊螢幕」選單切換，只接一塊時不顯示選單）。
+  方向 / 亮度 / 外接 LED / 自動轉向每塊分開（settings.json 的 `screens`，key = hello 的 `id`，舊韌體用埠名稱；screenset.go）：
+  frame 裡的 rot / bri / led / arot 依螢幕換掉；沒設過的項目用共用值（`rotation` / `brightness` / `led` / `noAutoRot`）。設定視窗指令 `scr:<key>:<bri|rot|led>:<值>`（rot 可以是 `auto`）
   12 秒沒回應的埠（例如 COM3 的 CH340 別的裝置）記成 `quietPort`：已經有螢幕連上時就不再去開它，直到拔掉重插
 - 韌體更新只用已連線並回應 hello 的埠（`pickFirmwareTarget`），依 `hw` 選韌體，只暫停那個埠（`fwPort`）；
   `FlashApp` 先讀 ROM magic 暫存器（0x40001000）比對映像檔標頭的晶片 ID（C3 = 5、S3 = 9），不符就不擦除
@@ -174,4 +176,3 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
 - 其他提案：額度快用完警告、夜間自動調暗、生成太久提醒
-- 好幾塊螢幕時亮度、外接 LED 是共用設定（frame 裡的 bri / led），還不能每塊分開設；方向只有 AMOLED 能自動轉向，其餘共用 rot

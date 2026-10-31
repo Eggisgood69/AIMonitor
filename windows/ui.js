@@ -140,18 +140,7 @@
         <option value="0">關閉</option><option value="50">用量 ≥ 50%</option><option value="80">用量 ≥ 80%</option>
         <option value="90">用量 ≥ 90%</option><option value="100">用完時</option>
       </select></div>
-    <div class="row sw"><div>螢幕方向<div class="hint" id="rothint">依擺放方式選到畫面是正的為止，螢幕會馬上轉過去</div></div>
-      <select id="rot">
-        <option value="0">0°</option><option value="1">90°</option>
-        <option value="2">180°</option><option value="3">270°</option>
-      </select></div>
-    <div class="row sw" id="arotrow" style="display:none"><div>AMOLED 自動轉向<div class="hint">依擺放方向自動把畫面轉正（板上的陀螺儀）；平放時維持原本的方向。需要韌體 1.10.0 以上</div></div><div class="toggle" id="arot"></div></div>
-    <div class="row sw"><div>螢幕亮度</div><input type="range" id="bri" min="10" max="255" step="5"></div>
-    <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，DIN 接背面排座的 RX 腳，跟外圈燈號同步。需要韌體 1.7.0 以上</div></div>
-      <select id="led">
-        <option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
-        <option value="50">亮</option><option value="100">最亮</option>
-      </select></div>
+    <div id="scrset"></div>
     <div class="row sw"><div>連接 Claude Code<div class="hint">終端機的 Agent 模式也會亮燈（生成中、等你允許、完成）。<br>會在 Claude Code 設定檔加入通知設定，修改前自動備份。</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
   </div>
@@ -166,7 +155,6 @@
     document.getElementById("demo").onclick = () => window.aimonCmd("demo");
     document.getElementById("hide").onclick = () => window.aimonCmd("hide");
     document.getElementById("quit").onclick = () => { if (confirm("結束後螢幕會停止更新，確定要結束嗎？")) window.aimonCmd("quit"); };
-    document.getElementById("bri").onchange = (e) => window.aimonCmd("bri:" + e.target.value);
     document.addEventListener("click", (e) => {
       const b = e.target.closest("[data-cmd]");
       if (!b) return;
@@ -175,17 +163,16 @@
       if (c === "fwupdate" && !confirm("更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。要開始嗎？")) return;
       window.aimonCmd(c).then(render);
     });
-    document.getElementById("rot").onchange = (e) => { window.aimonCmd("rot:" + e.target.value).then(render); };
-    document.getElementById("led").onchange = (e) => { window.aimonCmd("led:" + e.target.value).then(render); };
+    // 每塊螢幕的方向 / 亮度 / 外接 LED（scrset 裡的欄位帶 data-scr = 螢幕的 key）
+    document.addEventListener("change", (e) => {
+      const el = e.target.closest("[data-scr]");
+      if (el) window.aimonCmd(`scr:${el.dataset.scr}:${el.dataset.k}:${el.value}`).then(render);
+    });
     document.getElementById("remind").onchange = (e) => { window.aimonCmd("remind:" + e.target.value).then(render); };
     document.getElementById("saver").onchange = (e) => { window.aimonCmd("saver:" + e.target.value).then(render); };
     document.getElementById("cc").onclick = (e) => {
       const on = e.currentTarget.classList.contains("on");
       window.aimonCmd(on ? "cc-off" : "cc-on").then(render);
-    };
-    document.getElementById("arot").onclick = (e) => {
-      const on = e.currentTarget.classList.contains("on");
-      window.aimonCmd(on ? "arot-off" : "arot-on").then(render);
     };
     document.getElementById("auto").onclick = (e) => {
       const on = e.currentTarget.classList.contains("on");
@@ -291,8 +278,7 @@
           : `<div>${who}${dev} <span class="muted">· 已是最新 · <a href="#" data-cmd="fwupdate:${x.port}" style="color:inherit">重新寫入</a></span></div>`;
       }).join("");
     }
-    const bri = $("bri");
-    if (document.activeElement !== bri) bri.value = s.brightness || 160;
+    renderScreenSettings(scr, BOARD);
 
     const items = s.items || [];
     const esc = (t) => String(t).replace(/[<&]/g, "");
@@ -327,27 +313,56 @@
       if (![...sv.options].some((o) => o.value === v)) sv.add(new Option(v + " 分鐘", v));
       sv.value = v;
     }
-    const ro = $("rot");
-    if (document.activeElement !== ro) ro.value = String((s.rotation || 0) & 3);
-    // 接著 AMOLED 才顯示自動轉向；開著的時候方向選單只管 1.28 吋
-    const amoled = (s.screens || []).some((x) => x.verified && x.hw === "s3a175");
-    $("arotrow").style.display = amoled ? "" : "none";
-    $("arot").classList.toggle("on", !!s.autoRot);
-    const lcd = (s.screens || []).some((x) => x.verified && (x.hw || "c3") === "c3");
-    $("rothint").textContent = amoled && s.autoRot
-      ? (lcd ? "1.28 吋螢幕的方向（AMOLED 會自動轉向）" : "AMOLED 正在自動轉向；關掉自動轉向才會用這裡的方向")
-      : "依擺放方式選到畫面是正的為止，螢幕會馬上轉過去";
-    const ld = $("led");
-    if (document.activeElement !== ld) {
-      const v = String(s.led || 0);
-      if (![...ld.options].some((o) => o.value === v)) ld.add(new Option(v + "%", v));
-      ld.value = v;
-    }
     const rm = $("remind");
     if (document.activeElement !== rm) {
       const v = String(s.remindAt ?? 90);
       if (![...rm.options].some((o) => o.value === v)) rm.add(new Option("用量 ≥ " + v + "%", v));
       rm.value = v;
+    }
+  }
+
+  // 螢幕的方向（AMOLED 多一個「自動」）、亮度、外接 LED，每塊各自記住。
+  // 只接一塊時直接顯示它的設定；接好幾塊時上面多一個選單選要調哪一塊，下面只顯示那一塊。
+  // 螢幕有增減才重建，平常只更新沒在操作的欄位
+  let scrSig = "", scrSel = "";
+  function renderScreenSettings(scr, BOARD) {
+    const box = document.getElementById("scrset");
+    if (!scr.some((x) => x.key === scrSel)) scrSel = scr.length ? scr[0].key : "";
+    const sig = scr.map((x) => `${x.key}|${x.hw}|${x.port}`).join(",");
+    if (sig !== scrSig) {
+      scrSig = sig;
+      const pick = scr.length > 1
+        ? `<div class="row sw"><div>調整哪塊螢幕<div class="hint">每塊螢幕的方向、亮度、外接 LED 各自記住</div></div>
+            <select id="scrpick">${scr.map((x) => `<option value="${x.key}">${BOARD[x.hw || "c3"] || x.hw}（${x.port}）</option>`).join("")}</select></div>`
+        : "";
+      box.innerHTML = scr.length ? pick + scr.map((x) => {
+        const hw = x.hw || "c3", k = x.key, amoled = hw === "s3a175";
+        const rot = (amoled ? `<option value="auto">自動（依擺放方向）</option>` : "") +
+          [0, 1, 2, 3].map((r) => `<option value="${r}">${r * 90}°</option>`).join("");
+        const pin = amoled ? "DIN 接排座的 GPIO16" : "DIN 接背面排座的 RX 腳";
+        return `<div data-blk="${k}">
+          <div class="row sw"><div>螢幕方向<div class="hint">${amoled ? "自動：依板上的陀螺儀把畫面轉正，平放時維持原本的方向" : "依擺放方式選到畫面是正的為止，螢幕會馬上轉過去"}</div></div>
+            <select data-scr="${k}" data-k="rot">${rot}</select></div>
+          <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
+          <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，${pin}，跟外圈燈號同步</div></div>
+            <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
+              <option value="50">亮</option><option value="100">最亮</option></select></div></div>`;
+      }).join("") : `<div class="row"><div class="muted">插上螢幕後，可以在這裡設定螢幕的方向、亮度、外接 LED</div></div>`;
+      const pk = document.getElementById("scrpick");
+      if (pk) pk.onchange = (e) => { scrSel = e.target.value; renderScreenSettings(scr, BOARD); };
+    }
+    const pk = document.getElementById("scrpick");
+    if (pk && document.activeElement !== pk) pk.value = scrSel;
+    for (const b of box.querySelectorAll("[data-blk]")) b.style.display = b.dataset.blk === scrSel ? "" : "none";
+    for (const x of scr) {
+      const set = x.set || {};
+      for (const el of box.querySelectorAll(`[data-scr="${x.key}"]`)) {
+        if (document.activeElement === el) continue;
+        let v = el.dataset.k === "rot" ? (set.arot && x.hw === "s3a175" ? "auto" : String(set.rot & 3))
+          : String(el.dataset.k === "bri" ? set.bri || 160 : set.led || 0);
+        if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === v)) el.add(new Option(v + "%", v));
+        el.value = v;
+      }
     }
   }
 

@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.5"
+#define FW_VERSION "1.10.6"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -362,8 +362,11 @@ static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整�
 static uint32_t g_maxPrepMs = 0;    // 最長的一次送出前準備（外環、轉向）
 
 static void sendHello(Stream* src) {
-  char b[320];
-  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
+  char b[384];
+  // id：晶片 MAC，電腦端用它分辨每塊螢幕（各自的方向、亮度；換 USB 孔也認得）
+  const uint64_t mac = ESP.getEfuseMac();
+  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"id\":\"%04x%08lx\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
+           (unsigned)((mac >> 32) & 0xFFFF), (unsigned long)(mac & 0xFFFFFFFFUL),
            (unsigned long)(millis() / 1000), (unsigned long)g_maxLoopMs, (unsigned long)g_maxStripMs,
            (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
 #if BOARD_AMOLED

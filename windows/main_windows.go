@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.11.5"
+const version = "1.11.7"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -63,6 +63,8 @@ type Settings struct {
 	Rotation   int  `json:"rotation"`  // 螢幕方向 0-3（×90°）   // 額度重置提醒：用量達到幾 % 才提醒，0 = 關閉（預設 90）
 	Led        int  `json:"led"`       // 外接 WS2812 亮度 0-100，0 = 關閉
 	NoAutoRot  bool `json:"noAutoRot"` // AMOLED 不要依陀螺儀自動轉向（預設會）
+	// 每塊螢幕自己的方向 / 亮度 / LED（screenset.go）；上面四項是沒設過的螢幕用的共用值
+	Screens map[string]*ScreenSet `json:"screens,omitempty"`
 }
 
 var (
@@ -328,6 +330,7 @@ type serialStatus struct {
 	Verified  bool   `json:"verified"`
 	FW        string `json:"fw"` // 螢幕回報的韌體版本（舊版不會回報）
 	HW        string `json:"hw"` // 板子型號（韌體 1.9.0 起回報；沒有 = c3）
+	ID        string `json:"id"` // 晶片 MAC（韌體 1.10.6 起回報），每塊螢幕的設定用它當 key
 	RX        int    `json:"rx"` // 從螢幕收到的位元組數（除錯用）
 }
 
@@ -337,6 +340,14 @@ func (s serialStatus) Board() string {
 		return "c3"
 	}
 	return s.HW
+}
+
+// 每塊螢幕設定的 key：有 id 用 id（換 USB 孔也認得），舊韌體用埠名稱
+func (s serialStatus) Key() string {
+	if s.ID != "" {
+		return s.ID
+	}
+	return s.Port
 }
 
 // 一個連線中的螢幕
@@ -665,6 +676,9 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		if hw, ok := m["hw"].(string); ok {
 			sc.stat.HW = hw
 		}
+		if id, ok := m["id"].(string); ok {
+			sc.stat.ID = id
+		}
 		port := sc.stat.Port
 		serMu.Unlock()
 		if _, ok := m["up"]; ok { // 韌體 1.7.2 起才有
@@ -680,24 +694,82 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 	return answered
 }
 
-// 畫面送給所有連線中的螢幕
+// 畫面送給所有連線中的螢幕（測試畫面用；一般畫面用 queueFrameEach，每塊帶自己的設定）
 func queueFrame(b []byte) {
 	serMu.Lock()
 	defer serMu.Unlock()
 	for _, sc := range screens {
+		enqueue(sc, b)
+	}
+}
+
+func enqueue(sc *screenConn, b []byte) {
+	select {
+	case sc.out <- b:
+	default: // 佇列滿了（螢幕沒在讀）：丟掉最舊的
+		select {
+		case <-sc.out:
+		default:
+		}
 		select {
 		case sc.out <- b:
-		default: // 佇列滿了（螢幕沒在讀）：丟掉最舊的
-			select {
-			case <-sc.out:
-			default:
-			}
-			select {
-			case sc.out <- b:
-			default:
-			}
+		default:
 		}
 	}
+}
+
+// 共用的方向 / 亮度 / LED / 自動轉向（沒設過的螢幕用這個）；呼叫時要拿著 settingsMu
+func defaultScreenEff() screenEff {
+	b := settings.Brightness
+	if b < 5 {
+		b = 160
+	}
+	return screenEff{Bri: b, Rot: settings.Rotation & 3, Led: settings.Led, ARot: !settings.NoAutoRot}
+}
+
+func screenEffFor(key string) screenEff {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	return defaultScreenEff().with(settings.Screens[key])
+}
+
+// 同一張畫面送給每塊螢幕，各自換上自己的方向 / 亮度 / LED
+func queueFrameEach(f Frame) {
+	type target struct {
+		sc  *screenConn
+		key string
+	}
+	serMu.Lock()
+	ts := make([]target, 0, len(screens))
+	for _, sc := range screens {
+		ts = append(ts, target{sc, sc.stat.Key()})
+	}
+	serMu.Unlock()
+	for _, t := range ts {
+		e := screenEffFor(t.key)
+		g := f
+		g.Bri, g.Rot, g.Led, g.ARot = e.Bri, e.Rot, e.Led, 0
+		if e.ARot {
+			g.ARot = 1
+		}
+		b, _ := json.Marshal(g)
+		enqueue(t.sc, append(b, '\n'))
+	}
+}
+
+// 設定視窗用：每塊螢幕的狀態加上它實際用的設定
+type screenView struct {
+	serialStatus
+	Key string    `json:"key"`
+	Set screenEff `json:"set"`
+}
+
+func screenViews(scs []serialStatus) []screenView {
+	out := make([]screenView, 0, len(scs))
+	for _, s := range scs {
+		out = append(out, screenView{s, s.Key(), screenEffFor(s.Key())})
+	}
+	return out
 }
 
 var (
@@ -738,7 +810,6 @@ func pushFrame(force bool) {
 	if stats != nil {
 		f.D = stats.Today()
 	}
-	b, _ := json.Marshal(f)
 	// 比較時忽略 now/age（每秒都會變）
 	cmp := f
 	cmp.Now, cmp.Age = 0, 0
@@ -753,7 +824,7 @@ func pushFrame(force bool) {
 		lastFrameSent = time.Now()
 		lastFrame = f
 		lastFrameMu.Unlock()
-		queueFrame(append(b, '\n'))
+		queueFrameEach(f)
 		return
 	}
 	lastFrameMu.Unlock()
@@ -936,6 +1007,21 @@ func onCmd(cmd string) string {
 				sendFrameNow()
 			}
 		}
+		// 每塊螢幕的設定：scr:<key>:<bri|rot|led>:<值>（screenset.go applyScreenSetting）
+		if strings.HasPrefix(cmd, "scr:") {
+			if p := strings.SplitN(cmd, ":", 4); len(p) == 4 {
+				settingsMu.Lock()
+				if settings.Screens == nil {
+					settings.Screens = map[string]*ScreenSet{}
+				}
+				ok := applyScreenSetting(settings.Screens, p[1], p[2], p[3])
+				settingsMu.Unlock()
+				if ok {
+					saveSettings()
+					sendFrameNow()
+				}
+			}
+		}
 		if cmd == "arot-on" || cmd == "arot-off" {
 			settingsMu.Lock()
 			settings.NoAutoRot = cmd == "arot-off"
@@ -1013,7 +1099,7 @@ func uiStatusJSON() string {
 	md, ue := monitorDiag, usageErr
 	diagMu.Unlock()
 	b, _ := json.Marshal(map[string]interface{}{
-		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": scs, "login": ls, "quota": qj,
+		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": screenViews(scs), "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(),

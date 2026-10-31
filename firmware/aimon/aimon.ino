@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.7"
+#define FW_VERSION "1.10.12"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -361,6 +361,7 @@ static void IRAM_ATTR onTE() { g_teUs = micros(); g_teN++; }
 
 static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整張送出（AMOLED，只算 SPI 寫入）
 static uint32_t g_maxPrepMs = 0;    // 最長的一次送出前準備（外環、轉向）
+static uint32_t g_maxRoamGap = 0;   // 螢幕保護的 Clawd 兩步之間最長隔多久（正常 50 ms，大了就是卡頓）
 
 static void sendHello(Stream* src) {
   char b[384];
@@ -372,10 +373,11 @@ static void sendHello(Stream* src) {
            (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d]}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
-           g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ);
+           g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap);
   g_teN = 0;
+  g_maxRoamGap = 0;
 #endif
   sendLine(src, b);
   g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = g_maxPrepMs = 0;
@@ -448,7 +450,8 @@ static void handleLine(Stream* src, const String& line) {
   g_frame = f;
   g_lastFrameMs = millis();
   if (!g_everConnected) g_everConnected = true;
-  dirty = true;
+  // AMOLED 螢幕保護：電腦每 1-3 秒送一次，每次都整張重畫的話 Clawd 會跟著頓一下 → 改由 loop 看畫面內容有沒有變（saverKey）
+  if (!(BOARD_AMOLED && g_saver)) dirty = true;
 }
 
 static void pollReader(LineReader& r) {
@@ -537,6 +540,141 @@ static bool slideTick() {
   if (p < 1000) return true;
   g_sliding = 0;
   return false;
+}
+
+// ---------------- Clawd 動畫 ----------------
+// 把一塊畫面（看到的畫面座標 x / y / 寬 / 高，都是偶數；src 指到這塊的左上角，每列隔 stride）轉向後送到螢幕
+static void pushRect(const uint16_t* src, int stride, int x, int y, int w, int h) {
+  uint16_t* d = g_rotBuf;
+  int px = x, py = y, pw = w, ph = h;
+  for (int r = 0; r < h; r++)
+    for (int c = 0; c < w; c++) {
+      const uint16_t v = src[r * stride + c];
+      if (g_rot == 0) d[r * w + c] = v;
+      else if (g_rot == 2) d[(h - 1 - r) * w + (w - 1 - c)] = v;
+      else if (g_rot == 1) d[c * h + (h - 1 - r)] = v;        // 90°：(x, y) → (W-1-y, x)
+      else d[(w - 1 - c) * h + r] = v;                         // 270°：(x, y) → (y, H-1-x)
+    }
+  if (g_rot == 2) { px = W - x - w; py = H - y - h; }
+  else if (g_rot == 1) { px = W - y - h; py = x; pw = h; ph = w; }
+  else if (g_rot == 3) { px = y; py = H - x - w; pw = h; ph = w; }
+  lcd.startWrite();
+  lcd.pushImage(px, py, pw, ph, (const lgfx::swap565_t*)d);
+  lcd.endWrite();
+}
+
+static void pushFbRect(int x, int y, int w, int h) { pushRect(g_fb + y * W + x, W, x, y, w, h); }
+
+// 螢幕保護的 Clawd：在整個圓裡亂跑（走到隨機的點、停一下再走，擋到時鐘也沒關係）。
+// 整張畫好時把沒有 Clawd 的畫面存成底圖（g_fbBg），之後每一步在小暫存區（g_roamTmp）組好「底圖 + 新位置的 Clawd」，
+// 範圍是舊位置 ∪ 新位置，直接送到螢幕。不碰 g_fb，所以整張重畫（時間更新）的期間牠也照常走，不會卡一下
+static uint16_t* g_fbBg = nullptr;
+static uint16_t* g_roamTmp = nullptr;      // W × BAND_H
+static bool g_roamBg = false;              // 底圖是現在這張螢幕保護畫面
+static int g_rx = -1, g_ry = 0;            // Clawd 左上角（看到的畫面座標）
+static int g_rtx = 0, g_rty = 0;           // 正走向的點
+static int g_rdx = -1, g_rdy = 0;          // 螢幕上那隻畫在哪（-1 = 還沒畫）
+static uint32_t g_rPause = 0, g_rLast = 0;
+static ClawdPose g_rPose;
+
+static void roamPickTarget() {
+  // Clawd 中心離圓心不超過這個距離：整隻都在額度弧（107.5）裡面
+  const int u = CLAWD_SU, rmax = SI(100) - 7 * u;
+  const float a = random(0, 3600) * 0.1f * DEG_TO_RAD, r = sqrtf(random(0, 1000) / 1000.0f) * rmax;
+  g_rtx = CX + (int)(r * cosf(a)) - 6 * u;
+  g_rty = CY + (int)(r * sinf(a)) - (7 * u) / 2;
+}
+
+// 往目標走一步（約 40 px/秒），走到了停 0.5-3 秒再挑下一個點
+static void roamStep(uint32_t now) {
+  const int dt = g_rLast ? (int)min<uint32_t>(now - g_rLast, 200) : 0;
+  g_rLast = now;
+  if (g_rx < 0) { g_rx = CX - 6 * CLAWD_SU; g_ry = CY - SI(70); roamPickTarget(); }
+  ClawdPose p;
+  if (now < g_rPause) {
+    if ((g_rPause - now) % 1500 < 130) p.blink = true;
+  } else {
+    const int ex = g_rtx - g_rx, ey = g_rty - g_ry;
+    const float d = sqrtf((float)(ex * ex + ey * ey)), step = 40.0f * dt / 1000.0f;
+    if (d <= step) {
+      g_rx = g_rtx; g_ry = g_rty;
+      g_rPause = now + random(500, 3000);
+      roamPickTarget();
+    } else {
+      static float fx = 0, fy = 0;                          // 每步不到 1 px 的部分累積起來
+      fx += ex * step / d; fy += ey * step / d;
+      const int mx = (int)fx, my = (int)fy;
+      g_rx += mx; g_ry += my; fx -= mx; fy -= my;
+      p.legsUp = (now / 160) % 2 ? 0b0101 : 0b1010;
+    }
+  }
+  g_rPose = p;
+}
+
+// 把 Clawd 畫進畫面緩衝（左上角 x, y）
+static void roamDrawAt(int x, int y, int ry, int rh) {
+  OY = ry;
+  band.setBuffer(g_fb + ry * W, W, rh, 16);
+  drawClawd(x, y, CLAWD_SU, g_rPose);
+  OY = 0;
+}
+
+// 整張螢幕保護畫面畫好了（還沒送出）：存成底圖，Clawd 畫上去
+static void roamFrameDone() {
+  g_roamBg = g_saver && g_fbBg && nowEpoch();
+  if (!g_roamBg) { g_rdx = -1; return; }
+  memcpy(g_fbBg, g_fb, W * H * 2);
+  if (g_rx < 0) roamStep(millis());
+  const int m = SI(3), ry = max(0, (g_ry - m) & ~1), rh = min(H - ry, (7 * CLAWD_SU + 2 * m + 2) & ~1);
+  roamDrawAt(g_rx, g_ry, ry, rh);
+  g_rdx = g_rx; g_rdy = g_ry;
+}
+
+// 螢幕保護畫面上會變的東西（分鐘、額度、重置倒數、連線、防烙印位置）：變了才整張重畫
+static uint32_t saverKey() {
+  uint32_t k = nowEpoch() / 60;
+  k = k * 31 + (linkAlive() ? 1 : 0);
+  k = k * 31 + g_frame.brand;
+  k = k * 31 + (uint32_t)(int)(g_frame.p5 + 0.5f);
+  k = k * 31 + g_frame.r5 / 60;
+  k = k * 31 + (uint32_t)((g_shX + 16) * 64 + g_shY + 16);
+  return k;
+}
+
+static void roamTick(uint32_t now) {
+  if (!g_roamBg || !g_saver || !g_roamTmp) return;
+  { static uint32_t prev = 0; if (prev && now - prev < 5000 && now - prev > g_maxRoamGap) g_maxRoamGap = now - prev; prev = now; }
+  roamStep(now);
+  // 要更新的範圍：舊位置 ∪ 新位置（加上防烙印的挪動、偶數對齊）
+  const int m = SI(3), cw = 12 * CLAWD_SU, ch = 7 * CLAWD_SU;
+  const int ox = g_rdx < 0 ? g_rx : g_rdx, oy = g_rdx < 0 ? g_ry : g_rdy;
+  int x0 = max(0, (min(ox, g_rx) - m) & ~1), y0 = max(0, (min(oy, g_ry) - m) & ~1);
+  int x1 = min(W, (max(ox, g_rx) + cw + m + 1) & ~1), y1 = min(H, (max(oy, g_ry) + ch + m + 1) & ~1);
+  if ((x1 - x0) * (y1 - y0) > W * BAND_H) { x0 = max(0, (g_rx - m) & ~1); y0 = max(0, (g_ry - m) & ~1); x1 = min(W, (g_rx + cw + m + 1) & ~1); y1 = min(H, (g_ry + ch + m + 1) & ~1); }
+  const int rw = x1 - x0, rh = y1 - y0;
+  for (int r = 0; r < rh; r++) memcpy(g_roamTmp + r * rw, g_fbBg + (y0 + r) * W + x0, rw * 2);   // 底圖
+  OY = y0;
+  band.setBuffer(g_roamTmp, rw, rh, 16);
+  drawClawd(g_rx - x0, g_ry, CLAWD_SU, g_rPose);
+  OY = 0;
+  pushRect(g_roamTmp, rw, x0, y0, rw, rh);
+  g_rdx = g_rx; g_rdy = g_ry;
+}
+
+// 每 50 ms 重畫 Clawd 那一塊（畫面緩衝裡也更新，整張送出時一致）
+static void clawdTick(uint32_t now) {
+  static uint32_t last = 0;
+  int bx, by, bw, bh;
+  if (!g_fb || now - last < 50) return;
+  if (g_saver) { last = now; roamTick(now); return; }
+  if (!clawdBox(bx, by, bw, bh) || bw * bh > W * BAND_H) return;
+  last = now;
+  OY = by;
+  band.setBuffer(g_fb + by * W, W, bh, 16);
+  band.fillRect(bx, 0, bw, bh, C_BG);
+  clawdDraw(now);
+  OY = 0;
+  pushFbRect(bx, by, bw, bh);
 }
 #endif
 
@@ -687,6 +825,8 @@ void setup() {
     // 換頁滑動：舊畫面、滑動中的一格（各 434 KB）
     g_fbOld = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
     g_fbSlide = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+    g_fbBg = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);   // 螢幕保護 Clawd 亂跑用的底圖
+    g_roamTmp = (uint16_t*)heap_caps_malloc(W * BAND_H * 2, MALLOC_CAP_SPIRAM);
     if (g_fbSlide) g_slideSprite.setBuffer(g_fbSlide, W, H, 16);
   }
 #endif
@@ -767,6 +907,7 @@ void loop() {
   // 整張畫好了：先準備好（外環、轉向），在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送。
   // 轉場中：等全暗了才送（看不到，不用等 TE），送完開始淡入
   if (g_framePending) {
+    if (g_saver && g_fadeDir == 0) clawdTick(now);   // 等著送出時 Clawd 也照常走
     if (!g_frameReady) {
       const uint32_t t0 = millis();
       prepareFrame(t0);
@@ -791,7 +932,18 @@ void loop() {
 #else
   showBright();
 #endif
-  if (strip < 0 && (dirty || now - lastFull >= (animating() ? 1000u : 5000u))) {
+  bool periodic = now - lastFull >= (animating() ? 1000u : 5000u);
+#if BOARD_AMOLED
+  if (g_saver && periodic) {                // 螢幕保護：畫面內容變了才整張重畫（時間、倒數都到分鐘）
+    static uint32_t lastKey = 0;
+    const uint32_t k = saverKey();
+    periodic = k != lastKey;
+    if (periodic) lastKey = k;
+    else lastFull = now;
+  }
+  if (g_saver && g_fadeDir == 0) clawdTick(now);   // 螢幕保護的 Clawd：重畫中也照常走
+#endif
+  if (strip < 0 && (dirty || periodic)) {
     strip = 0; stripMs = now; lastFull = now; dirty = false; g_anyKeyed = false;
   }
   // 淡出中不畫外環：新畫面一條接一條畫完，早點送出
@@ -803,7 +955,11 @@ void loop() {
     lastRing = now;
     stripSinceRing = false;
     if (millis() - now > g_maxRingMs) g_maxRingMs = millis() - now;
-  } else if (ringState == 0 && strip >= 0) {
+  }
+#if BOARD_AMOLED
+  else if (ringState == 0 && strip < 0 && g_fadeDir == 0) clawdTick(now);   // 沒在重畫、轉場時才動 Clawd
+#endif
+  else if (ringState == 0 && strip >= 0) {
     OY = strip * BAND_H;
     const uint32_t t0 = millis();
     renderStrip(stripMs);
@@ -813,7 +969,7 @@ void loop() {
     if (++strip * BAND_H >= H) {
       strip = -1;
 #if BOARD_AMOLED
-      if (g_fb) g_framePending = true;
+      if (g_fb) { g_framePending = true; roamFrameDone(); }
 #endif
       if (g_anyKeyed && !ringAnimating()) { lcd.startWrite(); statusRingOn(lcd, 0, millis()); lcd.endWrite(); }   // 靜態外環（完成、待命）
     }

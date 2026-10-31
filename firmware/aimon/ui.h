@@ -542,8 +542,7 @@ static void progressRing(float r, float hw, float pct, uint32_t col) {
 // ---------------- Scene ----------------
 static void bigValue(const char* num, bool percent, int y) {
   int w = textW(num, &fNum.font);
-  int uw = percent ? textW("%", &fUnit.font) + SI(2) : 0;
-  int x = CX - (w + uw) / 2;
+  int x = CX - w / 2;                     // 數字本身置中，「%」掛在右邊（不算進置中）
   text(num, x, y, C_LABEL, &fNum.font, middle_left);
   if (percent) text("%", x + w + SI(2), y + SI(8), C_LABEL2, &fUnit.font, middle_left);
 }
@@ -567,6 +566,86 @@ static void othersRow(const Frame& f) {
     band.fillSmoothCircle(x, y, r, stColor(f.others[i].st));
     if (f.others[i].st == S_WORKING) band.fillSmoothCircle(x, y, r - S(2.2f), C_BG);
   }
+}
+
+// ---------------- Clawd（Claude Code 的像素小螃蟹，只畫在 AMOLED）----------------
+// 主畫面的主燈是 Claude 時取代上方的名稱，動作跟著狀態；螢幕保護時在整個圓裡亂跑（韌體的 roamTick，不在這裡畫）。
+// 12×7 格：身體 2-9 欄 0-4 列、兩隻手 0-1 / 10-11 欄 2-3 列、眼睛 3 / 8 欄第 1 列、四隻腳 2 / 4 / 7 / 9 欄 5-6 列。
+// 韌體每 50 ms 只重畫它所在的那一塊（clawdBox）直接送到螢幕，不用整張重畫
+#if LCD_W > 240
+static const uint32_t C_CLAWD = 0xD97757;
+struct ClawdPose { int dx = 0, dy = 0; uint8_t legsUp = 0; bool armUp = false, blink = false; };   // legsUp：第 i 隻腳抬起（短一格）
+
+static void drawClawd(int x, int y, int u, const ClawdPose& p) {
+  x += p.dx + g_shX; y += p.dy + g_shY - OY;
+  auto R = [&](int c, int r, int w, int h, uint32_t col) { band.fillRect(x + c * u, y + r * u, w * u, h * u, col); };
+  R(2, 0, 8, 5, C_CLAWD);                                   // 身體
+  R(0, 2, 2, 2, C_CLAWD);                                   // 左手
+  R(10, p.armUp ? 0 : 2, 2, 2, C_CLAWD);                    // 右手（揮手時舉到頭頂旁邊）
+  static const int LEG[4] = {2, 4, 7, 9};
+  for (int i = 0; i < 4; i++) R(LEG[i], 5, 1, (p.legsUp >> i) & 1 ? 1 : 2, C_CLAWD);
+  for (int c : {3, 8}) {                                    // 眼睛；眨眼時只剩一條線
+    if (p.blink) band.fillRect(x + c * u, y + u + u * 2 / 5, u, max(2, u / 4), C_BG);
+    else R(c, 1, 1, 1, C_BG);
+  }
+}
+
+static ClawdPose clawdPose(St st, uint32_t ms, int u) {
+  ClawdPose p;
+  const auto tri = [](uint32_t t, uint32_t period, int amp) {   // 三角波 -amp..amp
+    int ph = (int)(t % period) * 4 * amp / (int)period;
+    return ph < 2 * amp ? ph - amp : 3 * amp - ph;
+  };
+  switch (st) {
+    case S_WORKING: {                                       // 踏步、左右慢慢晃
+      const bool f = (ms / 180) % 2;
+      p.legsUp = f ? 0b0101 : 0b1010;
+      p.dy = f ? -max(1, u / 5) : 0;
+      p.dx = tri(ms, 2400, u / 2);
+      break;
+    }
+    case S_REVIEW: p.armUp = (ms / 300) % 2; break;         // 揮手：在等你
+    case S_DONE: {                                          // 每 1.4 秒跳一下
+      const int ph = ms % 1400;
+      if (ph < 300) p.dy = -(u * (150 - abs(ph - 150)) / 150);
+      break;
+    }
+    case S_ERROR:                                           // 抖一抖
+      if (ms % 1000 < 400) p.dx = ((ms / 50) % 2 ? 1 : -1) * max(2, u / 3);
+      break;
+    default: break;
+  }
+  if (st != S_ERROR && ms % 4000 < 130) p.blink = true;
+  return p;
+}
+
+static const int CLAWD_U = SI(5);                           // 主畫面：一格 5 個設計像素
+static const int CLAWD_SU = SI(3);                          // 螢幕保護：小一點
+#endif
+
+// 現在要不要畫 Clawd、它可能占到的範圍（偶數對齊，含晃動、跳、防烙印挪動）
+static bool clawdBox(int& x, int& y, int& w, int& h) {
+#if LCD_W > 240
+  if (g_saver || g_page != 0 || !linkAlive() || g_frame.brand != 0) return false;   // 0 = claude
+  x = (CX - 7 * CLAWD_U) & ~1; w = (14 * CLAWD_U + 2) & ~1;
+  y = SI(31) & ~1; h = (10 * CLAWD_U) & ~1;
+  return true;
+#else
+  (void)x; (void)y; (void)w; (void)h;
+  return false;
+#endif
+}
+
+// 畫主畫面的 Clawd
+static void clawdDraw(uint32_t ms) {
+#if LCD_W > 240
+  int bx, by, bw, bh;
+  if (!clawdBox(bx, by, bw, bh)) return;
+  const int u = CLAWD_U;
+  drawClawd(CX - 6 * u, by + (bh - 7 * u) / 2 + u / 2, u, clawdPose(g_frame.st, ms, u));
+#else
+  (void)ms;
+#endif
 }
 
 // ---------------- 螢幕保護（Apple Watch 風格時鐘）----------------
@@ -743,6 +822,7 @@ static void drawScene(uint32_t ms) {
   const Brand& b = BRANDS[f.brand];
   bool hasAI = f.brand != N_BRANDS - 1;
   bool hasUsage = f.p5 >= 0;
+  int bx, by, bw, bh;                                       // Clawd 的範圍（只用來判斷要不要畫）
 
   statusRingBand(ms);
 
@@ -751,7 +831,8 @@ static void drawScene(uint32_t ms) {
     uint32_t uc = f.p5 >= 90 ? C_RED : b.color;
     progressRing(R_USAGE, HW_USAGE, f.p5, uc);
 
-    text(b.name, CX, SI(60), b.color, &fName.font);
+    if (!clawdBox(bx, by, bw, bh)) text(b.name, CX, SI(60), b.color, &fName.font);
+    else clawdDraw(ms);                                     // AMOLED：Claude 的名稱換成會動的 Clawd
     snprintf(num, sizeof num, "%d", (int)(f.p5 + 0.5f));
     bigValue(num, true, SI(106));
     statusLine(f.st, SI(145), ms);
@@ -774,7 +855,8 @@ static void drawScene(uint32_t ms) {
     if (cap.length()) text(fitText(cap, SI(150), &fTiny.font).c_str(), CX, SI(185), capCol, &fTiny.font);
     if (f.nOthers > 0) othersRow(f);
   } else {
-    text(hasAI ? b.name : "No AI Tab", CX, SI(56), hasAI ? b.color : C_LABEL2, &fName.font);
+    if (!clawdBox(bx, by, bw, bh)) text(hasAI ? b.name : "No AI Tab", CX, SI(56), hasAI ? b.color : C_LABEL2, &fName.font);
+    else clawdDraw(ms);
     if (hasAI) {
       uint32_t el = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
       if (el >= 3600) snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 3600), (unsigned)((el % 3600) / 60));

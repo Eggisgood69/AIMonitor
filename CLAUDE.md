@@ -64,12 +64,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.8、韌體 1.10.7（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.11.13、韌體 1.10.12（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
 電腦 → 螢幕：`{ai, st, msg, p5, pw, r5, rw, age, now, tz, saver, bri, rot, arot, led, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`）
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -94,6 +94,14 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   - 轉場（`fadeTick` / `showBright`）：換頁、轉向、進出螢幕保護時亮度 120 ms 淡到 0，全暗時才送新畫面（不用等 TE），再 160 ms 淡入；
     淡出時不畫外環、重畫中的那張作廢重來。亮度只在 `showBright` 設（每次 loop），淡出用轉場前的亮度（`g_fadeOutBright`），離開螢幕保護不會先亮一下。
     每秒更新數字不轉場（小範圍，看不出撕裂）。使用者覺得轉場比硬換好
+  - Clawd（ui.h `drawClawd` / `clawdPose` / `clawdBox`，只有 LCD_W > 240）：12×7 格方塊畫，主燈是 Claude 時取代主畫面的名稱、
+    主畫面的範圍不碰到額度環、大數字。動畫不整張重畫：沒在重畫 / 轉場時每 50 ms
+    `clawdTick` 只重畫那一塊進 g_fb、轉向後 `pushFbRect` 直接送（範圍要偶數、不超過 g_rotBuf）。使用者喜歡，1.28 吋不做。
+    螢幕保護時在整個圓裡亂跑（使用者要的，擋到時鐘沒關係；`roamTick`）：整張畫好時存一份沒有 Clawd 的底圖 `g_fbBg`（`roamFrameDone`），
+    每一步在小暫存區（`g_roamTmp`）組好「底圖 + 新位置的 Clawd」、只送舊 ∪ 新那一塊，不碰 g_fb（整張重畫中、等送出時也照常走）；
+    中心離圓心 ≤ 100 設計像素 - 7 格，整隻在 107.5 的額度弧裡面。
+    曾經每隔幾秒卡一下：電腦每次送資料都整張重畫，送出前後約 100 ms 牠停住 → 螢幕保護時電腦送的資料不設 dirty，
+    loop 看 `saverKey`（分鐘、額度、重置倒數、連線、防烙印位置）變了才重畫
   - 時鐘頁的大字型：LovyanGFX 的 VLW 字型畫一個字會 `alloca(字寬 × 字高)`，466 的時鐘數字超過預設 8 KB 堆疊（Stack canary 當機重開）→ `SET_LOOP_TASK_STACK_SIZE(16 KB)`
   - 觸控 CST9217（I2C 0x5A，16 位元暫存器 0xD000 讀 15 bytes、讀完寫 `D0 00 AB`；[6] = 0xAB、[0] 低 4 位元 0x06 = 按著）：
     一直輪詢的話偶爾整個 I2C 卡 1 秒 → 只在 INT（GPIO11）下降緣之後 60 ms 內讀（手指按著時會一直送脈衝；脈衝很短，讀電位看不到）。

@@ -19,10 +19,10 @@
 #define LCD_W          466
 #define LCD_EVEN       1          // CO5300：寫入範圍的 x、y、寬、高都要是偶數，不對齊畫面會亂掉
 #define LISTEN_UART0   0          // 只有內建 USB，UART0 不接任何東西
-#define SAVER_BRIGHT   16
+#define SAVER_BRIGHT   48         // 螢幕保護的亮度（16 太暗看不清楚；文字每 2 分鐘挪位置防烙印）
 
 // QSPI 時脈。畫面有雜訊就改成 40000000
-#define LCD_SPI_HZ     40000000
+#define LCD_SPI_HZ     80000000
 
 #define PIN_LCD_CS     12
 #define PIN_LCD_SCLK   38

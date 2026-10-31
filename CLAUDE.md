@@ -38,6 +38,7 @@ windows/                   Go 程式（Windows only，WebView2）
   flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符）
   fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/solidworks/      3D 列印外殼（使用者自己用 SolidWorks 畫，設計中）：原始檔、export/ 匯出檔；reference/ 網路下載的參考模型不公開（.gitignore）
+  amoled175/               1.75 吋 AMOLED 版外殼（結構同上；上一層是 1.28 吋版）
 extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維護）
 ```
 
@@ -63,12 +64,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.0、韌體 1.10.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.11.2、韌體 1.10.2（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
 電腦 → 螢幕：`{ai, st, msg, p5, pw, r5, rw, age, now, tz, saver, bri, rot, arot, led, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`）
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）；韌體 1.9.0 前沒有 `hw` = c3）、`{"ev":"btn"}`（長按 BOOT）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）；韌體 1.9.0 前沒有 `hw` = c3）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -87,7 +88,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   - QSPI 下 LovyanGFX 的 DMA 路徑、以及 **64 位元組以下**的寫入（改塞 SPI 暫存器那條路）都會畫壞：bus `dma_channel = 0`，外環每段加寬到 > 64 位元組（右側 3 點鐘曾有一條暗線）
   - 面板記憶體 472 欄、從第 6 欄開始（`offset_x = 6`）；放開重置後要多等 150 ms 再送初始化（不然偶爾開機全白，`Panel_CO5300_466`）
   - 整張畫面放 PSRAM（`g_fb`，466×480×2）：分條畫照舊（`band.setBuffer` 指到 g_fb 裡那一條），全部畫好後 `g_framePending`，
-    在 TE 之後 `pushFrame` 一次送出（外環先用現在的亮度重畫進去）。整張約 37 ms（轉向時約 46 ms），比面板掃描慢、但從 TE 開始寫就追不上，不會撕裂
+    先 `prepareFrame`（外環換成現在的亮度、轉向時整張轉到 `g_fbRot`，16×16 一塊一塊搬，6-46 ms），再在 TE 之後 `pushFrame` 只做 SPI 寫入。
+    QSPI 80 MHz 整張約 20 ms（40 MHz 時 31 ms；以前轉向邊送邊轉 46 ms）。理論上從 TE 開始、兩格（33 ms）內寫完就不會撕裂，
+    但實測 20 ms 換頁時還是看得到撕裂（面板掃描方向 / TE 時間點跟假設不同，沒查清楚）→ 改用轉場
+  - 轉場（`fadeTick` / `showBright`）：換頁、轉向、進出螢幕保護時亮度 120 ms 淡到 0，全暗時才送新畫面（不用等 TE），再 160 ms 淡入；
+    淡出時不畫外環、重畫中的那張作廢重來。亮度只在 `showBright` 設（每次 loop），淡出用轉場前的亮度（`g_fadeOutBright`），離開螢幕保護不會先亮一下。
+    每秒更新數字不轉場（小範圍，看不出撕裂）。使用者覺得轉場比硬換好
   - 時鐘頁的大字型：LovyanGFX 的 VLW 字型畫一個字會 `alloca(字寬 × 字高)`，466 的時鐘數字超過預設 8 KB 堆疊（Stack canary 當機重開）→ `SET_LOOP_TASK_STACK_SIZE(16 KB)`
   - 觸控 CST9217（I2C 0x5A，16 位元暫存器 0xD000 讀 15 bytes、讀完寫 `D0 00 AB`；[6] = 0xAB、[0] 低 4 位元 0x06 = 按著）：
     一直輪詢的話偶爾整個 I2C 卡 1 秒 → 只在 INT（GPIO11）下降緣之後 60 ms 內讀（手指按著時會一直送脈衝；脈衝很短，讀電位看不到）。

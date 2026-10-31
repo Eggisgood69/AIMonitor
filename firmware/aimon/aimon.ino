@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.0"
+#define FW_VERSION "1.10.2"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -117,6 +117,32 @@ static uint8_t brightness = BRIGHTNESS;
 static int g_rot = 0;
 static bool dirty = true;
 
+// 亮度（每次 loop 套用，亮度只在這裡設）。AMOLED 換頁、轉向、進出螢幕保護時：淡出 → 全暗時換上新畫面 → 淡入。
+// 整張送出要 20 ms，比面板掃一次（16.7 ms）久，亮著直接換會看到撕裂
+static int g_fadeLv = 1000;          // 0 = 全暗，1000 = 正常亮度
+static int8_t g_fadeDir = 0;         // -1 淡出中（新畫面還沒送）、1 淡入中、0 沒有轉場
+static int g_fadeOutBright = 0;      // 淡出時用轉場前的亮度（離開螢幕保護時不會先亮一下）
+static const int FADE_OUT_MS = 120, FADE_IN_MS = 160;
+
+static void showBright() {
+  static int last = -1;
+  const int target = g_fadeDir < 0 ? g_fadeOutBright : (g_saver ? SAVER_BRIGHT : brightness);
+  const int b = target * g_fadeLv / 1000 * g_fadeLv / 1000;   // 平方：亮度變化看起來比較均勻
+  if (b != last) { lcd.setBrightness(b); last = b; }
+}
+
+static void fadeTick(uint32_t now) {
+  static uint32_t last = 0;
+  const int step = (int)(now - last);
+  last = now;
+  if (g_fadeDir < 0) g_fadeLv = max(0, g_fadeLv - step * 1000 / FADE_OUT_MS);
+  else if (g_fadeDir > 0) {
+    g_fadeLv = min(1000, g_fadeLv + step * 1000 / FADE_IN_MS);
+    if (g_fadeLv == 1000) g_fadeDir = 0;
+  }
+  showBright();
+}
+
 // 螢幕方向。AMOLED 不用面板的硬體旋轉（CO5300 在 90° / 180° / 270° 的定址跟 LovyanGFX 對不上，
 // 外環和小圓點附近會錯位），面板固定 0°，每一條畫好後自己轉向再送（pushRows）；外環是正圓，不用轉
 static void applyRotation() {
@@ -151,14 +177,41 @@ static void pushRows(const uint16_t* src, int oy, int h) {
   }
 }
 
-// 整張送出：外環先換成現在的亮度（畫的時候是十幾格之前），在 TE 之後馬上寫，
-// 約 25 ms 寫完，面板掃描追不上寫入的位置 → 不會半張新、半張舊
-static void pushFrame(uint32_t ms) {
+// 整張送出不撕裂的條件：從 TE 開始寫，寫完的時間 ≤ 約兩格（33 ms）。
+// 寫得比面板掃描慢沒關係（第一格掃到的全是舊的、第二格全是新的），但超過兩格，第二格掃到下半部時還沒寫到 → 下面一段是舊的
+// 所以 TE 之後只做 SPI 寫入；外環、轉向先在等 TE 之前做好（prepareFrame）
+static uint16_t* g_fbRot = nullptr;     // 轉向後的整張（90° / 180° / 270°）
+static bool g_frameReady = false;       // 外環、轉向都做好了，只等 TE
+
+// 整張轉到 g_fbRot。16×16 一塊一塊搬，PSRAM 快取才不會一直換
+static void rotateFrame() {
+  const uint16_t* s = g_fb;
+  uint16_t* d = g_fbRot;
+  for (int by = 0; by < H; by += 16)
+    for (int bx = 0; bx < W; bx += 16) {
+      const int ye = by + 16 > H ? H : by + 16, xe = bx + 16 > W ? W : bx + 16;
+      for (int y = by; y < ye; y++)
+        for (int x = bx; x < xe; x++) {
+          const uint16_t p = s[y * W + x];
+          if (g_rot == 1) d[x * W + (W - 1 - y)] = p;              // 90°（順時針）：(x, y) → (W-1-y, x)
+          else if (g_rot == 2) d[(H - 1 - y) * W + (W - 1 - x)] = p;
+          else d[(H - 1 - x) * W + y] = p;                          // 270°：(x, y) → (y, H-1-x)
+        }
+    }
+}
+
+// 外環換成現在的亮度（畫的時候是十幾格之前），要轉向就轉好
+static void prepareFrame(uint32_t ms) {
   ringDraw(g_fbSprite, 0, H, ms);
   g_ringShownMs = ms;
+  if (g_rot && g_fbRot) rotateFrame();
+}
+
+static void pushFrame() {
   lcd.startWrite();
-  if (g_rot == 0) pushRows(g_fb, 0, H);
-  else for (int oy = 0; oy < H; oy += BAND_H) pushRows(g_fb + oy * W, oy, oy + BAND_H > H ? H - oy : BAND_H);
+  if (g_rot == 0) lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fb);
+  else if (g_fbRot) lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fbRot);
+  else for (int oy = 0; oy < H; oy += BAND_H) pushRows(g_fb + oy * W, oy, oy + BAND_H > H ? H - oy : BAND_H);   // 配置不到轉向緩衝
   lcd.endWrite();
 }
 #endif
@@ -195,7 +248,7 @@ static void render() {          // 一次畫完整個畫面（開機用）
   for (OY = 0; OY < H; OY += BAND_H) renderStrip(ms);
   OY = 0;
 #if BOARD_AMOLED
-  if (g_fb) { pushFrame(millis()); return; }
+  if (g_fb) { prepareFrame(millis()); pushFrame(); return; }
 #endif
   lcd.startWrite(); statusRingOn(lcd, 0, millis()); lcd.endWrite();
 }
@@ -305,7 +358,8 @@ static volatile uint32_t g_teN = 0;       // 上次回報之後的脈衝數（�
 static void IRAM_ATTR onTE() { g_teUs = micros(); g_teN++; }
 #endif
 
-static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整張送出（AMOLED）
+static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整張送出（AMOLED，只算 SPI 寫入）
+static uint32_t g_maxPrepMs = 0;    // 最長的一次送出前準備（外環、轉向）
 
 static void sendHello(Stream* src) {
   char b[320];
@@ -314,13 +368,13 @@ static void sendHello(Stream* src) {
            (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d]}",
-           (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, g_fb ? 1 : 0,
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d]}",
+           (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ);
   g_teN = 0;
 #endif
   sendLine(src, b);
-  g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = 0;
+  g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = g_maxPrepMs = 0;
 }
 
 static void handleLine(Stream* src, const String& line) {
@@ -331,10 +385,7 @@ static void handleLine(Stream* src, const String& line) {
     sendHello(src);
     return;
   }
-  if (doc["bright"].is<int>()) {
-    brightness = doc["bright"].as<int>();
-    lcd.setBrightness(brightness);
-  }
+  if (doc["bright"].is<int>()) brightness = doc["bright"].as<int>();
   if (!doc["st"].is<const char*>()) return;
 
   Frame f;
@@ -377,7 +428,7 @@ static void handleLine(Stream* src, const String& line) {
   if (doc["rot"].is<int>() && !(g_autoRot && imuOk())) setRotation(doc["rot"].as<int>() & 3, true);
   if (doc["bri"].is<int>()) {                                           // 亮度（由電腦端設定）
     int b = doc["bri"].as<int>();
-    if (b >= 5 && b <= 255 && b != brightness) { brightness = b; if (!g_saver) lcd.setBrightness(brightness); }
+    if (b >= 5 && b <= 255) brightness = b;
   }
   if (doc["led"].is<int>()) ledSetPct(src, doc["led"].as<int>());   // 外接 LED 亮度 0-100
   JsonArray ds = doc["d"].as<JsonArray>();
@@ -501,7 +552,7 @@ void setup() {
 #endif
   applyRotation();
   lcd.fillScreen(TFT_BLACK);
-  lcd.setBrightness(brightness);
+  showBright();
   loadFonts();
   // 外環直接畫到螢幕，sprite 裡留空（透明色）。AMOLED 不行：透明色切出來的每一段要偶數對齊，
   // 不對齊的整段會被丟掉 → 外環也畫進 sprite（每條重畫只要幾 ms，跟呼吸燈差一格看不出來）
@@ -512,7 +563,10 @@ void setup() {
 #if BOARD_AMOLED
   // 整張畫面放 PSRAM（466×480×2 ≈ 447 KB）：一條一條畫進去，全部畫好才一次送出 → 換頁、數字更新不會一條一條出現
   g_fb = (uint16_t*)heap_caps_calloc(W * FB_ROWS, 2, MALLOC_CAP_SPIRAM);
-  if (g_fb) { g_fbSprite.setBuffer(g_fb, W, H, 16); band.setBuffer(g_fb, W, BAND_H, 16); }
+  if (g_fb) {
+    g_fbSprite.setBuffer(g_fb, W, H, 16); band.setBuffer(g_fb, W, BAND_H, 16);
+    g_fbRot = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+  }
 #endif
   if (!g_fb) {
     band.setColorDepth(16);
@@ -536,11 +590,10 @@ void loop() {
   bool alive = linkAlive();
   if (alive != lastAlive) { lastAlive = alive; dirty = true; if (!alive) g_lastActiveMs = now; }
 
-  // 螢幕保護：進入時調暗背光，離開時恢復
+  // 螢幕保護：進入時調暗背光，離開時恢復（亮度在下面的 showBright / fadeTick 套用）
   bool want = saverWanted();
   if (want != g_saver) {
     g_saver = want;
-    lcd.setBrightness(g_saver ? SAVER_BRIGHT : brightness);
     dirty = true;
   }
 
@@ -560,26 +613,53 @@ void loop() {
   static bool stripSinceRing = false;   // 上一格外環之後畫過一條了
 #if BOARD_AMOLED
   imuTick(now);
-  // 整張畫好了：在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送
+  // 換頁、轉向、進出螢幕保護：開始淡出，整個重畫（重畫到一半的那張可能還是舊畫面）
+  {
+    static int lastPage = -1, lastRot = 0;
+    static bool lastSaver = false;
+    if (lastPage < 0) { lastPage = g_page; lastRot = g_rot; lastSaver = g_saver; }
+    if (g_page != lastPage || g_rot != lastRot || g_saver != lastSaver) {
+      if (g_fb) {
+        if (g_fadeDir >= 0) g_fadeOutBright = lastSaver ? SAVER_BRIGHT : brightness;
+        g_fadeDir = -1;
+        strip = -1; g_framePending = g_frameReady = false; dirty = true;
+      }
+      lastPage = g_page; lastRot = g_rot; lastSaver = g_saver;
+    }
+  }
+  fadeTick(now);
+  // 整張畫好了：先準備好（外環、轉向），在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送。
+  // 轉場中：等全暗了才送（看不到，不用等 TE），送完開始淡入
   if (g_framePending) {
+    if (!g_frameReady) {
+      const uint32_t t0 = millis();
+      prepareFrame(t0);
+      g_frameReady = true;
+      if (millis() - t0 > g_maxPrepMs) g_maxPrepMs = millis() - t0;
+    }
     const uint32_t te = micros() - g_teUs;
     const bool teOk = g_teUs && te < 100000;
-    if (!teOk || te < 2000) {
-      pushFrame(now);
-      g_framePending = false;
-      lastRing = now;
+    if (g_fadeDir < 0 ? g_fadeLv == 0 : (!teOk || te < 2000)) {
+      const uint32_t t0 = millis();
+      pushFrame();
+      if (g_fadeDir < 0) g_fadeDir = 1;
+      g_framePending = g_frameReady = false;
+      lastRing = millis();
       stripSinceRing = false;
-      if (millis() - now > g_maxPushMs) g_maxPushMs = millis() - now;
+      if (millis() - t0 > g_maxPushMs) g_maxPushMs = millis() - t0;
     }
     if (millis() - loopStart > g_maxLoopMs) g_maxLoopMs = millis() - loopStart;
     delay(1);
     return;
   }
+#else
+  showBright();
 #endif
   if (strip < 0 && (dirty || now - lastFull >= (animating() ? 1000u : 5000u))) {
     strip = 0; stripMs = now; lastFull = now; dirty = false; g_anyKeyed = false;
   }
-  const int ringState = ringFrameState(now, lastRing, strip >= 0 && !stripSinceRing);
+  // 淡出中不畫外環：新畫面一條接一條畫完，早點送出
+  const int ringState = g_fadeDir < 0 ? 0 : ringFrameState(now, lastRing, strip >= 0 && !stripSinceRing);
   if (ringState == 1) {
     lcd.startWrite();
     statusRingOn(lcd, 0, now);

@@ -44,8 +44,9 @@ static void sensorsInit() {
   }
 }
 
-// 觸控：有手指按著就回 true。沒按的時候控制器回 FF（不是錯誤）
-static bool touchDown() {
+// 觸控：有手指按著就回 true，x / y 是面板座標（0° 時跟畫面一樣，0-465）。沒按的時候控制器回 FF（不是錯誤）
+// 控制器的原始座標兩軸都跟面板相反（Waveshare 範例一樣 setMirrorXY(true, true)）
+static bool touchRead(int& x, int& y) {
   static const uint8_t reg[2] = {0xD0, 0x00};
   static const uint8_t ack[3] = {0xD0, 0x00, 0xAB};
   uint8_t b[15];
@@ -54,7 +55,10 @@ static bool touchDown() {
   i2cWrite(I2C_TOUCH, ack, 3);                  // 讀完回 ACK，下一筆才會更新
   if (b[6] != 0xAB || b[0] == 0xAB || b[0] == 0x00) return false;
   int n = b[5] & 0x7F;
-  return n > 0 && n <= 2 && (b[0] & 0x0F) == 0x06;   // 0x06 = 按著
+  if (n < 1 || n > 2 || (b[0] & 0x0F) != 0x06) return false;   // 0x06 = 按著
+  x = TP_MIRROR_X ? LCD_W - 1 - ((b[1] << 4) | (b[3] >> 4)) : (b[1] << 4) | (b[3] >> 4);
+  y = TP_MIRROR_Y ? LCD_W - 1 - ((b[2] << 4) | (b[3] & 0x0F)) : (b[2] << 4) | (b[3] & 0x0F);
+  return true;
 }
 
 // 陀螺儀：加速度（8192 = 1 g）

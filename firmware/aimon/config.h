@@ -40,6 +40,8 @@
 #define PIN_TP_RST     40   // 觸控重置（跟螢幕的 GPIO39 分開）
 #define PIN_TP_INT     11   // 觸控有新資料時送出脈衝（很短，要用中斷接）
 #define I2C_TOUCH      0x5A
+#define TP_MIRROR_X    1    // 觸控座標跟面板相反（左右滑反了就改這裡）
+#define TP_MIRROR_Y    1
 #define I2C_IMU        0x6B
 
 // 外接 WS2812（單顆，選用）：DIN 接排座的 GPIO16，電源接 3.3V / GND

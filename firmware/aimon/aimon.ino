@@ -12,7 +12,7 @@
 //   st : idle | done | working | review | error
 // 收到 {"hello":1} 會回 {"aimon":2,"fw":"版本"}。
 // BOOT 鍵：短按翻頁（狀態 → 額度詳細 → 今日統計 → 時鐘）；長按 0.7 秒送出 {"ev":"btn"}（標為已讀）。
-// AMOLED 另外可以點螢幕（同短按）、按住螢幕（同長按），並依陀螺儀自動轉向（sensors.h）。
+// AMOLED 另外可以左右滑換頁、按住螢幕標為已讀，並依陀螺儀自動轉向（sensors.h）。
 //
 // Arduino IDE 設定：Board = ESP32C3 Dev Module、USB CDC On Boot = Enabled、
 
@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.6"
+#define FW_VERSION "1.10.7"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -214,6 +214,7 @@ static void pushFrame() {
   else for (int oy = 0; oy < H; oy += BAND_H) pushRows(g_fb + oy * W, oy, oy + BAND_H > H ? H - oy : BAND_H);   // 配置不到轉向緩衝
   lcd.endWrite();
 }
+
 #endif
 
 // 把 band（第 OY 列起）送到螢幕
@@ -470,8 +471,94 @@ static LineReader rdUsb(&Serial);
 static LineReader rdUart(&Serial0);
 #endif
 
-// ---------------- BOOT 鍵、觸控（AMOLED：點一下 = 短按，按住 = 長按）----------------
+#if BOARD_AMOLED
+// ---------------- 換頁滑動 ----------------
+// 舊畫面往滑的方向推出去、新頁從另一邊滑進來，外圈燈號固定不動（每一格把外環重畫在最上面）。
+// 都在面板座標做（已轉向的整張），轉向時沿面板的另一軸移動，不用每格重新轉向
+static uint16_t* g_fbOld = nullptr;     // 換頁前螢幕上那張
+static uint16_t* g_fbSlide = nullptr;   // 滑動中的這一格
+static LGFX_Sprite g_slideSprite(&lcd);
+static const uint16_t* g_slideNew = nullptr;   // 新頁（g_fb 或 g_fbRot）
+static int8_t g_sliding = 0;            // 滑動中：-1 內容往左、1 往右（看到的畫面上）
+static uint32_t g_slideT0 = 0;
+static const uint32_t SLIDE_MS = 280;
+
+static bool slideReady() { return g_fbOld && g_fbSlide && (g_rot == 0 || g_fbRot); }
+
+// 開始滑動：記下螢幕上的舊畫面，新頁整張畫好、準備好（外環、轉向）
+static void startSlide(int dir, uint32_t now) {
+  // 螢幕上那張：滑動中就是正在顯示的那一格；0° 是 g_fb（可能已經重畫了幾條，只差在時間數字），轉向時是 g_fbRot
+  const uint16_t* shown = g_sliding ? g_fbSlide : (g_rot ? g_fbRot : g_fb);
+  memcpy(g_fbOld, shown, W * H * 2);
+  for (OY = 0; OY < H; OY += BAND_H) renderStrip(now);
+  OY = 0;
+  prepareFrame(now);
+  g_slideNew = g_rot ? g_fbRot : g_fb;
+  g_sliding = dir;
+  g_slideT0 = millis();
+}
+
+// 舊畫面移動 a 像素（0 → W），沿看到的畫面的左右方向
+static void composeSlide(int a) {
+  // 看到的左右 → 面板的哪一軸、哪個方向（跟 touchToView 相反方向的換算）
+  const bool alongY = g_rot == 1 || g_rot == 3;
+  const int t = (g_rot >= 2 ? -g_sliding : g_sliding) * a;   // 舊畫面在面板上的位移
+  const uint16_t *o = g_fbOld, *n = g_slideNew;
+  uint16_t* d = g_fbSlide;
+  const int A = abs(t);
+  if (alongY) {                                               // 整列整列搬
+    if (t <= 0) { memcpy(d, o + A * W, (H - A) * W * 2); memcpy(d + (H - A) * W, n, A * W * 2); }
+    else { memcpy(d, n + (H - A) * W, A * W * 2); memcpy(d + A * W, o, (H - A) * W * 2); }
+  } else {
+    for (int y = 0; y < H; y++) {
+      uint16_t* r = d + y * W;
+      const uint16_t *ro = o + y * W, *rn = n + y * W;
+      if (t <= 0) { memcpy(r, ro + A, (W - A) * 2); memcpy(r + W - A, rn, A * 2); }
+      else { memcpy(r, rn + W - A, A * 2); memcpy(r + A, ro, (W - A) * 2); }
+    }
+  }
+}
+
+// 滑動的一格：組好、外環蓋上去、等 TE 送出。回傳 false = 滑完了（最後一格就是新頁）
+static bool slideTick() {
+  const uint32_t el = millis() - g_slideT0;
+  const int p = el >= SLIDE_MS ? 1000 : (int)(el * 1000 / SLIDE_MS);
+  const int q = 1000 - p;
+  const int e = 1000 - q * q / 1000 * q / 1000;               // ease-out（三次方）：一開始快、最後慢慢停
+  composeSlide(W * e / 1000);
+  const uint32_t ms = millis();
+  ringDraw(g_slideSprite, 0, H, ms);
+  g_ringShownMs = ms;
+  const uint32_t t0 = millis();
+  while (g_teUs && micros() - g_teUs > 2000 && micros() - g_teUs < 100000 && millis() - t0 < 20) {}   // 等 TE（最多一格）
+  lcd.startWrite();
+  lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fbSlide);
+  lcd.endWrite();
+  if (p < 1000) return true;
+  g_sliding = 0;
+  return false;
+}
+#endif
+
+// ---------------- BOOT 鍵、觸控 ----------------
+// BOOT 鍵：短按 = 下一頁，長按 = 標為已讀。
+// AMOLED 觸控：左右滑 = 換頁（往左滑下一頁、往右滑上一頁），按住 = 標為已讀，點一下只叫醒螢幕保護
 static uint32_t g_pageMs = 0;
+static int8_t g_slideDir = 0;      // AMOLED：這次換頁要滑動（-1 內容往左 = 下一頁，1 往右 = 上一頁）；0 = 淡出淡入
+
+static void markRead() {
+  sendLine(lastSource ? lastSource : &Serial, "{\"ev\":\"btn\"}");
+  if (g_frame.st == S_DONE || g_frame.st == S_ERROR) { g_frame.st = S_IDLE; g_frame.msg = ""; }
+  g_page = 0;
+  dirty = true;
+}
+
+static void turnPage(int dir, uint32_t now) {   // dir：-1 下一頁、1 上一頁
+  g_page = (g_page + (dir < 0 ? 1 : N_PAGES - 1)) % N_PAGES;
+  g_pageMs = now;
+  g_slideDir = dir;
+  dirty = true;
+}
 
 struct Press { bool was = false, longDone = false, wokeSaver = false; uint32_t downAt = 0; };
 
@@ -482,38 +569,66 @@ static void pressTick(Press& p, bool down, uint32_t now) {
     g_lastActiveMs = now;
   }
   if (down && !p.longDone && now - p.downAt > 700) {      // 長按：標為已讀
-    sendLine(lastSource ? lastSource : &Serial, "{\"ev\":\"btn\"}");
-    if (g_frame.st == S_DONE || g_frame.st == S_ERROR) { g_frame.st = S_IDLE; g_frame.msg = ""; }
-    g_page = 0;
-    dirty = true;
+    markRead();
     p.longDone = true;
   }
-  if (!down && p.was && !p.longDone && now - p.downAt > 30 && !p.wokeSaver) {   // 短按：翻頁
-    g_page = (g_page + 1) % N_PAGES;
-    g_pageMs = now;
-    dirty = true;
-  }
+  if (!down && p.was && !p.longDone && now - p.downAt > 30 && !p.wokeSaver) turnPage(-1, now);   // 短按：下一頁
   p.was = down;
 }
+
+#if BOARD_AMOLED
+// 觸控的位移（面板座標）換成看到的畫面上的左右 / 上下（轉向時面板座標跟畫面不同）
+static void touchToView(int px, int py, int& vx, int& vy) {
+  switch (g_rot) {
+    case 1: vx = py; vy = -px; break;     // 90°：面板 (W-1-y, x)
+    case 2: vx = -px; vy = -py; break;
+    case 3: vx = -py; vy = px; break;     // 270°：面板 (y, H-1-x)
+    default: vx = px; vy = py;
+  }
+}
+
+static void pollTouch(uint32_t now) {
+  // 每 20 ms 讀一次；連續 3 次沒讀到才算放開（手指滑動時偶爾會漏一筆）
+  static uint32_t lastTp = 0, downAt = 0;
+  static bool down = false, moved = false, longDone = false, woke = false;
+  static uint8_t miss = 0;
+  static int x0, y0, x1, y1;
+  if (!g_hasTouch) return;
+  if (now - lastTp >= 20) {
+    lastTp = now;
+    int x, y;
+    if (touchRead(x, y)) {
+      miss = 0;
+      if (!down) {
+        down = true; moved = longDone = false; downAt = now;
+        x0 = x1 = x; y0 = y1 = y;
+        woke = g_saver;                                   // 螢幕保護中：這一下只負責叫醒
+        g_lastActiveMs = now;
+      } else {
+        x1 = x; y1 = y;
+        if (abs(x1 - x0) + abs(y1 - y0) > SI(12)) moved = true;
+      }
+    } else if (down && ++miss >= 3) {
+      down = false;
+      // 放開：主要是左右移動、夠遠、1 秒內 = 滑動換頁
+      int vx, vy;
+      touchToView(x1 - x0, y1 - y0, vx, vy);
+      if (!longDone && !woke && now - downAt < 1000 && abs(vx) > SI(30) && abs(vx) > abs(vy) * 3 / 2)
+        turnPage(vx < 0 ? -1 : 1, now);
+    }
+  }
+  if (down && !moved && !longDone && !woke && now - downAt > 700) { markRead(); longDone = true; }   // 按住不動：標為已讀
+}
+#endif
 
 static void pollButton() {
   static Press btn;
   uint32_t now = millis();
   pressTick(btn, digitalRead(PIN_BTN) == LOW, now);
 #if BOARD_AMOLED
-  // 觸控每 20 ms 讀一次；連續 3 次沒讀到才算放開（手指稍微滑動時偶爾會漏一筆）
-  static Press tp;
-  static uint32_t lastTp = 0;
-  static bool tpDown = false;
-  static uint8_t tpMiss = 0;
-  if (g_hasTouch && now - lastTp >= 20) {
-    lastTp = now;
-    if (touchDown()) { tpDown = true; tpMiss = 0; }
-    else if (tpDown && ++tpMiss >= 3) tpDown = false;
-  }
-  pressTick(tp, tpDown, now);
+  pollTouch(now);
 #endif
-  if (g_page != 0 && now - g_pageMs > 20000) { g_page = 0; dirty = true; }   // 20 秒沒操作回到狀態頁
+  if (g_page != 0 && now - g_pageMs > 20000) { g_page = 0; g_slideDir = 0; dirty = true; }   // 20 秒沒操作回到狀態頁（淡出淡入）
 }
 
 // 外環這一格：0 = 還不用畫，1 = 現在畫，2 = 快到了、等面板（這次 loop 不要重畫其他東西）
@@ -569,6 +684,10 @@ void setup() {
   if (g_fb) {
     g_fbSprite.setBuffer(g_fb, W, H, 16); band.setBuffer(g_fb, W, BAND_H, 16);
     g_fbRot = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+    // 換頁滑動：舊畫面、滑動中的一格（各 434 KB）
+    g_fbOld = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+    g_fbSlide = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+    if (g_fbSlide) g_slideSprite.setBuffer(g_fbSlide, W, H, 16);
   }
 #endif
   if (!g_fb) {
@@ -623,12 +742,26 @@ void loop() {
     if (lastPage < 0) { lastPage = g_page; lastRot = g_rot; lastSaver = g_saver; }
     if (g_page != lastPage || g_rot != lastRot || g_saver != lastSaver) {
       if (g_fb) {
-        if (g_fadeDir >= 0) g_fadeOutBright = lastSaver ? SAVER_BRIGHT : brightness;
-        g_fadeDir = -1;
-        strip = -1; g_framePending = g_frameReady = false; dirty = true;
+        if (g_slideDir && g_page != lastPage && g_rot == lastRot && g_saver == lastSaver && g_fadeDir == 0 && slideReady()) {
+          // 滑動 / BOOT 鍵換頁：新頁整張畫好，從滑的方向滑進來
+          strip = -1; g_framePending = g_frameReady = false; dirty = false; lastFull = now;
+          startSlide(g_slideDir, now);
+        } else {
+          if (g_fadeDir >= 0) g_fadeOutBright = lastSaver ? SAVER_BRIGHT : brightness;
+          g_fadeDir = -1;
+          g_sliding = 0;
+          strip = -1; g_framePending = g_frameReady = false; dirty = true;
+        }
       }
+      g_slideDir = 0;
       lastPage = g_page; lastRot = g_rot; lastSaver = g_saver;
     }
+  }
+  if (g_sliding) {
+    if (!slideTick()) { lastRing = millis(); stripSinceRing = false; }
+    if (millis() - loopStart > g_maxLoopMs) g_maxLoopMs = millis() - loopStart;
+    delay(1);
+    return;
   }
   fadeTick(now);
   // 整張畫好了：先準備好（外環、轉向），在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送。

@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.10.1"
+const version = "1.11.0"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -60,8 +60,9 @@ type Settings struct {
 	SaverMin   int  `json:"saverMin"`   // 螢幕保護：待命幾分鐘後進入，0 = 關閉
 	Brightness int  `json:"brightness"` // 背光亮度 5-255
 	RemindAt   *int `json:"remindAt"`
-	Rotation   int  `json:"rotation"` // 螢幕方向 0-3（×90°）   // 額度重置提醒：用量達到幾 % 才提醒，0 = 關閉（預設 90）
-	Led        int  `json:"led"`      // 外接 WS2812 亮度 0-100，0 = 關閉
+	Rotation   int  `json:"rotation"`  // 螢幕方向 0-3（×90°）   // 額度重置提醒：用量達到幾 % 才提醒，0 = 關閉（預設 90）
+	Led        int  `json:"led"`       // 外接 WS2812 亮度 0-100，0 = 關閉
+	NoAutoRot  bool `json:"noAutoRot"` // AMOLED 不要依陀螺儀自動轉向（預設會）
 }
 
 var (
@@ -728,6 +729,9 @@ func pushFrame(force bool) {
 	f.Bri = brightness()
 	settingsMu.Lock()
 	f.Rot = settings.Rotation & 3
+	if !settings.NoAutoRot {
+		f.ARot = 1
+	}
 	f.Led = settings.Led
 	settingsMu.Unlock()
 	f.Note, f.NK = currentNote(f.AI)
@@ -932,6 +936,13 @@ func onCmd(cmd string) string {
 				sendFrameNow()
 			}
 		}
+		if cmd == "arot-on" || cmd == "arot-off" {
+			settingsMu.Lock()
+			settings.NoAutoRot = cmd == "arot-off"
+			settingsMu.Unlock()
+			saveSettings()
+			sendFrameNow()
+		}
 		if strings.HasPrefix(cmd, "led:") {
 			if n, err := strconv.Atoi(strings.TrimPrefix(cmd, "led:")); err == nil && n >= 0 && n <= 100 {
 				settingsMu.Lock()
@@ -1004,7 +1015,7 @@ func uiStatusJSON() string {
 	b, _ := json.Marshal(map[string]interface{}{
 		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": scs, "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
-		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "led": ledPct(),
+		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(),
 	})
 	return string(b)
@@ -1114,6 +1125,12 @@ func rotation() int {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 	return settings.Rotation & 3
+}
+
+func autoRot() bool {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	return !settings.NoAutoRot
 }
 
 func ledPct() int {

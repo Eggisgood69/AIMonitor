@@ -140,11 +140,12 @@
         <option value="0">關閉</option><option value="50">用量 ≥ 50%</option><option value="80">用量 ≥ 80%</option>
         <option value="90">用量 ≥ 90%</option><option value="100">用完時</option>
       </select></div>
-    <div class="row sw"><div>螢幕方向<div class="hint">依擺放方式選到畫面是正的為止，螢幕會馬上轉過去</div></div>
+    <div class="row sw"><div>螢幕方向<div class="hint" id="rothint">依擺放方式選到畫面是正的為止，螢幕會馬上轉過去</div></div>
       <select id="rot">
         <option value="0">0°</option><option value="1">90°</option>
         <option value="2">180°</option><option value="3">270°</option>
       </select></div>
+    <div class="row sw" id="arotrow" style="display:none"><div>AMOLED 自動轉向<div class="hint">依擺放方向自動把畫面轉正（板上的陀螺儀）；平放時維持原本的方向。需要韌體 1.10.0 以上</div></div><div class="toggle" id="arot"></div></div>
     <div class="row sw"><div>螢幕亮度</div><input type="range" id="bri" min="10" max="255" step="5"></div>
     <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，DIN 接背面排座的 RX 腳，跟外圈燈號同步。需要韌體 1.7.0 以上</div></div>
       <select id="led">
@@ -181,6 +182,10 @@
     document.getElementById("cc").onclick = (e) => {
       const on = e.currentTarget.classList.contains("on");
       window.aimonCmd(on ? "cc-off" : "cc-on").then(render);
+    };
+    document.getElementById("arot").onclick = (e) => {
+      const on = e.currentTarget.classList.contains("on");
+      window.aimonCmd(on ? "arot-off" : "arot-on").then(render);
     };
     document.getElementById("auto").onclick = (e) => {
       const on = e.currentTarget.classList.contains("on");
@@ -324,6 +329,14 @@
     }
     const ro = $("rot");
     if (document.activeElement !== ro) ro.value = String((s.rotation || 0) & 3);
+    // 接著 AMOLED 才顯示自動轉向；開著的時候方向選單只管 1.28 吋
+    const amoled = (s.screens || []).some((x) => x.verified && x.hw === "s3a175");
+    $("arotrow").style.display = amoled ? "" : "none";
+    $("arot").classList.toggle("on", !!s.autoRot);
+    const lcd = (s.screens || []).some((x) => x.verified && (x.hw || "c3") === "c3");
+    $("rothint").textContent = amoled && s.autoRot
+      ? (lcd ? "1.28 吋螢幕的方向（AMOLED 會自動轉向）" : "AMOLED 正在自動轉向；關掉自動轉向才會用這裡的方向")
+      : "依擺放方式選到畫面是正的為止，螢幕會馬上轉過去";
     const ld = $("led");
     if (document.activeElement !== ld) {
       const v = String(s.led || 0);

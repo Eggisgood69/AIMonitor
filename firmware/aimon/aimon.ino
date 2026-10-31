@@ -11,21 +11,27 @@
 //   ai : claude | chatgpt | gemini | none
 //   st : idle | done | working | review | error
 // 收到 {"hello":1} 會回 {"aimon":2,"fw":"版本"}。
-// BOOT 鍵：短按翻頁（狀態 → 額度詳細 → 時鐘）；長按 0.7 秒送出 {"ev":"btn"}（標為已讀）。
+// BOOT 鍵：短按翻頁（狀態 → 額度詳細 → 今日統計 → 時鐘）；長按 0.7 秒送出 {"ev":"btn"}（標為已讀）。
+// AMOLED 另外可以點螢幕（同短按）、按住螢幕（同長按），並依陀螺儀自動轉向（sensors.h）。
 //
 // Arduino IDE 設定：Board = ESP32C3 Dev Module、USB CDC On Boot = Enabled、
 
+#include <Wire.h>   // AMOLED 的觸控、陀螺儀（sensors.h）；要放在最前面，arduino-cli 才會把它加進來
 #include <ArduinoJson.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.9.1"
+#define FW_VERSION "1.10.0"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
+struct Press;
 
 #if BOARD_AMOLED
+// 時鐘頁的大字型：LovyanGFX 畫一個字會把整個字形放在堆疊上，466 的字形比預設的 8 KB 還大（會當機重開）
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 // CO5300 466×466：控制器記憶體 472 欄，面板從第 6 欄開始（Waveshare BSP 的 set_gap(6, 0)）。
 // 初始化指令照 Waveshare BSP；開機先把亮度設 0，畫好黑畫面才亮起來
 struct Panel_CO5300_466 : public lgfx::Panel_CO5300 {
@@ -112,43 +118,69 @@ static int g_rot = 0;
 static bool dirty = true;
 
 // 螢幕方向。AMOLED 不用面板的硬體旋轉（CO5300 在 90° / 180° / 270° 的定址跟 LovyanGFX 對不上，
-// 外環和小圓點附近會錯位），面板固定 0°，每一條畫好後自己轉向再送（pushBand）；外環是正圓，不用轉
+// 外環和小圓點附近會錯位），面板固定 0°，每一條畫好後自己轉向再送（pushRows）；外環是正圓，不用轉
 static void applyRotation() {
   lcd.setRotation(BOARD_AMOLED ? 0 : g_rot);
 }
 
+static uint16_t* g_fb = nullptr;        // AMOLED：整張畫面（PSRAM）。nullptr = 一條一條畫、畫好一條就送（C3）
 #if BOARD_AMOLED
+#include "sensors.h"
+static const int FB_ROWS = (H + BAND_H - 1) / BAND_H * BAND_H;   // 最後一條也是 BAND_H 列，不會寫出界
+static LGFX_Sprite g_fbSprite(&lcd);    // 整張畫面（外環畫進去用）
+static bool g_framePending = false;     // 整張畫好了，等 TE 送出
 static uint16_t g_rotBuf[W * BAND_H];   // 轉向後的一條（RGB565，位元組已對調，直接送）
-#endif
 
-// 把 band（第 OY 列起、h 列）送到螢幕；AMOLED 在這裡轉向。位置都是偶數（W、BAND_H、OY 都是偶數）
-static void pushBand() {
-#if BOARD_AMOLED
-  const int h = OY + BAND_H > H ? H - OY : BAND_H;
-  const uint16_t* src = (const uint16_t*)band.getBuffer();
-  if (g_rot == 0 || band.getColorDepth() != 16) { band.pushSprite(0, OY); return; }
+// 把 src（第 oy 列起、h 列，寬 W，位元組已對調的 RGB565）送到螢幕，在這裡轉向。位置都是偶數（W、BAND_H、oy 都是偶數）
+static void pushRows(const uint16_t* src, int oy, int h) {
   uint16_t* d = g_rotBuf;
-  if (g_rot == 2) {                       // 180°：(x, y) → (W-1-x, H-1-y)
+  if (g_rot == 0) {
+    lcd.pushImage(0, oy, W, h, (const lgfx::swap565_t*)src);
+  } else if (g_rot == 2) {                // 180°：(x, y) → (W-1-x, H-1-y)
     for (int r = 0; r < h; r++)
       for (int x = 0; x < W; x++) d[(h - 1 - r) * W + (W - 1 - x)] = src[r * W + x];
-    lcd.pushImage(0, H - OY - h, W, h, (const lgfx::swap565_t*)d);
+    lcd.pushImage(0, H - oy - h, W, h, (const lgfx::swap565_t*)d);
   } else if (g_rot == 1) {                // 90°（順時針）：(x, y) → (W-1-y, x)
     for (int r = 0; r < h; r++)
       for (int x = 0; x < W; x++) d[x * h + (h - 1 - r)] = src[r * W + x];
-    lcd.pushImage(W - OY - h, 0, h, H, (const lgfx::swap565_t*)d);
+    lcd.pushImage(W - oy - h, 0, h, H, (const lgfx::swap565_t*)d);
   } else {                                // 270°：(x, y) → (y, H-1-x)
     for (int r = 0; r < h; r++)
       for (int x = 0; x < W; x++) d[(H - 1 - x) * h + r] = src[r * W + x];
-    lcd.pushImage(OY, 0, h, H, (const lgfx::swap565_t*)d);
+    lcd.pushImage(oy, 0, h, H, (const lgfx::swap565_t*)d);
   }
-#else
-  band.pushSprite(0, OY);
-#endif
 }
 
-// 畫一條（OY 那一條，高 BAND_H）並送到螢幕
+// 整張送出：外環先換成現在的亮度（畫的時候是十幾格之前），在 TE 之後馬上寫，
+// 約 25 ms 寫完，面板掃描追不上寫入的位置 → 不會半張新、半張舊
+static void pushFrame(uint32_t ms) {
+  ringDraw(g_fbSprite, 0, H, ms);
+  g_ringShownMs = ms;
+  lcd.startWrite();
+  if (g_rot == 0) pushRows(g_fb, 0, H);
+  else for (int oy = 0; oy < H; oy += BAND_H) pushRows(g_fb + oy * W, oy, oy + BAND_H > H ? H - oy : BAND_H);
+  lcd.endWrite();
+}
+#endif
+
+// 把 band（第 OY 列起）送到螢幕
+static void pushBand() {
+#if BOARD_AMOLED
+  if (band.getColorDepth() == 16) { pushRows((const uint16_t*)band.getBuffer(), OY, OY + BAND_H > H ? H - OY : BAND_H); return; }
+#endif
+  band.pushSprite(0, OY);
+}
+
+// 畫一條（OY 那一條，高 BAND_H）。有整張畫面時只畫進去，最後一起送；否則畫好就送到螢幕
 static bool g_anyKeyed = false;    // 這一輪有沒有任何一條留空了外環
 static void renderStrip(uint32_t ms) {
+#if BOARD_AMOLED
+  if (g_fb) {
+    band.setBuffer(g_fb + OY * W, W, BAND_H, 16);
+    drawScene(ms);
+    return;
+  }
+#endif
   g_ringKeyed = false;
   drawScene(ms);
   lcd.startWrite();
@@ -162,8 +194,47 @@ static void render() {          // 一次畫完整個畫面（開機用）
   uint32_t ms = millis();
   for (OY = 0; OY < H; OY += BAND_H) renderStrip(ms);
   OY = 0;
+#if BOARD_AMOLED
+  if (g_fb) { pushFrame(millis()); return; }
+#endif
   lcd.startWrite(); statusRingOn(lcd, 0, millis()); lcd.endWrite();
 }
+
+// 換方向。有整張畫面時下一張會整個蓋過去，不用先清成黑的（不會閃一下）
+static void setRotation(int r, bool save) {
+  if (r == g_rot) return;
+  g_rot = r;
+  applyRotation();
+  if (!g_fb) lcd.fillScreen(TFT_BLACK);
+  dirty = true;
+  if (save) { Preferences pf; pf.begin("aimon", false); pf.putUChar("rot", g_rot); pf.end(); }   // 記住，下次開機一插電就是這個方向
+}
+
+// ---------------- 自動轉向（AMOLED 的陀螺儀）----------------
+// 由電腦端設定開關（arot），存在 NVS。開著的時候不理電腦送的 rot；平放時維持最後的方向
+static bool g_autoRot = true;
+#if !BOARD_AMOLED
+static bool imuOk() { return false; }
+#else
+static bool imuOk() { return g_hasImu; }
+static int g_accX = 0, g_accY = 0, g_accZ = 0;   // 最近一次的加速度（回報給電腦端，除錯用）
+static int readOrientation() {
+  int16_t x, y, z;
+  if (!g_hasImu || !imuAccel(x, y, z)) return -1;
+  g_accX = x; g_accY = y; g_accZ = z;
+  return imuOrientation(x, y);
+}
+static void imuTick(uint32_t now) {
+  static uint32_t last = 0, since = 0;
+  static int cand = -1;
+  if (!g_hasImu || !g_autoRot || now - last < 100) return;
+  last = now;
+  const int o = readOrientation();
+  if (o < 0 || o == g_rot) { cand = -1; return; }
+  if (o != cand) { cand = o; since = now; return; }
+  if (now - since >= 800) { setRotation(o, false); cand = -1; }   // 同一個方向維持 0.8 秒才轉（拿起來晃動不會亂轉）
+}
+#endif
 
 // ---------------- 序列埠：同時聽 USB（Serial）與 UART0（Serial0）----------------
 // 不同批次的板子有的走 ESP32-C3 內建 USB，有的經過 CH340 轉 UART0，兩條都收。
@@ -234,17 +305,22 @@ static volatile uint32_t g_teN = 0;       // 上次回報之後的脈衝數（�
 static void IRAM_ATTR onTE() { g_teUs = micros(); g_teN++; }
 #endif
 
+static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整張送出（AMOLED）
+
 static void sendHello(Stream* src) {
-  char b[192];
+  char b[320];
   snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
            (unsigned long)(millis() / 1000), (unsigned long)g_maxLoopMs, (unsigned long)g_maxStripMs,
            (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
-#ifdef PIN_LCD_TE
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu}", (unsigned long)g_teN, (unsigned long)g_maxRingMs);
+#if BOARD_AMOLED
+  // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d]}",
+           (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, g_fb ? 1 : 0,
+           g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ);
   g_teN = 0;
 #endif
   sendLine(src, b);
-  g_maxLoopMs = g_maxStripMs = g_maxRingMs = 0;
+  g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = 0;
 }
 
 static void handleLine(Stream* src, const String& line) {
@@ -293,15 +369,12 @@ static void handleLine(Stream* src, const String& line) {
   }
   if (doc["tz"].is<int>()) g_tz = doc["tz"].as<int>();
   if (doc["saver"].is<int>()) g_saverMin = doc["saver"].as<int>();   // 螢幕保護分鐘數（0 = 關閉）
-  if (doc["rot"].is<int>()) {                                           // 螢幕方向 0-3（×90°，由電腦端設定）
-    int r = doc["rot"].as<int>() & 3;
-    if (r != g_rot) {
-      g_rot = r;
-      applyRotation();
-      lcd.fillScreen(TFT_BLACK);
-      Preferences pf; pf.begin("aimon", false); pf.putUChar("rot", g_rot); pf.end();   // 記住，下次開機一插電就是這個方向
-    }
+  if (doc["arot"].is<int>()) {                                          // 自動轉向（有陀螺儀的螢幕）
+    bool a = doc["arot"].as<int>() != 0;
+    if (a != g_autoRot) { g_autoRot = a; Preferences pf; pf.begin("aimon", false); pf.putBool("arot", a); pf.end(); }
   }
+  // 螢幕方向 0-3（×90°，由電腦端設定）。自動轉向時由陀螺儀決定
+  if (doc["rot"].is<int>() && !(g_autoRot && imuOk())) setRotation(doc["rot"].as<int>() & 3, true);
   if (doc["bri"].is<int>()) {                                           // 亮度（由電腦端設定）
     int b = doc["bri"].as<int>();
     if (b >= 5 && b <= 255 && b != brightness) { brightness = b; if (!g_saver) lcd.setBrightness(brightness); }
@@ -343,32 +416,50 @@ static LineReader rdUsb(&Serial);
 static LineReader rdUart(&Serial0);
 #endif
 
-// ---------------- BOOT 鍵 ----------------
+// ---------------- BOOT 鍵、觸控（AMOLED：點一下 = 短按，按住 = 長按）----------------
 static uint32_t g_pageMs = 0;
 
-static void pollButton() {
-  static bool was = false; static uint32_t downAt = 0; static bool longDone = false; static bool wokeSaver = false;
-  bool down = digitalRead(PIN_BTN) == LOW;
-  uint32_t now = millis();
-  if (down && !was) {
-    downAt = now; longDone = false;
-    wokeSaver = g_saver;                                  // 螢幕保護中：這一下只負責叫醒
+struct Press { bool was = false, longDone = false, wokeSaver = false; uint32_t downAt = 0; };
+
+static void pressTick(Press& p, bool down, uint32_t now) {
+  if (down && !p.was) {
+    p.downAt = now; p.longDone = false;
+    p.wokeSaver = g_saver;                                // 螢幕保護中：這一下只負責叫醒
     g_lastActiveMs = now;
   }
-  if (down && !longDone && now - downAt > 700) {          // 長按：標為已讀
+  if (down && !p.longDone && now - p.downAt > 700) {      // 長按：標為已讀
     sendLine(lastSource ? lastSource : &Serial, "{\"ev\":\"btn\"}");
     if (g_frame.st == S_DONE || g_frame.st == S_ERROR) { g_frame.st = S_IDLE; g_frame.msg = ""; }
     g_page = 0;
     dirty = true;
-    longDone = true;
+    p.longDone = true;
   }
-  if (!down && was && !longDone && now - downAt > 30 && !wokeSaver) {   // 短按：翻頁
+  if (!down && p.was && !p.longDone && now - p.downAt > 30 && !p.wokeSaver) {   // 短按：翻頁
     g_page = (g_page + 1) % N_PAGES;
     g_pageMs = now;
     dirty = true;
   }
+  p.was = down;
+}
+
+static void pollButton() {
+  static Press btn;
+  uint32_t now = millis();
+  pressTick(btn, digitalRead(PIN_BTN) == LOW, now);
+#if BOARD_AMOLED
+  // 觸控每 20 ms 讀一次；連續 3 次沒讀到才算放開（手指稍微滑動時偶爾會漏一筆）
+  static Press tp;
+  static uint32_t lastTp = 0;
+  static bool tpDown = false;
+  static uint8_t tpMiss = 0;
+  if (g_hasTouch && now - lastTp >= 20) {
+    lastTp = now;
+    if (touchDown()) { tpDown = true; tpMiss = 0; }
+    else if (tpDown && ++tpMiss >= 3) tpDown = false;
+  }
+  pressTick(tp, tpDown, now);
+#endif
   if (g_page != 0 && now - g_pageMs > 20000) { g_page = 0; dirty = true; }   // 20 秒沒操作回到狀態頁
-  was = down;
 }
 
 // 外環這一格：0 = 還不用畫，1 = 現在畫，2 = 快到了、等面板（這次 loop 不要重畫其他東西）
@@ -403,7 +494,11 @@ void setup() {
 #endif
 
   lcd.init();
-  { Preferences pf; pf.begin("aimon", true); g_rot = pf.getUChar("rot", 0) & 3; pf.end(); }
+  { Preferences pf; pf.begin("aimon", true); g_rot = pf.getUChar("rot", 0) & 3; g_autoRot = pf.getBool("arot", true); pf.end(); }
+#if BOARD_AMOLED
+  sensorsInit();
+  if (g_autoRot) { int o = readOrientation(); if (o >= 0) g_rot = o; }   // 一開機就是擺放的方向
+#endif
   applyRotation();
   lcd.fillScreen(TFT_BLACK);
   lcd.setBrightness(brightness);
@@ -414,8 +509,15 @@ void setup() {
   g_ringLive = BOARD_AMOLED;
   ringInit();
   gaugeInit();
-  band.setColorDepth(16);
-  if (!band.createSprite(W, BAND_H)) { band.setColorDepth(8); band.createSprite(W, BAND_H); }
+#if BOARD_AMOLED
+  // 整張畫面放 PSRAM（466×480×2 ≈ 447 KB）：一條一條畫進去，全部畫好才一次送出 → 換頁、數字更新不會一條一條出現
+  g_fb = (uint16_t*)heap_caps_calloc(W * FB_ROWS, 2, MALLOC_CAP_SPIRAM);
+  if (g_fb) { g_fbSprite.setBuffer(g_fb, W, H, 16); band.setBuffer(g_fb, W, BAND_H, 16); }
+#endif
+  if (!g_fb) {
+    band.setColorDepth(16);
+    if (!band.createSprite(W, BAND_H)) { band.setColorDepth(8); band.createSprite(W, BAND_H); }
+  }
   render();
 }
 
@@ -455,10 +557,28 @@ void loop() {
   // 分成 6 條，每次 loop 只畫一條，中間照常更新呼吸燈 → 呼吸燈不會因為重畫數字而卡住
   static int strip = -1;            // -1 = 沒有在重畫
   static uint32_t stripMs = 0;
+  static bool stripSinceRing = false;   // 上一格外環之後畫過一條了
+#if BOARD_AMOLED
+  imuTick(now);
+  // 整張畫好了：在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送
+  if (g_framePending) {
+    const uint32_t te = micros() - g_teUs;
+    const bool teOk = g_teUs && te < 100000;
+    if (!teOk || te < 2000) {
+      pushFrame(now);
+      g_framePending = false;
+      lastRing = now;
+      stripSinceRing = false;
+      if (millis() - now > g_maxPushMs) g_maxPushMs = millis() - now;
+    }
+    if (millis() - loopStart > g_maxLoopMs) g_maxLoopMs = millis() - loopStart;
+    delay(1);
+    return;
+  }
+#endif
   if (strip < 0 && (dirty || now - lastFull >= (animating() ? 1000u : 5000u))) {
     strip = 0; stripMs = now; lastFull = now; dirty = false; g_anyKeyed = false;
   }
-  static bool stripSinceRing = false;   // 上一格外環之後畫過一條了
   const int ringState = ringFrameState(now, lastRing, strip >= 0 && !stripSinceRing);
   if (ringState == 1) {
     lcd.startWrite();
@@ -476,6 +596,9 @@ void loop() {
     OY = 0;
     if (++strip * BAND_H >= H) {
       strip = -1;
+#if BOARD_AMOLED
+      if (g_fb) g_framePending = true;
+#endif
       if (g_anyKeyed && !ringAnimating()) { lcd.startWrite(); statusRingOn(lcd, 0, millis()); lcd.endWrite(); }   // 靜態外環（完成、待命）
     }
   }

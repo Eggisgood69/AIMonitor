@@ -20,7 +20,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.9.0"
+#define FW_VERSION "1.9.1"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -111,6 +111,41 @@ static uint8_t brightness = BRIGHTNESS;
 static int g_rot = 0;
 static bool dirty = true;
 
+// 螢幕方向。AMOLED 不用面板的硬體旋轉（CO5300 在 90° / 180° / 270° 的定址跟 LovyanGFX 對不上，
+// 外環和小圓點附近會錯位），面板固定 0°，每一條畫好後自己轉向再送（pushBand）；外環是正圓，不用轉
+static void applyRotation() {
+  lcd.setRotation(BOARD_AMOLED ? 0 : g_rot);
+}
+
+#if BOARD_AMOLED
+static uint16_t g_rotBuf[W * BAND_H];   // 轉向後的一條（RGB565，位元組已對調，直接送）
+#endif
+
+// 把 band（第 OY 列起、h 列）送到螢幕；AMOLED 在這裡轉向。位置都是偶數（W、BAND_H、OY 都是偶數）
+static void pushBand() {
+#if BOARD_AMOLED
+  const int h = OY + BAND_H > H ? H - OY : BAND_H;
+  const uint16_t* src = (const uint16_t*)band.getBuffer();
+  if (g_rot == 0 || band.getColorDepth() != 16) { band.pushSprite(0, OY); return; }
+  uint16_t* d = g_rotBuf;
+  if (g_rot == 2) {                       // 180°：(x, y) → (W-1-x, H-1-y)
+    for (int r = 0; r < h; r++)
+      for (int x = 0; x < W; x++) d[(h - 1 - r) * W + (W - 1 - x)] = src[r * W + x];
+    lcd.pushImage(0, H - OY - h, W, h, (const lgfx::swap565_t*)d);
+  } else if (g_rot == 1) {                // 90°（順時針）：(x, y) → (W-1-y, x)
+    for (int r = 0; r < h; r++)
+      for (int x = 0; x < W; x++) d[x * h + (h - 1 - r)] = src[r * W + x];
+    lcd.pushImage(W - OY - h, 0, h, H, (const lgfx::swap565_t*)d);
+  } else {                                // 270°：(x, y) → (y, H-1-x)
+    for (int r = 0; r < h; r++)
+      for (int x = 0; x < W; x++) d[(H - 1 - x) * h + r] = src[r * W + x];
+    lcd.pushImage(OY, 0, h, H, (const lgfx::swap565_t*)d);
+  }
+#else
+  band.pushSprite(0, OY);
+#endif
+}
+
 // 畫一條（OY 那一條，高 BAND_H）並送到螢幕
 static bool g_anyKeyed = false;    // 這一輪有沒有任何一條留空了外環
 static void renderStrip(uint32_t ms) {
@@ -119,7 +154,7 @@ static void renderStrip(uint32_t ms) {
   lcd.startWrite();
   // 外環區域留空（透明），不覆蓋螢幕上正在呼吸的外環 → 不會出現一條一條亮度不同
   if (g_ringKeyed) { band.pushSprite(0, OY, RING_KEY); g_anyKeyed = true; }
-  else band.pushSprite(0, OY);
+  else pushBand();
   lcd.endWrite();
 }
 
@@ -262,7 +297,7 @@ static void handleLine(Stream* src, const String& line) {
     int r = doc["rot"].as<int>() & 3;
     if (r != g_rot) {
       g_rot = r;
-      lcd.setRotation(g_rot);
+      applyRotation();
       lcd.fillScreen(TFT_BLACK);
       Preferences pf; pf.begin("aimon", false); pf.putUChar("rot", g_rot); pf.end();   // 記住，下次開機一插電就是這個方向
     }
@@ -369,7 +404,7 @@ void setup() {
 
   lcd.init();
   { Preferences pf; pf.begin("aimon", true); g_rot = pf.getUChar("rot", 0) & 3; pf.end(); }
-  lcd.setRotation(g_rot);
+  applyRotation();
   lcd.fillScreen(TFT_BLACK);
   lcd.setBrightness(brightness);
   loadFonts();

@@ -62,7 +62,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.10.0、韌體 1.9.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.10.1、韌體 1.9.1（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -85,6 +85,8 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
     外環兩列一組推（`RING_ROWS`，兩列取聯集、每個像素照實際距離查色），sprite 每條 40 列；所以外環也畫進 sprite（`g_ringDirect = false`），不用透明色挖空
   - QSPI 下 LovyanGFX 的 DMA 路徑、以及 **64 位元組以下**的寫入（改塞 SPI 暫存器那條路）都會畫壞：bus `dma_channel = 0`，外環每段加寬到 > 64 位元組（右側 3 點鐘曾有一條暗線）
   - 面板記憶體 472 欄、從第 6 欄開始（`offset_x = 6`）；放開重置後要多等 150 ms 再送初始化（不然偶爾開機全白，`Panel_CO5300_466`）
+  - 螢幕方向**不用面板的硬體旋轉**（MADCTL 交換 / 鏡像後的定址跟 LovyanGFX 對不上，試過偏移 2/4/6/8 都會在外環或小圓點附近錯位）：
+    面板固定 0°，`pushBand` 把每一條轉向後送到對應位置（`applyRotation`、`g_rotBuf`）；外環是正圓、只跟半徑有關，不用轉
   - 外環跟著 TE 腳（GPIO13，60 Hz）寫，避免撕裂；一格外環約 12 ms，重畫中每格外環之後先畫一條（`stripSinceRing`），否則字永遠不更新。
     sprite 裡的外環用螢幕上最後一格的亮度（`g_ringShownMs`），不會一條一條閃
   - 防烙印：文字與小圓點每 2 分鐘在 9 個位置間挪動（`g_shX/g_shY`，最多 2 個設計像素）

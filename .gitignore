@@ -6,4 +6,4 @@ firmware/preview/*.o
 ~$*
 *.SLDBAK
 *.swbak
-enclosure/solidworks/reference/
+enclosure/solidworks/**/reference/

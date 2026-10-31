@@ -9,6 +9,9 @@
 | `*.SLDPRT` / `*.SLDASM` | 原始檔（零件、組合件） | ✓ |
 | `export/` | 從原始檔匯出的列印檔（3MF / STL）與 STEP，每次改完重新匯出覆蓋 | ✓ |
 | `reference/` | 網路下載的參考模型，只放在本機 | ✗（`.gitignore` 排除） |
+| `amoled175/` | 1.75 吋 AMOLED 版外殼，裡面一樣有 `export/`、`reference/`（見 [amoled175/README.md](amoled175/README.md)） | ✓（`reference/` 除外） |
+
+這一層的檔案是 1.28 吋（ESP32-2424S012N）版。
 
 - 檔名用英文小寫，一個零件一個檔，例如 `case.SLDPRT`、`bezel.SLDPRT`；匯出檔跟原始檔同名（`export/case.3MF`）。
 - 建議自己依實物量測畫一個 `board.SLDPRT`（簡化外型就好），用組合件 `assembly.SLDASM` 把板子跟外殼放在一起檢查干涉。

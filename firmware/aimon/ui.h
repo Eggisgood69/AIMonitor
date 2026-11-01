@@ -784,14 +784,14 @@ static void drawTodayPage(uint32_t ms) {
     const Frame::Today& t = f.today[i];
     const Brand& b = BRANDS[t.brand];
     int y = y0 + i * rowH;
-    // 品牌圓點
-    band.fillSmoothCircle(SI(48), y - OY, S(9), b.color);
+    // 品牌圓點（跟字一樣跟著防烙印挪動，字母才會在圓點正中間）
+    band.fillSmoothCircle(SI(48) + g_shX, y + g_shY - OY, S(9), b.color);
     text(b.letter, SI(48), y + SI(1), 0x000000, &fTiny.font);
     // 生成時間長條
-    band.fillSmoothRoundRect(bx, y - SI(4) - OY, bw, SI(8), SI(4), mix(C_BG, b.color, 0.22f));
+    band.fillSmoothRoundRect(bx + g_shX, y - SI(4) + g_shY - OY, bw, SI(8), SI(4), mix(C_BG, b.color, 0.22f));
     int w = (int)((float)bw * t.secs / maxS + 0.5f);
     if (w < SI(8)) w = SI(8);
-    band.fillSmoothRoundRect(bx, y - SI(4) - OY, w, SI(8), SI(4), b.color);
+    band.fillSmoothRoundRect(bx + g_shX, y - SI(4) + g_shY - OY, w, SI(8), SI(4), b.color);
     text(fmtDur(t.secs).c_str(), bx + bw + SI(8), y + SI(1), C_LABEL, &fLabel.font, middle_left);
     char c[20]; snprintf(c, sizeof c, "%d %s", t.count, t.count == 1 ? "REPLY" : "REPLIES");
     text(c, bx, y + SI(15), C_LABEL2, &fTiny.font, middle_left);

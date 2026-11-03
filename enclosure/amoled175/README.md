@@ -1,7 +1,7 @@
 # 1.75 吋 AMOLED 版外殼（SolidWorks，設計中）
 
-給 Waveshare ESP32-S3-Touch-AMOLED-1.75 用的外殼。上一層資料夾是 1.28 吋（ESP32-2424S012N）版，兩塊板子尺寸不同，各畫各的。
-命名與匯出規則跟上一層 [README](../README.md) 一樣。
+給 Waveshare ESP32-S3-Touch-AMOLED-1.75 用的外殼。1.28 吋版在 [`../lcd128/`](../lcd128/)。
+資料夾結構與命名規則見上一層 [README](../README.md)。
 
 | 位置 | 內容 | 公開 |
 |---|---|---|

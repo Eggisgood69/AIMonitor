@@ -18,6 +18,7 @@
 #else
 #include "fonts.h"
 #endif
+#include "logos.h"                 // 三家官方 LOGO 的小圖（firmware/tools/logogen.py 產生）
 #ifndef SAVER_MIN
 #define SAVER_MIN 5
 #endif
@@ -784,9 +785,9 @@ static void drawTodayPage(uint32_t ms) {
     const Frame::Today& t = f.today[i];
     const Brand& b = BRANDS[t.brand];
     int y = y0 + i * rowH;
-    // 品牌圓點（跟字一樣跟著防烙印挪動，字母才會在圓點正中間）
-    band.fillSmoothCircle(SI(48) + g_shX, y + g_shY - OY, S(9), b.color);
-    text(b.letter, SI(48), y + SI(1), 0x000000, &fTiny.font);
+    // 品牌 LOGO（官方圖示；跟字一樣跟著防烙印挪動）
+    if (t.brand < 3) band.pushImage(SI(48) + g_shX - LOGO_N / 2, y + g_shY - LOGO_N / 2 - OY, LOGO_N, LOGO_N, (const lgfx::rgb565_t*)LOGOS[t.brand]);
+    else band.fillSmoothCircle(SI(48) + g_shX, y + g_shY - OY, S(9), b.color);
     // 生成時間長條
     band.fillSmoothRoundRect(bx + g_shX, y - SI(4) + g_shY - OY, bw, SI(8), SI(4), mix(C_BG, b.color, 0.22f));
     int w = (int)((float)bw * t.secs / maxS + 0.5f);

@@ -182,6 +182,7 @@ firmware/aimon-usb-esp32c3.bin  已編譯好的完整韌體，1.28 吋 LCD（從
 firmware/aimon-usb-esp32s3-amoled175.bin  已編譯好的完整韌體，1.75 吋 AMOLED（從 0x0 燒錄）
 firmware/aimon/                 原始碼（aimon.ino 主程式、ui.h 畫面、fonts*.h 字型、config.h 亮度與兩種板子的腳位、sensors.h AMOLED 的觸控與陀螺儀）
 firmware/tools/fontgen.py       重新產生字型（Inter, SIL OFL；`fontgen.py 466` 產生 AMOLED 用的放大版）
+firmware/tools/logogen.py       重新產生今日統計頁的 LOGO 小圖（logos.h，來源是設定視窗的官方 LOGO）
 firmware/preview/               重新產生 README 的預覽圖片（`build-preview.ps1`，開發用）
 windows/AIMonitor.exe           Windows 程式（每台電腦雙擊一次）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）

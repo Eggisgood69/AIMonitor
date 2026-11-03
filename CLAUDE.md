@@ -24,6 +24,7 @@ firmware/aimon/fonts.h     由 firmware/tools/fontgen.py 產生（Inter，SIL OF
 firmware/aimon/fonts466.h  AMOLED 用的放大字型（`fontgen.py 466`）
 firmware/aimon/config.h    兩種板子的腳位、亮度（`#if CONFIG_IDF_TARGET_ESP32S3`）
 firmware/aimon/sensors.h   AMOLED 的觸控、陀螺儀（I2C）
+firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
 firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）
 windows/                   Go 程式（Windows only，WebView2）
   main_windows.go          進入點、設定、序列埠連線（每個埠一條，runScreen）、指令（onCmd）、狀態 JSON（uiStatusJSON）
@@ -64,7 +65,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.14、韌體 1.10.13（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.11.15、韌體 1.10.14（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 

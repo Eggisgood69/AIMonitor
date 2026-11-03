@@ -9,6 +9,17 @@
 | `export/` | 匯出的列印檔（3MF / STL）與 STEP | ✓ |
 | `reference/` | Waveshare 或網路下載的板子 3D 模型，只放在本機 | ✗（`.gitignore` 排除） |
 
+## 爆炸視圖
+
+![爆炸視圖](exploded.png)
+
+| # | 零件 | 檔案 | 備註 |
+|---|---|---|---|
+| 1 | MagSafe 引磁片 | `magsafe_ring.SLDPRT` | 買來的，不用印 |
+| 2 | 螺絲 M2×6 ×3 | — | 買來的 |
+| 3 | 外殼 | `oledcase.SLDPRT` → `export/oledcase.3MF` | 3D 列印 |
+| 4 | 螢幕板（Waveshare ESP32-S3-Touch-AMOLED-1.75） | `reference/`（不公開） | 買來的 |
+
 ## 要量的尺寸
 
 官方模型不一定跟手上的板子完全一樣，畫外殼前用游標卡尺對一下。

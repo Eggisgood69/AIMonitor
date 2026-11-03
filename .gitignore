@@ -2,8 +2,8 @@ build/
 *.ppm
 firmware/preview/*.o
 
-# SolidWorks 開檔時的鎖定檔 / 暫存檔；網路下載的參考模型不公開
+# SolidWorks 開檔時的鎖定檔 / 暫存檔；1.28 吋的參考模型來源不明，不公開（AMOLED 的是 Waveshare 官方模型，公開）
 ~$*
 *.SLDBAK
 *.swbak
-enclosure/*/reference/
+enclosure/lcd128/reference/

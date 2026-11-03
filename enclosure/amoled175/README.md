@@ -7,7 +7,7 @@
 |---|---|---|
 | `*.SLDPRT` / `*.SLDASM` | 原始檔（零件、組合件） | ✓ |
 | `export/` | 匯出的列印檔（3MF / STL）與 STEP | ✓ |
-| `reference/` | Waveshare 或網路下載的板子 3D 模型，只放在本機 | ✗（`.gitignore` 排除） |
+| `reference/` | Waveshare 官方的板子 3D 模型（STEP） | ✓ |
 
 ## 爆炸視圖
 
@@ -17,8 +17,8 @@
 |---|---|---|---|
 | 1 | MagSafe 引磁片 | `magsafe_ring.SLDPRT` | 買來的，不用印 |
 | 2 | 螺絲 M2×6 ×3 | — | 買來的 |
-| 3 | 外殼 | `oledcase.SLDPRT` → `export/oledcase.3MF` | 3D 列印 |
-| 4 | 螢幕板（Waveshare ESP32-S3-Touch-AMOLED-1.75） | `reference/`（不公開） | 買來的 |
+| 3 | 外殼 | `oledcase.SLDPRT` → `export/oledcase.3mf` | 3D 列印 |
+| 4 | 螢幕板（Waveshare ESP32-S3-Touch-AMOLED-1.75） | `reference/ESP32-S3-Touch-AMOLED-1_75.stp` | 買來的 |
 
 ## 要量的尺寸
 

@@ -13,11 +13,11 @@
 |---|---|---|
 | `*.SLDPRT` / `*.SLDASM` | 原始檔（零件、組合件） | ✓ |
 | `export/` | 從原始檔匯出的列印檔（3MF / STL）與 STEP，每次改完重新匯出覆蓋 | ✓ |
-| `reference/` | 網路下載的板子 3D 模型，只放在本機 | ✗（`.gitignore` 排除） |
+| `reference/` | 板子 3D 模型 | 官方模型（amoled175 的 Waveshare STEP）✓；來源不明的網路模型（lcd128）✗，`.gitignore` 排除 |
 
 - 檔名用英文小寫，一個零件一個檔，例如 `case.SLDPRT`、`bezel.SLDPRT`；匯出檔跟原始檔同名（`export/case.3MF`）。
 - 建議自己依實物量測畫一個 `board.SLDPRT`（簡化外型就好），用組合件 `assembly.SLDASM` 把板子跟外殼放在一起檢查干涉。
-  自己畫的板子模型可以公開；用網路下載的模型組起來的組合件可能把對方的模型帶進去，放 `reference/` 比較保險。
+  自己畫的板子模型可以公開；組合件會把用到的板子模型一起存進去，所以只用可以公開的模型組合。
 - SolidWorks 開檔時的鎖定檔 `~$*` 和備份檔已經排除，不會 commit。
 - SolidWorks 檔是二進位檔，git 無法合併或比較差異；改了什麼寫在 commit 訊息裡。
 - 搬動或改名檔案前先在 SolidWorks 關掉它們，組合件會依相對位置找零件，整個資料夾一起搬就不會斷。

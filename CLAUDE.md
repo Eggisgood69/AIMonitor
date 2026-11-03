@@ -38,7 +38,7 @@ windows/                   Go 程式（Windows only，WebView2）
   flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符）
   fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/                 3D 列印外殼（使用者自己用 SolidWorks 畫，設計中），每種螢幕一個資料夾：
-  lcd128/ amoled175/       原始檔、export/ 匯出檔；reference/ 網路下載的參考模型不公開（.gitignore）
+  lcd128/ amoled175/       原始檔、export/ 匯出檔、reference/ 板子參考模型（amoled175 是 Waveshare 官方 STEP，公開；lcd128 的來源不明，.gitignore 排除）
 extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維護）
 ```
 

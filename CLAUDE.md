@@ -8,7 +8,7 @@
 圓形螢幕透過 USB 序列埠，顯示 Claude / ChatGPT / Gemini 的生成狀態（外圈燈號）與額度用量。電腦端是單一執行檔 `AIMonitor.exe`。
 支援兩種螢幕（同一份韌體原始碼，依編譯目標自動選，`config.h`），可以同時接好幾塊，內容一樣：
 - `c3`：ESP32-2424S012N（ESP32-C3、GC9A01 1.28 吋 240×240 LCD，無觸控）
-- `s3a175`：Waveshare ESP32-S3-Touch-AMOLED-1.75（ESP32-S3R8、CO5300 1.75 吋 466×466 AMOLED，QSPI；有用觸控 CST9217、陀螺儀 QMI8658；電池 / 音訊沒用到）
+- `s3a175`：Waveshare ESP32-S3-Touch-AMOLED-1.75（ESP32-S3R8、CO5300 1.75 吋 466×466 AMOLED，QSPI；有用觸控 CST9217、陀螺儀 QMI8658、雙麥克風 ES7210（選用的 USB 麥克風）；電池 / 喇叭沒用到）
 
 - 外圈狀態燈：生成中綠色慢呼吸、完成綠燈恆亮（不要白閃）、需審核黃色快呼吸、錯誤紅色雙閃、待命暗灰
 - 額度環：5 小時額度，下方留 56° 開口，從開口左側順時針增加；每週額度只顯示文字
@@ -24,6 +24,8 @@ firmware/aimon/fonts.h     由 firmware/tools/fontgen.py 產生（Inter，SIL OF
 firmware/aimon/fonts466.h  AMOLED 用的放大字型（`fontgen.py 466`）
 firmware/aimon/config.h    兩種板子的腳位、亮度（`#if CONFIG_IDF_TARGET_ESP32S3`）
 firmware/aimon/sensors.h   AMOLED 的觸控、陀螺儀（I2C）
+firmware/aimon/mic.h       AMOLED 的 USB 麥克風（ES7210 + I2S + 自訂 UAC1 class driver，執行中切 TinyUSB）
+firmware/tools/mic-off.ps1 燒錄前讓麥克風模式的 AMOLED 重開回 hwcdc，輸出新的 COM 埠
 firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
 firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）
 windows/                   Go 程式（Windows only，WebView2）
@@ -56,7 +58,8 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 日常：
 - `./build.ps1`：編譯兩種韌體（`build/firmware/<hw>/`）→ 更新 `windows/fw/` 與 `firmware/aimon-usb-*.bin` → 測試並編譯 `windows/AIMonitor.exe`
-- `./build.ps1 -Flash COM5`：另外直接把韌體燒進螢幕，用 esptool chip_id 自動判斷種類（或 `-Board s3a175`）。先在 AIMonitor 系統匣按「結束程式」，否則序列埠被占用
+- `./build.ps1 -Flash COM5`：另外直接把韌體燒進螢幕，用 esptool chip_id 自動判斷種類（或 `-Board s3a175`）。先在 AIMonitor 系統匣按「結束程式」，否則序列埠被占用。
+  AMOLED 開著麥克風時是另一個埠（PID 81A1），會先用 `mic-off.ps1` 讓它重開回 hwcdc
 - S3 的 FQBN：`esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB`（核心一樣 2.0.9）
 - 只改電腦端：`cd windows; go test ./...; go build -trimpath -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
 - 雙擊新的 AIMonitor.exe 會自動取代執行中的舊版並安裝到 `%LOCALAPPDATA%\AIMonitor`
@@ -65,12 +68,12 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.15、韌體 1.10.14（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.11.16、韌體 1.10.15（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
-電腦 → 螢幕：`{ai, st, msg, p5, pw, r5, rw, age, now, tz, saver, bri, rot, arot, led, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`）
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
+電腦 → 螢幕：`{ai, st, msg, p5, pw, r5, rw, age, now, tz, saver, bri, rot, arot, led, mic, mg, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`；`mic` 只送給 s3a175：1 = 切成 USB 麥克風、0 = 重開回 hwcdc，也可以單獨一行 `{"mic":0}`；`mg` = 麥克風增益 0-14，ES7210 的暫存器值，10 = 30 dB）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -124,6 +127,28 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
     只畫已用的部分、不畫軌道（使用者要的；LCD 維持原樣），用原色（調暗時很暗的顏色會變成一點一點）
   - 額度環查表的距離在 466 用 1/8 px（`GAUGE_DQ`，1/16 會超過 uint8）
   - 待機 / 未連線的暗灰外環在 AMOLED 上看起來偏綠；未連線本來就會灰色慢呼吸（不是錯誤）
+- AMOLED 的 USB 麥克風（mic.h，2026-11 實測，核心 2.0.9 不用升級）：
+  - 平常開機一定是 hwcdc（硬體 USB，韌體當掉也還在；使用者的 AMOLED 裝在殼裡按不到 BOOT）。電腦送 `mic:1` 才在執行中 `USB.begin()` 切 TinyUSB：
+    USBCDC（新 COM 埠，PID 0x81A1）+ 自訂 UAC1 class driver（`usbd_app_driver_get_cb` 弱符號 + `tinyusb_enable_interface(USB_INTERFACE_CUSTOM)`）。
+    開關存在電腦端（settings.json `screens.<id>.mic`），**不要存 NVS**；`mic:0` 用 esp_restart 回 hwcdc。電腦端用 hello 的 `id` 認回同一塊螢幕
+  - ES7210（I2C 0x40）的 **I2C 寫入要 ≤ 50 kHz**：100 / 400 kHz 時每個位元要前一位元也是 1 才寫得進去（讀沒問題，初始化後也一樣）→ 寫的時候暫時 `Wire.setClock(50000)`。
+    要 4 槽 TDM（REG12 = 0x02）：槽 0 = MIC1、槽 2 = MIC2（槽 1 喇叭回授、槽 3 空），標準 I2S 兩聲道讀不到。增益 30 dB：環境 -63 dBFS、講話 -45 dBFS。
+    增益由設定視窗調（`mg`，每塊螢幕各自記住，`micSetGain` 錄音中直接寫 REG43-46）：喇叭播同一段語音 24 dB ≈ -55、30 dB ≈ -49、37.5 dB ≈ -41 dBFS
+  - TinyUSB CDC 預設把 DTR/RTS 切換（關開 COM 埠）當成「重開進燒錄模式」→ 設了 RTC_CNTL_OPTION1 FORCE_DOWNLOAD_BOOT，之後 RTS 重置都停在 `waiting for download`、
+    esptool 的 stub 也跑不起來（`--no-stub` 可以）→ 一定要 `enableReboot(false)`。救法：`esptool --no-stub write_mem 0x6000812C 0` 再 hard_reset
+  - 軟體重開後 RTC_CNTL_USB_CONF（PHY 選擇）與 USB_SERIAL_JTAG_CONF0（上拉）還是 TinyUSB 時的設定（只有斷電清）：只清 PHY 電腦以為還是舊裝置、沒恢復上拉電腦看不到板子，都要拔線。
+    → 切過去前在 RTC_NOINIT 記 magic，開機最前面 `micBootCheck` 看到就關 OTG、D-/D+ 拉低 300 ms 逼重新列舉、照 `usb_phy_ll_int_jtag_enable` 設回（那個標頭檔 C++ 編不過）。
+    重開原因不是 SW（= 當機）就這次開機不再進麥克風（`micx`，避免一直當機重開）
+  - TinyUSB 0.15 的 dcd 不幫 ISO IN 設奇偶 frame、也不處理錯過的同步封包（DWC2 一直掛著，串流整個停住）。沒畫面的測試韌體剛好每 2 ms 一包，
+    正式韌體推 QSPI 時常錯過（錄 10 秒只拿到 1.7 秒、或完全卡住）→ 送之前設下一個 frame 的奇偶、`micUsbWatch` 4 ms 沒送出就停用端點 + 清 FIFO + `dcd_event_xfer_complete(FAILED)`；
+    每包送「距離上一包的時間」那麼多格再依緩衝水位微調。`USB.begin()` 要在 core 0 的任務裡呼叫（中斷配置在呼叫的 core，core 1 的 loop 推畫面會拖延它）
+  - 那個 dcd 也**沒有 `dcd_edpt_close`**（`usbd_edpt_close` 什麼都不做），每次 `usbd_edpt_open` 又多配置一塊 TX FIFO：
+    每次開始錄音（SET_INTERFACE alt 1）就重開端點的話，第一次正常、第二次起一半封包錯過、電腦收不到任何資料，序列埠也會卡住（使用者用 Win+H 時遇到）。
+    → ISO 端點只開一次（bus reset 前不再開），停止錄音（alt 0）時用 `uacAbort` 停掉掛著的那包；看門狗、切 alt、排封包共用 `g_uacLock`
+  - 麥克風模式下序列埠偶爾掉一行（約每分鐘 1 行，紀錄 `screen dropped data`，原因沒查清楚），下一張畫面就補上
+  - Arduino 的函式原型產生器會弄壞 `extern "C" usbd_class_driver_t const* f()`，要寫成 `extern "C" { const usbd_class_driver_t* f() … }`
+  - 一鍵更新：目標在麥克風模式時先強制送 `mic:0`（`fwMicOff`），等同一個 id 從 hwcdc 的埠回應再燒（`micOffForUpdate`）
+  - 切過去後 Windows 要約 10 秒才把麥克風放進 waveIn 清單；安靜時錄到 -90 dB（板上量到 -63），應該是 Windows 的麥克風增強
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）

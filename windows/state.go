@@ -62,6 +62,8 @@ type Frame struct {
 	Rot   int             `json:"rot"`            // 螢幕方向 0-3（×90°）
 	ARot  int             `json:"arot"`           // 1 = 有陀螺儀的螢幕（AMOLED）自動轉向，不理 rot
 	Led   int             `json:"led"`            // 外接 WS2812 亮度 0-100（0 = 關閉）
+	Mic   *int            `json:"mic,omitempty"`  // AMOLED 的 USB 麥克風：1 = 開、0 = 關（螢幕重開回一般 USB）；其他螢幕不送
+	MG    *int            `json:"mg,omitempty"`   // 麥克風增益 0-14（ES7210，10 = 30 dB），只送給 AMOLED
 	D     [][]interface{} `json:"d,omitempty"`    // 今日統計 [[ai, 次數, 秒數], ...]
 	Note  string          `json:"note,omitempty"` // 額度重置提醒（螢幕上的短字）
 	NK    string          `json:"nk,omitempty"`   // soon / reset

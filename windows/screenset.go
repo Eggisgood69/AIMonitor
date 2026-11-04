@@ -9,7 +9,12 @@ type ScreenSet struct {
 	Rot  *int  `json:"rot,omitempty"`
 	Led  *int  `json:"led,omitempty"`
 	ARot *bool `json:"arot,omitempty"`
+	Mic  *bool `json:"mic,omitempty"` // USB 麥克風（只有 AMOLED 有），沒有共用值：沒設過 = 關閉
+	MG   *int  `json:"mg,omitempty"`  // 麥克風增益（ES7210 的 0-14，見 micGainDefault），沒設過 = 預設
 }
+
+// 麥克風增益預設 10 = 30 dB（0-10 每階 3 dB，11 = 33、12 = 34.5、13 = 36、14 = 37.5 dB）
+const micGainDefault = 10
 
 // 一塊螢幕實際用的值
 type screenEff struct {
@@ -17,6 +22,8 @@ type screenEff struct {
 	Rot  int  `json:"rot"`
 	Led  int  `json:"led"`
 	ARot bool `json:"arot"`
+	Mic  bool `json:"mic"`
+	MG   int  `json:"mg"`
 }
 
 // 共用值 d 套上這塊螢幕自己的設定
@@ -36,11 +43,17 @@ func (d screenEff) with(s *ScreenSet) screenEff {
 	if s.ARot != nil {
 		d.ARot = *s.ARot
 	}
+	if s.Mic != nil {
+		d.Mic = *s.Mic
+	}
+	if s.MG != nil {
+		d.MG = *s.MG
+	}
 	return d
 }
 
 // 設定一塊螢幕的一個項目（設定視窗的 scr:<key>:<項目>:<值>）。值不合法就不改、回傳 false。
-// bri：5-255；led：0-100；rot：0-3 或 auto（自動轉向，只有 AMOLED 有用；選固定方向時關掉自動轉向）
+// bri：5-255；led：0-100；rot：0-3 或 auto（自動轉向，只有 AMOLED 有用；選固定方向時關掉自動轉向）；mic：0 / 1；mg：0-14
 func applyScreenSetting(m map[string]*ScreenSet, key, k, v string) bool {
 	if key == "" {
 		return false
@@ -58,6 +71,11 @@ func applyScreenSetting(m map[string]*ScreenSet, key, k, v string) bool {
 	case k == "rot" && v == "auto":
 		t := true
 		s.ARot = &t
+	case k == "mg" && err == nil && n >= 0 && n <= 14:
+		s.MG = &n
+	case k == "mic" && (v == "0" || v == "1"):
+		on := v == "1"
+		s.Mic = &on
 	case k == "rot" && err == nil && n >= 0 && n <= 3:
 		f := false
 		s.Rot, s.ARot = &n, &f

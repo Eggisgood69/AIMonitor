@@ -34,7 +34,46 @@ var (
 	fwProgress int
 	fwMsg      string
 	fwErr      string
+	fwMicOff   = map[string]bool{} // 更新中的螢幕（key）：麥克風先關掉
 )
+
+func micHeldOff(key string) bool {
+	fwMu.Lock()
+	defer fwMu.Unlock()
+	return fwMicOff[key]
+}
+
+func setMicHeldOff(key string, off bool) {
+	fwMu.Lock()
+	if off {
+		fwMicOff[key] = true
+	} else {
+		delete(fwMicOff, key)
+	}
+	fwMu.Unlock()
+}
+
+// 螢幕在麥克風模式（TinyUSB）時燒錄協定進不去：先叫它關掉麥克風、重開回一般 USB（埠會換一個），
+// 等同一塊螢幕（同一個 id）從一般 USB 的埠回應了，再對那個埠燒錄
+func micOffForUpdate(target serialStatus) (serialStatus, error) {
+	key := target.Key()
+	setMicHeldOff(key, true)
+	setFw(1, "關閉麥克風，等螢幕重新開機…")
+	logf("firmware update: turning off mic on %s first", target.Port)
+	sendFrameNow()
+	for i := 0; i < 60; i++ {
+		time.Sleep(500 * time.Millisecond)
+		for _, s := range screenList() {
+			if s.Key() == key && s.Verified && !s.Mic {
+				return s, nil
+			}
+		}
+		if i%10 == 9 {
+			sendFrameNow()
+		}
+	}
+	return target, errors.New("螢幕沒有從麥克風模式回來，請拔掉 USB 再插上後重試")
+}
 
 func fwPausedPort() string {
 	fwMu.Lock()
@@ -110,6 +149,12 @@ func doFirmwareUpdate(port string) error {
 	target, err := pickFirmwareTarget(port, screenList())
 	if err != nil {
 		return err
+	}
+	if target.Mic {
+		defer setMicHeldOff(target.Key(), false) // 更新完螢幕重開，照設定再開麥克風
+		if target, err = micOffForUpdate(target); err != nil {
+			return err
+		}
 	}
 	img := fwImages[target.Board()]
 	if len(img) == 0 {

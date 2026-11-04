@@ -30,8 +30,22 @@ func TestScreenSettings(t *testing.T) {
 		t.Fatalf("auto rotation = %+v", got)
 	}
 
+	// 麥克風：沒有共用值，沒設過 = 關閉；每塊各自記住
+	if def.with(m["a"]).Mic {
+		t.Fatal("mic should default to off")
+	}
+	if !applyScreenSetting(m, "a", "mic", "1") || !def.with(m["a"]).Mic || def.with(m["b"]).Mic {
+		t.Fatalf("mic on: a=%+v b=%+v", def.with(m["a"]), def.with(m["b"]))
+	}
+	if !applyScreenSetting(m, "a", "mic", "0") || def.with(m["a"]).Mic {
+		t.Fatal("mic off")
+	}
+	if !applyScreenSetting(m, "a", "mg", "13") || def.with(m["a"]).MG != 13 || def.with(m["b"]).MG != def.MG {
+		t.Fatalf("mic gain: a=%+v b=%+v", def.with(m["a"]), def.with(m["b"]))
+	}
+
 	// 不合法的值不改
-	for _, c := range [][3]string{{"a", "bri", "3"}, {"a", "led", "101"}, {"a", "rot", "4"}, {"a", "x", "1"}, {"", "bri", "50"}} {
+	for _, c := range [][3]string{{"a", "bri", "3"}, {"a", "led", "101"}, {"a", "rot", "4"}, {"a", "x", "1"}, {"", "bri", "50"}, {"a", "mic", "2"}, {"a", "mg", "15"}, {"a", "mg", "-1"}} {
 		if applyScreenSetting(m, c[0], c[1], c[2]) {
 			t.Fatalf("apply %v should fail", c)
 		}

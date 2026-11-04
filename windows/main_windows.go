@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.11.15"
+const version = "1.11.16"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -328,10 +328,12 @@ type serialStatus struct {
 	Connected bool   `json:"connected"`
 	Port      string `json:"port"`
 	Verified  bool   `json:"verified"`
-	FW        string `json:"fw"` // 螢幕回報的韌體版本（舊版不會回報）
-	HW        string `json:"hw"` // 板子型號（韌體 1.9.0 起回報；沒有 = c3）
-	ID        string `json:"id"` // 晶片 MAC（韌體 1.10.6 起回報），每塊螢幕的設定用它當 key
-	RX        int    `json:"rx"` // 從螢幕收到的位元組數（除錯用）
+	FW        string `json:"fw"`   // 螢幕回報的韌體版本（舊版不會回報）
+	HW        string `json:"hw"`   // 板子型號（韌體 1.9.0 起回報；沒有 = c3）
+	ID        string `json:"id"`   // 晶片 MAC（韌體 1.10.6 起回報），每塊螢幕的設定用它當 key
+	Mic       bool   `json:"mic"`  // AMOLED 正在當 USB 麥克風（這時的埠是麥克風模式的 COM 埠，跟平常不同）
+	MicX      bool   `json:"micx"` // 上次在麥克風模式下當機重開：這次開機螢幕不肯再進麥克風模式
+	RX        int    `json:"rx"`   // 從螢幕收到的位元組數（除錯用）
 }
 
 // 板子型號：舊韌體不回報，當作原本的 C3 螢幕
@@ -679,6 +681,13 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		if id, ok := m["id"].(string); ok {
 			sc.stat.ID = id
 		}
+		mic, micx := m["mic"] == 1.0, m["micx"] == 1.0
+		if mic != sc.stat.Mic || micx != sc.stat.MicX {
+			if mic || micx || sc.stat.Mic {
+				logf("%s: screen mic=%v blocked=%v", sc.stat.Port, mic, micx)
+			}
+			sc.stat.Mic, sc.stat.MicX = mic, micx
+		}
 		port := sc.stat.Port
 		serMu.Unlock()
 		if _, ok := m["up"]; ok { // 韌體 1.7.2 起才有
@@ -724,7 +733,7 @@ func defaultScreenEff() screenEff {
 	if b < 5 {
 		b = 160
 	}
-	return screenEff{Bri: b, Rot: settings.Rotation & 3, Led: settings.Led, ARot: !settings.NoAutoRot}
+	return screenEff{Bri: b, Rot: settings.Rotation & 3, Led: settings.Led, ARot: !settings.NoAutoRot, MG: micGainDefault}
 }
 
 func screenEffFor(key string) screenEff {
@@ -736,13 +745,13 @@ func screenEffFor(key string) screenEff {
 // 同一張畫面送給每塊螢幕，各自換上自己的方向 / 亮度 / LED
 func queueFrameEach(f Frame) {
 	type target struct {
-		sc  *screenConn
-		key string
+		sc         *screenConn
+		key, board string
 	}
 	serMu.Lock()
 	ts := make([]target, 0, len(screens))
 	for _, sc := range screens {
-		ts = append(ts, target{sc, sc.stat.Key()})
+		ts = append(ts, target{sc, sc.stat.Key(), sc.stat.Board()})
 	}
 	serMu.Unlock()
 	for _, t := range ts {
@@ -751,6 +760,16 @@ func queueFrameEach(f Frame) {
 		g.Bri, g.Rot, g.Led, g.ARot = e.Bri, e.Rot, e.Led, 0
 		if e.ARot {
 			g.ARot = 1
+		}
+		// 麥克風只有 AMOLED 有；一鍵更新前先關掉（螢幕重開回一般 USB 才能燒錄）
+		if t.board == "s3a175" {
+			mic := 0
+			if e.Mic && !micHeldOff(t.key) {
+				mic = 1
+			}
+			g.Mic = &mic
+			mg := e.MG
+			g.MG = &mg
 		}
 		b, _ := json.Marshal(g)
 		enqueue(t.sc, append(b, '\n'))

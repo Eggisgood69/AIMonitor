@@ -332,7 +332,7 @@
     if (sig !== scrSig) {
       scrSig = sig;
       const pick = scr.length > 1
-        ? `<div class="row sw"><div>調整哪塊螢幕<div class="hint">每塊螢幕的方向、亮度、外接 LED 各自記住</div></div>
+        ? `<div class="row sw"><div>調整哪塊螢幕<div class="hint">每塊螢幕的方向、亮度、外接 LED、麥克風各自記住</div></div>
             <select id="scrpick">${scr.map((x) => `<option value="${x.key}">${BOARD[x.hw || "c3"] || x.hw}（${x.port}）</option>`).join("")}</select></div>`
         : "";
       box.innerHTML = scr.length ? pick + scr.map((x) => {
@@ -346,7 +346,13 @@
           <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
           <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，${pin}，跟外圈燈號同步</div></div>
             <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
-              <option value="50">亮</option><option value="100">最亮</option></select></div></div>`;
+              <option value="50">亮</option><option value="100">最亮</option></select></div>
+          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint">開啟後電腦多一支 USB 麥克風「AIMonitor Mic」（板上兩顆），可以用 Win+H 語音輸入、Claude App 語音模式。開啟、關閉時螢幕會重新連線（關閉要重新開機）</div>
+              <div class="hint bad" data-micx="${k}" style="display:none">上次開著麥克風時螢幕當機重開，這次先不開；拔掉 USB 再插上後會再試</div></div>
+            <select data-scr="${k}" data-k="mic"><option value="0">關閉</option><option value="1">開啟</option></select></div>
+          <div class="row sw"><div>麥克風增益<div class="hint">收音太小聲就調高，有雜音或爆音就調低；馬上生效</div></div>
+            <select data-scr="${k}" data-k="mg"><option value="8">24 dB</option><option value="9">27 dB</option><option value="10">30 dB（預設）</option>
+              <option value="11">33 dB</option><option value="13">36 dB</option><option value="14">37.5 dB</option></select></div>` : ""}</div>`;
       }).join("") : `<div class="row"><div class="muted">插上螢幕後，可以在這裡設定螢幕的方向、亮度、外接 LED</div></div>`;
       const pk = document.getElementById("scrpick");
       if (pk) pk.onchange = (e) => { scrSel = e.target.value; renderScreenSettings(scr, BOARD); };
@@ -356,9 +362,13 @@
     for (const b of box.querySelectorAll("[data-blk]")) b.style.display = b.dataset.blk === scrSel ? "" : "none";
     for (const x of scr) {
       const set = x.set || {};
+      const mx = box.querySelector(`[data-micx="${x.key}"]`);
+      if (mx) mx.style.display = x.micx && set.mic ? "" : "none";
       for (const el of box.querySelectorAll(`[data-scr="${x.key}"]`)) {
         if (document.activeElement === el) continue;
         let v = el.dataset.k === "rot" ? (set.arot && x.hw === "s3a175" ? "auto" : String(set.rot & 3))
+          : el.dataset.k === "mic" ? (set.mic ? "1" : "0")
+          : el.dataset.k === "mg" ? String(set.mg ?? 10)
           : String(el.dataset.k === "bri" ? set.bri || 160 : set.led || 0);
         if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === v)) el.add(new Option(v + "%", v));
         el.value = v;

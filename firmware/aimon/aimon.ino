@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.14"
+#define FW_VERSION "1.10.15"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -152,6 +152,7 @@ static void applyRotation() {
 static uint16_t* g_fb = nullptr;        // AMOLED：整張畫面（PSRAM）。nullptr = 一條一條畫、畫好一條就送（C3）
 #if BOARD_AMOLED
 #include "sensors.h"
+#include "mic.h"
 static const int FB_ROWS = (H + BAND_H - 1) / BAND_H * BAND_H;   // 最後一條也是 BAND_H 列，不會寫出界
 static LGFX_Sprite g_fbSprite(&lcd);    // 整張畫面（外環畫進去用）
 static bool g_framePending = false;     // 整張畫好了，等 TE 送出
@@ -373,9 +374,14 @@ static void sendHello(Stream* src) {
            (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu}",
+  // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
-           g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap);
+           g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
+           g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain);
+  g_uacPkts = 0;
+  g_uacMiss = 0;
+  g_uacMaxGap = 0;
   g_teN = 0;
   g_maxRoamGap = 0;
 #endif
@@ -392,6 +398,14 @@ static void handleLine(Stream* src, const String& line) {
     return;
   }
   if (doc["bright"].is<int>()) brightness = doc["bright"].as<int>();
+#if BOARD_AMOLED
+  // 麥克風（電腦端的開關，跟畫面一起送；也可以單獨一行 {"mic":0}）：1 = 切成 USB 麥克風、0 = 重開回 hwcdc
+  if (doc["mg"].is<int>()) micSetGain(doc["mg"].as<int>());   // 麥克風增益（先設，開麥克風時才用得到）
+  if (doc["mic"].is<int>()) {
+    if (!doc["mic"].as<int>()) micLeave();
+    else if (!g_micOn && micEnter()) lastSource = micStream();   // 之後改從新的 COM 埠收送（loop 換掉 rdUsb）
+  }
+#endif
   if (!doc["st"].is<const char*>()) return;
 
   Frame f;
@@ -787,6 +801,9 @@ static int ringFrameState(uint32_t now, uint32_t lastRing, bool stripWaiting) {
 }
 
 void setup() {
+#if BOARD_AMOLED
+  micBootCheck();   // 從麥克風模式重開：先把 USB 交回 hwcdc
+#endif
   // 一行畫面資料約 400-600 位元組，預設接收緩衝只有 256：畫一條畫面的期間沒人讀，滿了後面就被丟掉 → 那行解析失敗
   Serial.setRxBufferSize(2048);
   Serial.begin(115200);
@@ -839,6 +856,10 @@ void setup() {
 
 void loop() {
   const uint32_t loopStart = millis();
+#if BOARD_AMOLED
+  if (g_micOn && rdUsb.s != micStream()) rdUsb.s = micStream();
+  micTick(loopStart);
+#endif
   pollReader(rdUsb);
 #if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0
   if (!g_ledPin) pollReader(rdUart);

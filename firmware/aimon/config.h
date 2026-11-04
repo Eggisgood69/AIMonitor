@@ -47,6 +47,13 @@
 // 外接 WS2812（單顆，選用）：DIN 接排座的 GPIO16，電源接 3.3V / GND
 #define PIN_LED        16
 
+// 板上的雙麥克風（mic.h，電腦端開了「麥克風」才用）：ES7210 錄音晶片，I2C 跟觸控共用
+#define I2C_ES7210     0x40
+#define PIN_I2S_MCLK   42
+#define PIN_I2S_BCLK   9
+#define PIN_I2S_WS     45
+#define PIN_I2S_DIN    10   // ES7210 的 SDOUT（TDM）
+
 #else
 // ---------------- ESP32-2424S012（ESP32-C3）----------------
 #define BOARD_ID       "c3"

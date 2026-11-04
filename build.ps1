@@ -53,6 +53,8 @@ if (-not $AppOnly) {
   Write-Host "韌體 $ver 已內建到 windows\fw\" -ForegroundColor Green
 
   if ($Flash) {
+    # AMOLED 開著麥克風時是另一個 COM 埠（TinyUSB），燒錄不了：先讓它重開回一般 USB
+    $Flash = & (Join-Path $root 'firmware\tools\mic-off.ps1') $Flash
     if (-not $Board) {
       # 讀晶片型號，選對的韌體（燒錯晶片的韌體 esptool 也會拒絕，但先判斷比較清楚）
       if (-not $esptool) { throw '找不到 esptool，請用 -Board 指定螢幕種類（c3 / s3a175）' }

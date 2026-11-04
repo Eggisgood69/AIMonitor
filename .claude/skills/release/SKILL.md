@@ -51,6 +51,8 @@ git diff --stat HEAD   # 再加上尚未 commit 的改動
    ```powershell
    Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match '\(COM\d+\)' } | Select-Object Name, PNPDeviceID
    ```
+   AMOLED 開著麥克風時是 `VID_303A&PID_81A1`（TinyUSB，燒錄協定進不去）：結束 AIMonitor 後先 `$port = ./firmware/tools/mic-off.ps1 COMx`，
+   它會讓螢幕重開回一般 USB（`PID_1001`）並輸出新的埠，用那個埠燒錄。燒完啟動 AIMonitor 會照設定再打開麥克風。
 2. 請執行中的 AIMonitor 正常結束（跟系統匣「結束程式」同一個事件，會存好狀態；不要直接砍程序），否則序列埠被占用：
    ```powershell
    $ev = $null

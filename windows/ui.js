@@ -54,7 +54,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: #000; color: #f5f5f7; font: 14px/1.5 -apple-system, "Segoe UI Variable", "Segoe UI", "Microsoft JhengHei UI", sans-serif; -webkit-user-select: none; user-select: none; }
   main { padding: 22px 20px 28px; max-width: 520px; margin: 0 auto; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
   .logo { width: 40px; height: 40px; border-radius: 50%; border: 3px solid #30d158; display: grid; place-items: center; }
   .logo::after { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 3px solid #f0855a; }
   h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
@@ -66,9 +66,9 @@
                              radial-gradient(460px 360px at 85% 65%, rgba(240,133,90,.05), transparent 70%); }
   .card { background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
           -webkit-backdrop-filter: blur(40px) saturate(140%); backdrop-filter: blur(40px) saturate(140%);
-          border: 0.5px solid rgba(255,255,255,.09); border-radius: 18px; padding: 4px 16px; margin-bottom: 14px;
+          border: 0.5px solid rgba(255,255,255,.09); border-radius: 18px; padding: 2px 16px; margin-bottom: 12px;
           box-shadow: inset 0 0.5px 0 rgba(255,255,255,.14), 0 8px 24px rgba(0,0,0,.35); }
-  .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
   .row:last-child { border-bottom: 0; }
   .k { color: #98989f; width: 92px; flex: none; }
   .k.ai { display: flex; align-items: center; gap: 8px; }
@@ -82,7 +82,7 @@
   button.primary { background: #0a84ff; color: #fff; }
   button:hover { filter: brightness(1.15); }
   .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-  .items .it { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .items .it { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
   .items .it:last-child { border-bottom: 0; }
   .muted { color: #6e6e73; }
   details { margin-top: 6px; color: #8e8e93; font-size: 12px; }
@@ -108,10 +108,20 @@
   .week .col.today .lbl { color: #f5f5f7; font-weight: 600; }
   .ok { color: #30d158; } .bad { color: #ff453a; }
   footer { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 8px; }
+  .tabs { display: flex; gap: 2px; padding: 2px; margin-bottom: 14px; border-radius: 10px; background: #1c1c1e; }
+  .tabs button { flex: 1; padding: 6px 0; border-radius: 8px; background: transparent; color: #98989f; font-weight: 600; }
+  .tabs button.on { background: #3a3a3c; color: #f5f5f7; }
+  [data-pane] { display: none; }
+  details.list { margin: 0; color: inherit; font-size: inherit; }
+  details.list summary { padding: 11px 0; cursor: pointer; color: #c7c7cc; }
+  details.list[open] summary { border-bottom: 1px solid rgba(255,255,255,.08); }
+  [data-pane].on { display: block; }
 </style></head>
 <body><main>
   <header><div class="logo"></div><div><h1>AI 狀態指示燈</h1><div class="ver" id="ver"></div></div></header>
+  <nav class="tabs"><button data-tab="status">狀態</button><button data-tab="stats">統計</button><button data-tab="settings">設定</button></nav>
 
+  <section data-pane="status">
   <div class="card">
     <div class="row"><div class="k">螢幕</div><div class="v" id="serial"></div></div>
     <div class="row"><div class="k">韌體</div><div class="v" id="fw"></div></div>
@@ -124,24 +134,28 @@
     <div class="row"><div class="k ai">${LOGOS.gemini}Gemini</div><div class="v" id="q_gemini"></div></div>
   </div>
 
-  <div class="card" id="stats"></div>
-
   <div class="card items" id="items"></div>
+  </section>
 
+  <section data-pane="stats">
+  <div class="card" id="stats"></div>
+  </section>
+
+  <section data-pane="settings">
   <div class="card">
-    <div class="row sw"><div>螢幕保護<div class="hint">待命一段時間後顯示時鐘並調暗</div></div>
+    <div class="row sw"><div>螢幕保護<div class="hint">待命後顯示時鐘並調暗</div></div>
       <select id="saver">
         <option value="0">關閉</option><option value="1">1 分鐘</option><option value="3">3 分鐘</option>
         <option value="5">5 分鐘</option><option value="10">10 分鐘</option><option value="15">15 分鐘</option>
         <option value="30">30 分鐘</option><option value="60">1 小時</option>
       </select></div>
-    <div class="row sw"><div>額度重置提醒<div class="hint">用量達到門檻後，重置前 5 分鐘和重置時通知你<br><a href="#" data-cmd="toast-test" style="color:#0a84ff;text-decoration:none">測試通知</a></div></div>
+    <div class="row sw"><div>額度重置提醒<div class="hint">重置前 5 分鐘與重置時通知 · <a href="#" data-cmd="toast-test" style="color:#0a84ff;text-decoration:none">測試</a></div></div>
       <select id="remind">
         <option value="0">關閉</option><option value="50">用量 ≥ 50%</option><option value="80">用量 ≥ 80%</option>
         <option value="90">用量 ≥ 90%</option><option value="100">用完時</option>
       </select></div>
     <div id="scrset"></div>
-    <div class="row sw"><div>連接 Claude Code<div class="hint">終端機的 Agent 模式也會亮燈（生成中、等你允許、完成）。<br>會在 Claude Code 設定檔加入通知設定，修改前自動備份。</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
+    <div class="row sw"><div>連接 Claude Code<div class="hint">Agent 也會亮燈；修改 Claude Code 設定檔前會先備份</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
   </div>
 
@@ -150,8 +164,20 @@
     <button id="hide">隱藏視窗</button>
     <button id="quit">結束程式</button>
   </div>
-  <footer>關閉視窗只是隱藏，程式會繼續在背景執行。<br>點右下角系統匣的圓形圖示（或再次雙擊 AIMonitor）就能打開這個視窗。<div class="copy" id="copy"></div></footer>
+  <div class="items" id="dbgbox"></div>
+  </section>
+  <footer>關閉視窗只會隱藏，程式繼續在背景執行（系統匣的圓形圖示可以再打開）<div class="copy" id="copy"></div></footer>
 </main></body>`;
+    const showTab = (t) => {
+      if (!document.querySelector(`[data-pane="${t}"]`)) t = "status";
+      for (const el of document.querySelectorAll("[data-tab]")) el.classList.toggle("on", el.dataset.tab === t);
+      for (const el of document.querySelectorAll("[data-pane]")) el.classList.toggle("on", el.dataset.pane === t);
+      try { localStorage.setItem("aimonTab", t); } catch (_) {}
+    };
+    for (const el of document.querySelectorAll("[data-tab]")) el.onclick = () => showTab(el.dataset.tab);
+    let tab = "status";
+    try { tab = localStorage.getItem("aimonTab") || tab; } catch (_) {}
+    showTab(tab);
     document.getElementById("demo").onclick = () => window.aimonCmd("demo");
     document.getElementById("hide").onclick = () => window.aimonCmd("hide");
     document.getElementById("quit").onclick = () => { if (confirm("結束後螢幕會停止更新，確定要結束嗎？")) window.aimonCmd("quit"); };
@@ -244,7 +270,7 @@
         el.innerHTML = `${label} <b>${Math.round(main)}%</b>${left ? `<span class="muted"> · ${left}後重置</span>` : ""}
           <div class="bar"><i style="width:${Math.min(100, main)}%"></i></div>
           ${q.p5 >= 0 && q.pw >= 0 ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}
-          ${ai === "chatgpt" ? `<div class="hint">這是 Codex 的用量；ChatGPT 聊天也有上限，但 OpenAI 不公開剩餘量</div>` : ""}`;
+          ${ai === "chatgpt" ? `<div class="hint">Codex 的用量（ChatGPT 聊天的上限不公開）</div>` : ""}`;
       } else if (p.login === "out") {
         el.innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入
           <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="login:${ai}">登入 ${name}</button></div>`;
@@ -285,17 +311,19 @@
     // Claude Code 對話、Claude App 背景對話（app:claude:bg:）用對話名稱
     const name = (it) => it.key.startsWith("cc:") || it.key.includes(":bg:") ? esc((it.buttons || [])[0] || "Claude Code") : (NAMES[it.ai] || it.ai);
     const dbgOpen = !!($("dbg") && $("dbg").open);   // 每次重畫都會重建：記住除錯資訊是否展開
+    const listOpen = !!($("itemlist") && $("itemlist").open);
+    const busy = items.filter((it) => it.st !== "idle").length;
     $("items").innerHTML = items.length
-      ? items.map((it) => {
+      ? `<details class="list" id="itemlist"${listOpen ? " open" : ""}><summary>偵測到的對話 ${items.length} 個${busy ? `<span class="muted"> · ${busy} 個進行中或待處理</span>` : ""}</summary>` + items.map((it) => {
           const [src] = it.key.split(":");
           return `<div class="it"><span class="dot" style="background:${COL[it.st]}"></span>${name(it)}
             <span class="muted">· ${SRC[src] || src}${it.focused ? " · 前景" : ""}</span> — ${ST[it.st] || it.st}</div>`;
-        }).join("")
+        }).join("") + `</details>`
       : `<div class="it muted">目前沒有偵測到 AI App 或 AI 網頁。<br>打開 Claude 桌面 App，或在瀏覽器切到 claude.ai / chatgpt.com / gemini.google.com 分頁。</div>`;
     // 除錯資訊集中在最下面一個：畫面偵測的狀態 + 每個項目讀到的按鈕（Claude Code 沒有按鈕，不列）
     const btns = items.filter((it) => !it.key.startsWith("cc:") && !it.key.includes(":bg:"))
       .map((it) => `${name(it)}：${(it.buttons || []).map(esc).join(" | ") || "（沒有）"}`);
-    $("items").innerHTML += `<details id="dbg" style="padding:8px 0 10px"${dbgOpen ? " open" : ""}><summary>除錯資訊</summary>
+    $("dbgbox").innerHTML = `<details id="dbg" style="padding:8px 0 10px"${dbgOpen ? " open" : ""}><summary>除錯資訊</summary>
       <code>${esc(s.monitor || "偵測程式尚未回報")}${btns.length ? "<br><br>偵測到的按鈕<br>" + btns.join("<br>") : ""}</code></details>`;
 
     renderStats(s);
@@ -341,7 +369,7 @@
           [0, 1, 2, 3].map((r) => `<option value="${r}">${r * 90}°</option>`).join("");
         const pin = amoled ? "DIN 接排座的 GPIO16" : "DIN 接背面排座的 RX 腳";
         return `<div data-blk="${k}">
-          <div class="row sw"><div>螢幕方向<div class="hint">${amoled ? "自動：依板上的陀螺儀把畫面轉正，平放時維持原本的方向" : "依擺放方式選到畫面是正的為止，螢幕會馬上轉過去"}</div></div>
+          <div class="row sw"><div>螢幕方向<div class="hint">${amoled ? "自動：依擺放方向轉正，平放時不轉" : "選到畫面是正的為止"}</div></div>
             <select data-scr="${k}" data-k="rot">${rot}</select></div>
           <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
           <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，${pin}，跟外圈燈號同步</div></div>

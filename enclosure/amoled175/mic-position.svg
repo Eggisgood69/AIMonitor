@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -40 80 86" width="560" height="602" font-family="sans-serif">
+  <!-- 從背面看（螢幕朝下），1 單位 = 1 mm；座標取自 Waveshare 官方 STEP（reference/ESP32-S3-Touch-AMOLED-1_75.stp） -->
+  <rect x="-40" y="-40" width="80" height="86" fill="#fff"/>
+  <circle cx="0" cy="0" r="23" fill="#2f6b3a" stroke="#1d4426" stroke-width="0.4"/>
+  <circle cx="0" cy="0" r="0.6" fill="#fff"/>
+  <!-- 側邊按鍵（板子邊緣） -->
+  <rect x="21.5" y="8.7" width="2.6" height="8.4" fill="#bbb" stroke="#555" stroke-width="0.3"/>
+  <text x="25.5" y="14" font-size="3" fill="#333">按鍵</text>
+  <!-- 麥克風（背面，高約 1 mm） -->
+  <rect x="-19.4" y="-13.9" width="4.1" height="4.3" fill="#f2c94c" stroke="#7a5c00" stroke-width="0.3"/>
+  <rect x="-19.5" y="8.8" width="4.0" height="4.3" fill="#f2c94c" stroke="#7a5c00" stroke-width="0.3"/>
+  <text x="-14" y="-10.7" font-size="3" fill="#fff">MIC2</text>
+  <text x="-14" y="12" font-size="3" fill="#fff">MIC1</text>
+  <line x1="0" y1="0" x2="-17.4" y2="-11.7" stroke="#fff" stroke-width="0.2" stroke-dasharray="1 1"/>
+  <line x1="0" y1="0" x2="-17.5" y2="11" stroke="#fff" stroke-width="0.2" stroke-dasharray="1 1"/>
+  <text x="0" y="31" font-size="3.2" text-anchor="middle" fill="#222">從背面看（螢幕朝下），按鍵在右邊</text>
+  <text x="0" y="35.5" font-size="2.8" text-anchor="middle" fill="#444">兩顆麥克風在按鍵對面的邊緣，上下各一顆</text>
+  <text x="0" y="39.5" font-size="2.8" text-anchor="middle" fill="#444">各距圓心約 21 mm，兩顆相距約 23 mm，板子直徑約 46 mm</text>
+</svg>

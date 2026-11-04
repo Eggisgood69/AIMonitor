@@ -38,6 +38,7 @@ windows/                   Go 程式（Windows only，WebView2）
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
   stats.go                 今日統計（stats.json，保留 7 天）
   tray_windows.go          系統匣圖示
+  appupdate.go / appupdate_windows.go   電腦端新版檢查（GitHub releases/latest）與一鍵更新（下載 + SHA256 驗證；可跨平台的部分有 go test）
   flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符）
   fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/                 3D 列印外殼（使用者自己用 SolidWorks 畫，設計中），每種螢幕一個資料夾：
@@ -63,12 +64,14 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 - S3 的 FQBN：`esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB`（核心一樣 2.0.9）
 - 只改電腦端：`cd windows; go test ./...; go build -trimpath -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
 - 雙擊新的 AIMonitor.exe 會自動取代執行中的舊版並安裝到 `%LOCALAPPDATA%\AIMonitor`
+- 發版：使用者同意後 commit + push，再 `./build.ps1 -Release`（`gh release create v<版本>`，上傳 `AIMonitor.exe` 與 `AIMonitor.exe.sha256`）。
+  它會檢查工作目錄乾淨、commit 已 push、exe 是這個版本編的（exe 裡有 `AIMonitor/<版本>` 字串）。每次 build 不會自動發佈
 
 ## 版本規則（改了就要升版）
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.11.17、韌體 1.10.15（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.12.0、韌體 1.10.15（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -206,6 +209,11 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 - 螢幕顯示 Disconnected = 有收到資料但 20 秒沒解析到畫面（寫入不會失敗）：serialLoop 每 15 秒送 hello，
   40 秒沒回應就記錄「screen not answering」並 `resetScreen`（最多每 2 分鐘一次）
 - 更新：從專案資料夾啟動新版、取代執行中的舊版時加 `--updated`，安靜換掉不開設定視窗；第一次安裝或舊版沒在跑才 `--welcome` 開視窗
+- 電腦端自動更新（1.12.0 起，appupdate*.go）：啟動 20 秒後、之後每天一次讀 `api.github.com/repos/Eggisgood69/AIMonitor/releases/latest`
+  （失敗一小時後再試；只送 `User-Agent: AIMonitor/<版本>`）。有新版只在設定視窗上方、系統匣 tooltip / 右鍵選單提示，**不跳通知**，按了才更新。
+  下載到 `%LOCALAPPDATA%\AIMonitor\update\<版本>\`，比對 Release 的 `AIMonitor.exe.sha256`（`<hash>  AIMonitor.exe`），通過才從那裡啟動新版 →
+  走上面的取代流程（新版啟動後刪掉 update 資料夾）；一分鐘內沒被新版結束就顯示「新版沒有啟動成功」。
+  設定 `noUpdateCheck`（設定分頁「檢查更新」開關）= 完全不連 GitHub。只認非草稿、非預先發行、tag 是 `v<x.y.z>`、附了這兩個檔案的 Release
 - 公開專案：exe 一定要用 `-trimpath` 編譯（否則會內嵌 `C:/Users/<使用者>/go/...` 路徑）；紀錄 / 額度原文不要寫入 email、帳號 ID。
   韌體同理：Arduino 核心的 `__FILE__` 會留下 `C:\Users\<使用者>\AppData\...`，build.ps1 用 `-fmacro-prefix-map` 換成 `~`，
   編完檢查韌體檔裡還有路徑就 `--clean` 重編（舊的編譯快取不會因為參數改了就重編）

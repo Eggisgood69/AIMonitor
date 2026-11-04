@@ -111,7 +111,7 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 
 ## 二、每台電腦：雙擊 `AIMonitor.exe`（Windows）
 
-1. 雙擊 `windows/AIMonitor.exe`。
+1. 到 [Releases](https://github.com/Eggisgood69/AIMonitor/releases/latest) 下載最新的 `AIMonitor.exe`（或用 repo 裡的 `windows/AIMonitor.exe`），雙擊它。
    - 如果出現「Windows 已保護您的電腦」：按「**其他資訊** → **仍要執行**」。這是因為這個程式沒有付費數位簽章。
 2. 它會自動安裝到 `%LOCALAPPDATA%\AIMonitor`，並設定成開機自動執行，然後打開設定視窗。之後雙擊新版來更新時，會安靜地取代執行中的舊版，不會再跳出設定視窗。
 3. 在設定視窗按「**登入 Claude**」，登入一次就好（建議用 Email 登入）。登入後就會自動在背景查詢額度。
@@ -119,9 +119,9 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 
 之後這台電腦**插上螢幕就能用**：開機時程式會自動在背景執行，螢幕拔掉再插也會自動重新連線。
 
-- **系統匣圖示**：右下角的圓形圖示會跟著狀態變色（外圈 = 狀態燈、中間 = 目前的 AI），滑鼠停上去可看到狀態與額度。左鍵打開設定視窗，右鍵有選單（播放測試畫面、重新讀取額度、結束程式）。Windows 11 第一次可能藏在「^」裡，可以把它拖到工作列上。
+- **系統匣圖示**：右下角的圓形圖示會跟著狀態變色（外圈 = 狀態燈、中間 = 目前的 AI），滑鼠停上去可看到狀態與額度。左鍵打開設定視窗，右鍵有選單（播放測試畫面、重新讀取額度、有新版時「更新到 x.y.z」、結束程式）。Windows 11 第一次可能藏在「^」裡，可以把它拖到工作列上。
 - **再打開設定視窗**：點系統匣圖示，或再雙擊一次 AIMonitor.exe。關閉視窗只是隱藏，程式不會結束。
-- **設定視窗的分頁**：「狀態」看螢幕、韌體、各家額度與偵測到的對話（點一下展開）；「統計」看今天和最近 7 天；「設定」放螢幕保護、提醒、每塊螢幕的方向 / 亮度 / LED、Claude Code、開機執行與除錯資訊。
+- **設定視窗的分頁**：「狀態」看螢幕、韌體、各家額度與偵測到的對話（點一下展開）；「統計」看今天和最近 7 天；「設定」放螢幕保護、提醒、每塊螢幕的方向 / 亮度 / LED、Claude Code、開機執行、檢查更新與除錯資訊。
 - **換電腦**：把 `AIMonitor.exe` 放在隨身碟或雲端硬碟，到新電腦雙擊一次、登入一次即可。
 - **偵測範圍**：Claude 桌面 App、ChatGPT 桌面 App，以及 Chrome / Edge / Brave / Firefox 裡的 claude.ai、chatgpt.com、gemini.google.com 分頁；Google 試算表裡的 Claude for Sheets 側欄也算 Claude（生成中、等你允許、完成都會亮）。
 - **不需要**安裝 Chrome 擴充功能。如果之前有裝，請到 `chrome://extensions` **移除**它，否則兩邊會搶同一個 USB 序列埠。
@@ -159,6 +159,12 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 ## 額度重置提醒
 
 用量曾經達到門檻（預設 90%，可在設定視窗調整或關閉）的額度，會在**重置前 5 分鐘**和**重置當下**各提醒一次：Windows 右下角跳通知，螢幕下方顯示黃字 `5H RESETS IN 4M` / 綠字 `5H QUOTA RESET`（螢幕保護中會自動叫醒）。5 小時與每週額度都適用，Claude、ChatGPT、Gemini 都支援。
+
+## 更新 AIMonitor
+
+AIMonitor 啟動時和之後每天一次，會到 GitHub 看這個專案有沒有新的 [Release](https://github.com/Eggisgood69/AIMonitor/releases)。有新版時設定視窗上方會顯示「有新版 x.y.z」和「更新」按鈕，系統匣圖示的提示文字也會寫，右鍵選單多一項「更新到 x.y.z」。**只提示，不會自己更新，也不跳 Windows 通知。**
+按「更新」後會下載新版 `AIMonitor.exe`、用 Release 附的 SHA256 驗證，通過才換掉目前的程式並自動重新開啟（設定、登入、統計都保留）；下載或驗證失敗就保留目前的版本，設定視窗會顯示原因。新版內建的螢幕韌體比較新時，接著照下面「更新螢幕韌體」按一下即可。
+不想連 GitHub：在「設定」分頁關掉「檢查更新」（開著時也只送 HTTPS 請求讀 Release 資訊，不帶任何個人資料）。手動更新一樣可以：雙擊新版 exe 就會安靜地取代執行中的舊版。
 
 ## 更新螢幕韌體
 

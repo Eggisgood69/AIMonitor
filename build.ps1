@@ -3,9 +3,41 @@
 #   ./build.ps1 -Flash COM5  建置後直接燒錄韌體到螢幕（自動判斷是哪種螢幕；先結束 AIMonitor，避免序列埠被占用）
 #   ./build.ps1 -Flash COM8 -Board s3a175   指定螢幕種類（c3 / s3a175）
 #   ./build.ps1 -AppOnly     只編譯電腦端程式
-param([string]$Flash = "", [string]$Board = "", [switch]$AppOnly)
+#   ./build.ps1 -Release     發版：把已 commit、已 push 的 windows\AIMonitor.exe 和它的 SHA256 上傳成 GitHub Release v<版本>
+#                            （AIMonitor 會檢查這裡的最新版、提示使用者更新）。只在使用者同意發版後執行，不會自動跑
+#   ./build.ps1 -Release -Notes "這版改了什麼"   Release 說明（預設用最後一個 commit 的訊息）
+param([string]$Flash = "", [string]$Board = "", [switch]$AppOnly, [switch]$Release, [string]$Notes = "")
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+
+if ($Release) {
+  $ver = (Select-String -Path (Join-Path $root 'windows\main_windows.go') -Pattern '^const version = "([^"]+)"').Matches[0].Groups[1].Value
+  $tag = "v$ver"
+  $exe = Join-Path $root 'windows\AIMonitor.exe'
+  Push-Location $root
+  try {
+    if (git status --porcelain) { throw '還有沒 commit 的改動：先 commit（exe 要跟程式碼一致）再發版' }
+    git fetch -q origin
+    if (-not (git branch -r --contains HEAD)) { throw '這個 commit 還沒 push 到 GitHub：先 push 再發版' }
+    # exe 裡的 User-Agent 字串帶版本號：確認 exe 是這個版本編出來的
+    $bin = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
+    if ($bin.IndexOf("AIMonitor/$ver") -lt 0) { throw "windows\AIMonitor.exe 不是 $ver 編出來的：先 ./build.ps1 再 commit" }
+    gh release view $tag 2>$null | Out-Null
+    if (-not $LASTEXITCODE) { throw "GitHub 上已經有 $tag 了" }
+    $out = Join-Path $root 'build
+elease'
+    New-Item -ItemType Directory -Force $out | Out-Null
+    Copy-Item $exe (Join-Path $out 'AIMonitor.exe') -Force
+    $hash = (Get-FileHash (Join-Path $out 'AIMonitor.exe') -Algorithm SHA256).Hash.ToLower()
+    [IO.File]::WriteAllText((Join-Path $out 'AIMonitor.exe.sha256'), "$hash  AIMonitor.exe`n")
+    if (-not $Notes) { $Notes = (git log -1 --format=%B) -join "`n" }
+    Write-Host "== 發佈 $tag（SHA256 $hash）==" -ForegroundColor Cyan
+    gh release create $tag (Join-Path $out 'AIMonitor.exe') (Join-Path $out 'AIMonitor.exe.sha256') --target (git rev-parse HEAD) --title "AIMonitor $ver" --notes $Notes
+    if ($LASTEXITCODE) { throw '建立 Release 失敗' }
+    Write-Host "完成：$tag 已發佈" -ForegroundColor Green
+  } finally { Pop-Location }
+  return
+}
 
 # 支援的螢幕：Id 要跟韌體 config.h 的 BOARD_ID 一致（螢幕 hello 回報的 hw，電腦端依它選韌體）
 $boards = @(

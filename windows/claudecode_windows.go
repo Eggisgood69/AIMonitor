@@ -56,6 +56,10 @@ func startClaudeCodeServer() {
 		}
 		go rescan()
 	})
+	mux.HandleFunc("/ext", extHandler) // 瀏覽器擴充功能（ext_windows.go）
+	if err := writeExtension(); err != nil {
+		logf("extension files: %v", err)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+ccPort)
 	if err != nil {
 		ccServerErr = "連接埠 " + ccPort + " 被占用：" + err.Error()
@@ -66,7 +70,7 @@ func startClaudeCodeServer() {
 	go srv.Serve(ln)
 }
 
-// 偵測程式每次掃描的結果 + Claude Code 的工作階段
+// 偵測程式每次掃描的結果 + Claude Code 的工作階段 + 瀏覽器擴充功能的分頁
 func mergedScan(fromMonitor []Item) []Item {
 	lastScanMu.Lock()
 	if fromMonitor != nil {
@@ -74,7 +78,11 @@ func mergedScan(fromMonitor []Item) []Item {
 	}
 	base := append([]Item(nil), lastScanList...)
 	lastScanMu.Unlock()
-	return append(base, claudeCode.Items()...)
+	base = append(base, claudeCode.Items()...)
+	if ext := extension.Items(); extEnabled() {
+		base = append(base, ext...)
+	}
+	return base
 }
 
 // hook 事件進來時立刻更新螢幕（不用等下一次掃描）

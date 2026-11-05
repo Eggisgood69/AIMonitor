@@ -1,6 +1,6 @@
 # AI 狀態指示燈（USB 版）
 
-插上 USB 就能用：每台電腦第一次雙擊 `AIMonitor.exe`，之後插上螢幕就會自動顯示**你目前正在用的 AI**（Claude / ChatGPT 桌面 App，或瀏覽器裡的 Claude / ChatGPT / Gemini），不需要 Wi-Fi。
+插上 USB 就能用：每台電腦第一次雙擊 `AIMonitor.exe`，之後插上螢幕就會自動顯示**你目前正在用的 AI**（Claude / ChatGPT / Gemini 桌面 App；網頁版要另外裝瀏覽器擴充功能），不需要 Wi-Fi。
 
 ![預覽](preview.png)
 
@@ -123,12 +123,22 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 - **再打開設定視窗**：點系統匣圖示，或再雙擊一次 AIMonitor.exe。關閉視窗只是隱藏，程式不會結束。
 - **設定視窗的分頁**：「狀態」看螢幕、韌體、各家額度與偵測到的對話（點一下展開）；「統計」看今天和最近 7 天；「設定」放螢幕保護、提醒、每塊螢幕的方向 / 亮度 / LED、Claude Code、開機執行、檢查更新與除錯資訊。
 - **換電腦**：把 `AIMonitor.exe` 放在隨身碟或雲端硬碟，到新電腦雙擊一次、登入一次即可。
-- **偵測範圍**：Claude 桌面 App、ChatGPT 桌面 App，以及 Chrome / Edge / Brave / Firefox 裡的 claude.ai、chatgpt.com、gemini.google.com 分頁；Google 試算表裡的 Claude for Sheets 側欄也算 Claude（生成中、等你允許、完成都會亮）。
-- **不需要**安裝 Chrome 擴充功能。如果之前有裝，請到 `chrome://extensions` **移除**它，否則兩邊會搶同一個 USB 序列埠。
+- **偵測範圍**：Claude、ChatGPT、Gemini 桌面 App（不用另外裝東西，切到別的程式也偵測得到），以及 Google 試算表裡的 Claude for Sheets 側欄（算 Claude）。
+  **網頁版**（claude.ai、chatgpt.com、gemini.google.com）要另外裝「AIMonitor 網頁偵測」擴充功能，見下一節；沒裝的話網頁不會亮燈。
 
-### Mac 或不想裝 exe：Chrome 擴充功能（選用）
+### 網頁版：AIMonitor 網頁偵測（瀏覽器擴充功能，選用）
 
-`extension` 資料夾是舊的 Chrome 擴充功能版本，Mac 也能用，但只偵測得到 Chrome 分頁。安裝方式：到 `chrome://extensions` 開啟開發人員模式 → 載入未封裝項目 → 選 `extension` 資料夾 → 在跳出的頁面配對螢幕。**不要和 AIMonitor.exe 同時使用。**
+Windows 只讀得到瀏覽器每個視窗**正在顯示的分頁**，切到別的分頁就看不到 AI 網頁的停止鈕，燈號會時有時無。所以網頁版改由擴充功能在 AI 分頁裡看按鈕：切到別的分頁、整個瀏覽器縮到最小都偵測得到。
+
+- **安裝（只要一次）**：設定視窗「設定」分頁 → 「網頁版（瀏覽器擴充功能）」有步驟。Chrome 打開 `chrome://extensions`（Edge 是 `edge://extensions`）→ 打開「開發人員模式」→「載入未封裝項目」→ 選 `%LOCALAPPDATA%\AIMonitor\extension`（設定視窗的「開啟資料夾」會直接打開）。裝好後設定視窗顯示「● 擴充功能已連線」，已經開著的 AI 網頁不用重新整理。
+- **它看什麼**：只在這三個網站上看停止 / 允許按鈕在不在，不讀對話內容，只送到你電腦上的 AIMonitor（`127.0.0.1`），不連網路。AIMonitor 只收擴充功能送來的資料，一般網頁送不進來。
+- **更新 AIMonitor 後**：擴充功能的檔案會一起更新，到 `chrome://extensions` 按一下它的「重新載入」就好。
+- **關掉**：設定視窗可以關掉「網頁版」開關（擴充功能送來的資料不用），或直接到 `chrome://extensions` 移除。
+- Chrome 開啟時可能會提醒「已開啟開發人員模式的擴充功能」，按關閉即可。Firefox 不能裝。
+
+### Mac 或不想裝 exe：舊的 Chrome 擴充功能（選用）
+
+專案根目錄的 `extension` 資料夾是舊的 Chrome 擴充功能版本（直接透過 USB 送到螢幕，不需要 AIMonitor.exe），Mac 也能用，但只偵測得到 Chrome 分頁、已不維護。Windows 請用上一節的「AIMonitor 網頁偵測」，不是這個。安裝方式：到 `chrome://extensions` 開啟開發人員模式 → 載入未封裝項目 → 選 `extension` 資料夾 → 在跳出的頁面配對螢幕。**不要和 AIMonitor.exe 同時使用。**
 
 ## 額度（三家都支援）
 
@@ -173,9 +183,9 @@ AIMonitor 內建兩種螢幕的最新韌體，會依螢幕回報的型號選對�
 
 ## 偵測原理與限制
 
-- 程式用 Windows 內建的 UI Automation，讀取 App 和瀏覽器畫面上的「停止」、「允許」按鈕來判斷狀態（不會截圖，也不會讀取對話內容）。這些網站或 App 改版時，偵測可能失效。設定視窗最下面的「除錯資訊」列出每個項目偵測到的按鈕，把它截圖給開發者，就能調整規則（規則在 `windows/monitor.ps1` 最上方）。
+- 程式用 Windows 內建的 UI Automation，讀取桌面 App 畫面上的「停止」、「允許」按鈕來判斷狀態（不會截圖，也不會讀取對話內容）；網頁版由擴充功能用同樣的規則看網頁裡的按鈕。這些網站或 App 改版時，偵測可能失效。設定視窗最下面的「除錯資訊」列出每個項目偵測到的按鈕，把它截圖給開發者，就能調整規則（規則在 `windows/monitor.ps1` 最上方）。
 - Claude App 裡切到別的對話後，原本的對話畫面上看不到停止鈕，改看側邊欄對話旁的「執行中」（橘點）：背景對話一樣亮綠色呼吸燈，完成後亮綠燈直到你點開它。正在看的對話停止鈕暫時不見時（例如在跑工具），也會參考「執行中」，燈號不會中斷。切到 Code 模式時，聊天對話（包括你剛才在看的那個）會繼續亮呼吸燈，等上方「Claude」模式按鈕不再顯示執行中才算完成。背景聊天在等你允許時（側邊欄顯示「等待輸入」）亮黃燈；出錯時側邊欄分不出來，會顯示成完成。
-- 瀏覽器只偵測得到每個視窗**目前顯示的分頁**。在 AI 分頁問了問題後切到別的程式沒關係，但如果同一個視窗切到別的分頁，就看不到那個 AI 分頁了。
+- 網頁版要裝擴充功能才偵測得到（見「網頁版」一節）。Google 試算表的 Claude for Sheets 側欄是例外（擴充功能管不到試算表），沿用畫面偵測，只偵測得到每個視窗**目前顯示的分頁**。
 - 同一個 USB 序列埠不能同時被兩個程式使用。用網頁燒錄器時，先在設定視窗按「結束程式」，燒完再雙擊 AIMonitor.exe（用 AIMonitor 內建的更新則不需要）。
 - 程式紀錄檔：`%LOCALAPPDATA%\AIMonitor\aimonitor.log`（`lights:` 那幾行記下每次燈號變化時是哪幾項亮著，`*` = 你正在看的；燈號不對時把這段給開發者）
 
@@ -208,7 +218,8 @@ firmware/tools/mic-off.ps1      燒錄前讓開著麥克風的 AMOLED 重開回�
 firmware/preview/               重新產生 README 的預覽圖片（`build-preview.ps1`，開發用）
 windows/AIMonitor.exe           Windows 程式（每台電腦雙擊一次）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）
-extension/                      Chrome 擴充功能（選用，Mac 用）
+windows/extension/              AIMonitor 網頁偵測擴充功能（打包在 exe 裡，啟動時解開到 %LOCALAPPDATA%\AIMonitor\extension）
+extension/                      舊的 Chrome 擴充功能（選用，Mac 用，已不維護）
 ```
 
 ## 授權

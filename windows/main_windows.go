@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.12.1"
+const version = "1.13.0"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -65,6 +65,8 @@ type Settings struct {
 	NoAutoRot  bool `json:"noAutoRot"` // AMOLED 不要依陀螺儀自動轉向（預設會）
 	// 不要檢查新版（預設會：啟動時與每天一次讀 GitHub 最新的 Release，appupdate_windows.go）
 	NoUpdateCheck bool `json:"noUpdateCheck"`
+	// 不用瀏覽器擴充功能的資料（預設會用：裝了擴充功能，網頁版背景分頁也偵測得到，ext*.go）
+	NoExtension bool `json:"noExtension"`
 	// 每塊螢幕自己的方向 / 亮度 / LED（screenset.go）；上面四項是沒設過的螢幕用的共用值
 	Screens map[string]*ScreenSet `json:"screens,omitempty"`
 }
@@ -1063,6 +1065,12 @@ func onCmd(cmd string) string {
 		if strings.HasPrefix(cmd, "fwupdate:") { // 更新指定的螢幕（埠名稱）
 			startFirmwareUpdate(strings.TrimPrefix(cmd, "fwupdate:"))
 		}
+		if cmd == "ext-on" || cmd == "ext-off" {
+			setExtEnabled(cmd == "ext-on")
+		}
+		if cmd == "ext-folder" {
+			openExtFolder()
+		}
 		if cmd == "cc-on" || cmd == "cc-off" {
 			ccCmd(cmd == "cc-on")
 		}
@@ -1130,7 +1138,7 @@ func uiStatusJSON() string {
 		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": screenViews(scs), "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
-		"providers": providersStatus(), "firmware": firmwareStatus(), "appUpdate": appUpdateStatus(),
+		"providers": providersStatus(), "firmware": firmwareStatus(), "appUpdate": appUpdateStatus(), "extension": extensionStatus(),
 	})
 	return string(b)
 }

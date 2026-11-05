@@ -31,7 +31,9 @@ firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-pre
 windows/                   Go 程式（Windows only，WebView2）
   main_windows.go          進入點、設定、序列埠連線（每個埠一條，runScreen）、指令（onCmd）、狀態 JSON（uiStatusJSON）
   state.go                 偵測結果 → 送給螢幕的 Frame（可跨平台測試）
-  monitor.ps1              UI Automation 偵測桌面 App / 瀏覽器分頁的「停止」「允許」按鈕
+  monitor.ps1              UI Automation 偵測桌面 App（Claude / ChatGPT / Gemini）與 Claude for Sheets 的「停止」「允許」按鈕
+  ext.go / ext_windows.go  網頁版：收「AIMonitor 網頁偵測」擴充功能送來的分頁狀態（127.0.0.1:47322/ext）
+  extension/               那個擴充功能（MV3，embed 進 exe，啟動時解開到 %LOCALAPPDATA%\AIMonitor\extension 讓使用者載入）
   providers.js / providers_windows.go   ChatGPT（wham/usage）與 Gemini（gemini.google.com/usage）用量
   ui.js                    設定視窗（注入到 claude.ai 頁面上畫出來，因為要用 claude.ai 的登入 cookie 讀 Claude 用量）
   claudecode*.go           Claude Code hooks（http hook → 127.0.0.1:47322/cc）
@@ -43,7 +45,7 @@ windows/                   Go 程式（Windows only，WebView2）
   fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/                 3D 列印外殼（使用者自己用 SolidWorks 畫，設計中），每種螢幕一個資料夾：
   lcd128/ amoled175/       原始檔、export/ 匯出檔、reference/ 板子參考模型（amoled175 是 Waveshare 官方 STEP，公開；lcd128 的來源不明，.gitignore 排除）
-extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維護）
+extension/                 舊的 Chrome 擴充功能（Mac 選用，直接連 USB，已不維護；Windows 的是 windows/extension/）
 ```
 
 ## 建置（Windows，PowerShell）
@@ -71,7 +73,7 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.12.1、韌體 1.10.15（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.0、韌體 1.10.15（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -195,6 +197,15 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，已不維�
   背景聊天出錯（例如斷網）時側邊欄狀態只會消失，跟完成分不出來，只能當完成（對話內才有「重試」）
 - 正看著 Claude App 裡的 Claude Code 對話時出錯：StopFailure 跟 App 停止鈕消失配對成同一個對話，
   App 那項不要亮完成蓋掉紅燈（state.go `matchClaudeApp`），紅燈亮 8 秒
+- 網頁版（claude.ai / chatgpt.com / gemini.google.com）只靠擴充功能（2026-11）：UI Automation 只讀得到每個視窗正在顯示的分頁，切到別的分頁燈號就沒了，
+  時有時無讓人以為壞掉 → monitor.ps1 的 `Url-To-AI` 不再認這三個網站（只留 Sheets），沒裝擴充功能網頁就不亮，設定視窗講清楚要裝。
+  擴充功能：content.js 用跟 monitor.ps1 相同的 STOP / REVIEW 規則看按鈕（MutationObserver，背景分頁也會觸發），有變化或每 5 秒回報；
+  background.js 把所有 AI 分頁 + 是否正在看（分頁 active 且視窗 focused）POST 過來，每 30 秒（alarms）沒分頁也送空清單報平安；
+  停止鈕消失 1.5 秒才算完成、換網址不算完成在 ext.go 判斷；3 分鐘沒收到 = 不在了（`extStale`，背景分頁計時器會被 Chrome 放慢）。
+  踩過：manifest 少 `storage` 權限時 `chrome.storage` 是 undefined（service worker 一直丟錯，什麼都沒送）；
+  POST JSON 前 Chrome 會先送 OPTIONS 預檢，要回 CORS + `Access-Control-Allow-Private-Network`（只對 `chrome-extension://` Origin），否則請求根本不會送出。
+  `/ext` 只收 Origin 是 `chrome-extension://` 的 JSON（`extRequestAllowed`）；設定 `noExtension` = 不用它的資料。Key = `ext:<ai>:<分頁 id>`
+- Gemini 桌面程式（Google 出的 `%LOCALAPPDATA%\Google\Gemini\app-*\Gemini.exe`，行程名稱 `Gemini`）：停止鈕「停止回覆」跟網頁一樣，切到別的程式也讀得到（2026-11 實測）
 - Claude for Sheets（Google 試算表側欄，2026-10 實測）：生成時按鈕「Stop」、等允許時「Allow once Enter」「Always allow Ctrl Enter」「Deny Esc」，
   monitor.ps1 `$SHEETS_RE` 的分頁算成 `web:claude:sheets`。試算表也有 Gemini 側欄，所以要看得到 Claude 側欄自己的按鈕（`$SHEETS_CLAUDE`）才算；
   網址去掉 `#gid=` / `range=` 才當對話（換工作表、選儲存格會改）；按鈕清單只留停止 / 允許（帳戶按鈕名稱含 email）

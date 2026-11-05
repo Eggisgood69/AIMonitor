@@ -1,9 +1,10 @@
 ﻿# AI 狀態指示燈 — 畫面偵測（由 AIMonitor.exe 在背景啟動，不需要自己執行）
 #
 # 用 Windows 內建的 UI Automation 讀取畫面上的按鈕：
-#   - Claude / ChatGPT 桌面 App
-#   - Chrome / Edge / Brave / Firefox 等瀏覽器裡的 claude.ai、chatgpt.com、gemini.google.com 分頁
+#   - Claude / ChatGPT / Gemini 桌面 App
 #   - Google 試算表裡的 Claude for Sheets 側欄（算成 Claude）
+#   claude.ai、chatgpt.com、gemini.google.com 網頁改由瀏覽器擴充功能偵測（windows/extension/）：
+#   這裡只讀得到每個視窗正在顯示的分頁，切到別的分頁就不見了，有時亮有時不亮反而讓人以為壞掉
 # 「停止」按鈕 = 生成中，「允許」按鈕 = 需審核，停止按鈕消失 = 完成。
 # 每秒輸出一行 JSON 到 stdout 給 AIMonitor.exe。
 #
@@ -28,11 +29,11 @@ public static class AimonWin {
 # 桌面 App（行程名稱，不含 .exe）
 $APPS = @(
   @{ ai = 'claude';  procs = @('claude') },
-  @{ ai = 'chatgpt'; procs = @('ChatGPT') }
+  @{ ai = 'chatgpt'; procs = @('ChatGPT') },
+  @{ ai = 'gemini';  procs = @('Gemini') }   # Google 的 Gemini 桌面程式（%LOCALAPPDATA%\Google\Gemini），停止鈕「停止回覆」跟網頁一樣
 )
 # 瀏覽器
 $BROWSERS = @('chrome', 'msedge', 'brave', 'opera', 'vivaldi', 'firefox', 'arc')
-$HOSTS = [ordered]@{ 'claude.ai' = 'claude'; 'chatgpt.com' = 'chatgpt'; 'chat.openai.com' = 'chatgpt'; 'gemini.google.com' = 'gemini' }
 $HOST_RE = '^(https?://)?(www\.)?(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com)(/|$|\?)'
 # Google 試算表：Claude for Sheets 側欄（生成時「Stop」、等允許時「Allow once」）。試算表也有 Gemini 側欄，
 # 所以只在看得到 Claude 側欄自己的按鈕時才算；除錯清單只留判斷用的按鈕（工具列很多、帳戶按鈕有 email）
@@ -109,9 +110,7 @@ function Get-Url([IntPtr]$hwnd) {
 
 function Url-To-AI([string]$url) {
   if ($url -match $SHEETS_RE) { return 'claude' }
-  if ($url -notmatch $HOST_RE) { return $null }
-  $h = $Matches[3]
-  return $HOSTS[$h]
+  return $null   # AI 網站本身交給擴充功能（見檔案開頭）
 }
 
 # 畫面上是哪個對話：Claude App 標題列的「<對話名稱>，重新命名工作階段」按鈕（瀏覽器用網址）

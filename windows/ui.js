@@ -44,7 +44,7 @@
   };
   const ST = { idle: "待命", done: "完成", working: "生成中", review: "需審核", error: "錯誤" };
   const COL = { idle: "#8e8e93", done: "#30d158", working: "#30d158", review: "#ffd60a", error: "#ff453a" };
-  const SRC = { app: "桌面 App", web: "瀏覽器", cc: "Agent" };   // Claude Code 分不出是 App 的 Code 分頁還是終端機
+  const SRC = { app: "桌面 App", web: "瀏覽器", ext: "網頁", cc: "Agent" };   // Claude Code 分不出是 App 的 Code 分頁還是終端機
 
   function build() {
     document.documentElement.innerHTML = `
@@ -164,6 +164,7 @@
       </select></div>
     <div id="scrset"></div>
     <div class="row sw"><div>連接 Claude Code<div class="hint">Agent 也會亮燈；修改 Claude Code 設定檔前會先備份</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
+    <div class="row sw"><div>網頁版（瀏覽器擴充功能）<div class="hint">桌面 App 不用裝就偵測得到。Gemini、claude.ai、chatgpt.com 網頁要另外在 Chrome / Edge 裝擴充功能，裝了切到別的分頁也偵測得到；只看停止 / 允許按鈕，不讀對話內容</div><div class="hint" id="extst"></div></div><div class="toggle" id="ext"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
     <div class="row sw"><div>檢查更新<div class="hint">啟動時與每天一次查 GitHub 有沒有新版，只提示、按了才更新；關掉就完全不連 GitHub</div><div class="hint" id="updst"></div></div><div class="toggle" id="updchk"></div></div>
   </div>
@@ -209,6 +210,10 @@
     document.getElementById("cc").onclick = (e) => {
       const on = e.currentTarget.classList.contains("on");
       window.aimonCmd(on ? "cc-off" : "cc-on").then(render);
+    };
+    document.getElementById("ext").onclick = (e) => {
+      const on = e.currentTarget.classList.contains("on");
+      window.aimonCmd(on ? "ext-off" : "ext-on").then(render);
     };
     document.getElementById("auto").onclick = (e) => {
       const on = e.currentTarget.classList.contains("on");
@@ -355,7 +360,10 @@
           return `<div class="it"><span class="dot" style="background:${COL[it.st]}"></span>${name(it)}
             <span class="muted">· ${SRC[src] || src}${it.focused ? " · 前景" : ""}</span> — ${ST[it.st] || it.st}</div>`;
         }).join("") + `</details>`
-      : `<div class="it muted">目前沒有偵測到 AI App 或 AI 網頁。<br>打開 Claude 桌面 App，或在瀏覽器切到 claude.ai / chatgpt.com / gemini.google.com 分頁。</div>`;
+      : `<div class="it muted">目前沒有偵測到 AI App 或 AI 網頁。<br>打開 Claude 桌面 App；網頁版要先裝瀏覽器擴充功能（設定分頁）。</div>`;
+    // 網頁版沒裝擴充功能時偵測不到：講清楚，不然會以為壞掉
+    const ex = s.extension || {};
+    if (ex.enabled && !ex.connected) $("items").innerHTML += `<div class="it hint">用 Gemini、claude.ai、chatgpt.com 網頁的話，要先裝瀏覽器擴充功能才偵測得到（設定分頁 → 網頁版）。</div>`;
     // 除錯資訊集中在最下面一個：畫面偵測的狀態 + 每個項目讀到的按鈕（Claude Code 沒有按鈕，不列）
     const btns = items.filter((it) => !it.key.startsWith("cc:") && !it.key.includes(":bg:"))
       .map((it) => `${name(it)}：${(it.buttons || []).map(esc).join(" | ") || "（沒有）"}`);
@@ -370,6 +378,7 @@
     else if (cc.msg && cc.msg.startsWith("失敗")) ccs = `<span class="bad">${cc.msg}</span>`;
     else if (cc.installed) ccs = cc.sessions ? `<span class="ok">● 偵測到 ${cc.sessions} 個 Claude Code 工作階段</span>` : (cc.msg || "已連接，等待 Claude Code 啟動（已開著的請重新啟動）");
     $("ccst").innerHTML = ccs;
+    renderExt(s.extension || {});
     $("auto").classList.toggle("on", !!s.autostart);
     renderAppUpdate(s.appUpdate || {}, s.version);
     const sv = $("saver");
@@ -384,6 +393,20 @@
       if (![...rm.options].some((o) => o.value === v)) rm.add(new Option("用量 ≥ " + v + "%", v));
       rm.value = v;
     }
+  }
+
+  // 網頁版擴充功能：開關、連線狀態、沒裝時的安裝步驟
+  function renderExt(x) {
+    document.getElementById("ext").classList.toggle("on", !!x.enabled);
+    const link = (cmd, t) => `<a href="#" data-cmd="${cmd}" style="color:#0a84ff;text-decoration:none">${t}</a>`;
+    let h = "";
+    if (!x.enabled) h = "已關閉：擴充功能送來的資料不用，網頁版不會亮燈";
+    else if (x.connected) h = `<span class="ok">● 擴充功能已連線</span>${x.tabs ? ` · ${x.tabs} 個 AI 分頁` : " · 目前沒有開著 AI 網頁"}`;
+    else h = `<span style="color:#ffd60a">● 還沒偵測到擴充功能</span>　安裝方式（只要一次）：<br>
+      1. Chrome 打開 <b>chrome://extensions</b>（Edge 是 edge://extensions），打開「開發人員模式」<br>
+      2. 按「載入未封裝項目」，選這個資料夾：${link("ext-folder", "開啟資料夾")}<br>
+      3. 裝好後這裡會顯示「已連線」；已經開著的 AI 網頁不用重新整理`;
+    document.getElementById("extst").innerHTML = h;
   }
 
   // 電腦端新版：上方提示列（有新版 / 下載中 / 失敗原因），設定分頁的「檢查更新」開關與上次檢查結果

@@ -24,8 +24,7 @@ if ($Release) {
     if ($bin.IndexOf("AIMonitor/$ver") -lt 0) { throw "windows\AIMonitor.exe 不是 $ver 編出來的：先 ./build.ps1 再 commit" }
     gh release view $tag 2>$null | Out-Null
     if (-not $LASTEXITCODE) { throw "GitHub 上已經有 $tag 了" }
-    $out = Join-Path $root 'build
-elease'
+    $out = Join-Path $root 'build\release'
     New-Item -ItemType Directory -Force $out | Out-Null
     Copy-Item $exe (Join-Path $out 'AIMonitor.exe') -Force
     $hash = (Get-FileHash (Join-Path $out 'AIMonitor.exe') -Algorithm SHA256).Hash.ToLower()

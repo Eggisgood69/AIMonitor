@@ -1,7 +1,7 @@
 package main
 
 // 系統匣圖示：顏色跟著狀態燈變（外圈 = 狀態、中間 = 目前的 AI），
-// 左鍵打開設定視窗，右鍵選單（打開設定 / 播放測試畫面 / 結束程式）。
+// 左鍵打開設定視窗，右鍵選單（打開設定 / 播放測試畫面 / 重新讀取額度 / 有新版時「更新到 x.y.z」/ 結束程式）。
 
 import (
 	"fmt"
@@ -172,6 +172,9 @@ func trayMenu() {
 	add(1, "打開設定")
 	add(2, "播放測試畫面")
 	add(3, "重新讀取額度")
+	if upd := updateAvailable(); upd != "" {
+		add(4, "更新到 "+upd)
+	}
 	procAppendMenu.Call(m, mfSeparator, 0, 0)
 	add(9, "結束程式")
 	var pt struct{ X, Y int32 }
@@ -188,6 +191,10 @@ func trayMenu() {
 		playDemo()
 	case 3:
 		go func() { pollUsage(); pollProviders("") }()
+	case 4: // 打開設定視窗看進度（失敗原因也顯示在那裡）
+		startAppUpdate()
+		showWindow()
+		wv.Navigate(restURL)
 	case 9:
 		trayRemove()
 		wv.Terminate()
@@ -234,6 +241,9 @@ func trayState() (key, tip string, ring, center uint32, dim bool) {
 	}
 	if !conn {
 		tip += "\n螢幕未連線"
+	}
+	if v := updateAvailable(); v != "" {
+		tip += "\n有新版 " + v + "（右鍵可更新）"
 	}
 	key = fmt.Sprintf("%06x/%06x/%v", ring, center, dim)
 	return

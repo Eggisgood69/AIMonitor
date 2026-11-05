@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.11.17"
+const version = "1.12.1"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -63,6 +63,8 @@ type Settings struct {
 	Rotation   int  `json:"rotation"`  // 螢幕方向 0-3（×90°）   // 額度重置提醒：用量達到幾 % 才提醒，0 = 關閉（預設 90）
 	Led        int  `json:"led"`       // 外接 WS2812 亮度 0-100，0 = 關閉
 	NoAutoRot  bool `json:"noAutoRot"` // AMOLED 不要依陀螺儀自動轉向（預設會）
+	// 不要檢查新版（預設會：啟動時與每天一次讀 GitHub 最新的 Release，appupdate_windows.go）
+	NoUpdateCheck bool `json:"noUpdateCheck"`
 	// 每塊螢幕自己的方向 / 亮度 / LED（screenset.go）；上面四項是沒設過的螢幕用的共用值
 	Screens map[string]*ScreenSet `json:"screens,omitempty"`
 }
@@ -198,6 +200,7 @@ func installAndMaybeExit() (welcome, updated bool) {
 		}
 		if !strings.EqualFold(filepath.Clean(self), filepath.Clean(target)) {
 			cmd := exec.Command(target, arg)
+			cmd.Dir = filepath.Dir(target) // 不要繼承啟動來源的工作目錄（一鍵更新的暫存資料夾會被占住刪不掉）
 			if err := cmd.Start(); err == nil {
 				os.Exit(0)
 			}
@@ -1089,6 +1092,12 @@ func onCmd(cmd string) string {
 		setAutostart(self)
 	case "autostart-off":
 		removeAutostart()
+	case "appupdate":
+		startAppUpdate()
+	case "appcheck":
+		kickUpdateCheck()
+	case "updchk-on", "updchk-off":
+		setUpdateCheck(cmd == "updchk-on")
 	case "quit":
 		removeIfAsked := false
 		_ = removeIfAsked
@@ -1121,7 +1130,7 @@ func uiStatusJSON() string {
 		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": screenViews(scs), "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
-		"providers": providersStatus(), "firmware": firmwareStatus(),
+		"providers": providersStatus(), "firmware": firmwareStatus(), "appUpdate": appUpdateStatus(),
 	})
 	return string(b)
 }
@@ -1181,6 +1190,7 @@ func main() {
 	trayInit()
 	registerToastApp()
 	go reminderLoop()
+	go updateLoop()
 
 	// 第二次雙擊 → 打開視窗
 	go func() {

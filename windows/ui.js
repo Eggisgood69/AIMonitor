@@ -108,6 +108,13 @@
   .week .col.today .lbl { color: #f5f5f7; font-weight: 600; }
   .ok { color: #30d158; } .bad { color: #ff453a; }
   footer { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 8px; }
+  .ask { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.6); }
+  .ask .box { width: 100%; max-width: 360px; padding: 18px 18px 14px; border-radius: 16px; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.12); }
+  .ask .msg { margin-bottom: 14px; line-height: 1.6; }
+  .ask .btns { justify-content: flex-end; }
+  .upd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 14px; background: #0a2a4a; }
+  .upd .v { color: #f5f5f7; }
+  .upd button { padding: 7px 14px; flex: none; }
   .tabs { display: flex; gap: 2px; padding: 2px; margin-bottom: 14px; border-radius: 10px; background: #1c1c1e; }
   .tabs button { flex: 1; padding: 6px 0; border-radius: 8px; background: transparent; color: #98989f; font-weight: 600; }
   .tabs button.on { background: #3a3a3c; color: #f5f5f7; }
@@ -119,6 +126,7 @@
 </style></head>
 <body><main>
   <header><div class="logo"></div><div><h1>AI 狀態指示燈</h1><div class="ver" id="ver"></div></div></header>
+  <div id="upd"></div>
   <nav class="tabs"><button data-tab="status">狀態</button><button data-tab="stats">統計</button><button data-tab="settings">設定</button></nav>
 
   <section data-pane="status">
@@ -157,6 +165,7 @@
     <div id="scrset"></div>
     <div class="row sw"><div>連接 Claude Code<div class="hint">Agent 也會亮燈；修改 Claude Code 設定檔前會先備份</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
+    <div class="row sw"><div>檢查更新<div class="hint">啟動時與每天一次查 GitHub 有沒有新版，只提示、按了才更新；關掉就完全不連 GitHub</div><div class="hint" id="updst"></div></div><div class="toggle" id="updchk"></div></div>
   </div>
 
   <div class="btns">
@@ -180,13 +189,14 @@
     showTab(tab);
     document.getElementById("demo").onclick = () => window.aimonCmd("demo");
     document.getElementById("hide").onclick = () => window.aimonCmd("hide");
-    document.getElementById("quit").onclick = () => { if (confirm("結束後螢幕會停止更新，確定要結束嗎？")) window.aimonCmd("quit"); };
-    document.addEventListener("click", (e) => {
+    document.getElementById("quit").onclick = async () => { if (await ask("結束後螢幕會停止更新，確定要結束嗎？", "結束")) window.aimonCmd("quit"); };
+    document.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-cmd]");
       if (!b) return;
       e.preventDefault();
       const c = b.getAttribute("data-cmd");
-      if (c === "fwupdate" && !confirm("更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。要開始嗎？")) return;
+      if (c === "appupdate" && !(await ask("會下載新版、驗證後自動換掉目前的程式並重新開啟（設定會保留）。要開始嗎？", "更新"))) return;
+      if (c === "fwupdate" && !(await ask("更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。要開始嗎？", "更新"))) return;
       window.aimonCmd(c).then(render);
     });
     // 每塊螢幕的方向 / 亮度 / 外接 LED（scrset 裡的欄位帶 data-scr = 螢幕的 key）
@@ -204,6 +214,32 @@
       const on = e.currentTarget.classList.contains("on");
       window.aimonCmd(on ? "autostart-off" : "autostart-on").then(render);
     };
+    document.getElementById("updchk").onclick = (e) => {
+      const on = e.currentTarget.classList.contains("on");
+      window.aimonCmd(on ? "updchk-off" : "updchk-on").then(render);
+    };
+  }
+
+  // 頁面內的確認框：WebView2 內建的 confirm() 是固定寬度，視窗窄時右半邊（含「確定」）會被切掉
+  function ask(msg, ok) {
+    return new Promise((resolve) => {
+      const d = document.createElement("div");
+      d.className = "ask";
+      d.innerHTML = `<div class="box"><div class="msg"></div><div class="btns"><button data-a="0">取消</button><button class="primary" data-a="1"></button></div></div>`;
+      d.querySelector(".msg").textContent = msg;
+      d.querySelector('[data-a="1"]').textContent = ok || "確定";
+      const done = (v) => { d.remove(); document.removeEventListener("keydown", key, true); resolve(v); };
+      const key = (e) => { if (e.key === "Escape") done(false); else if (e.key === "Enter") done(true); };
+      d.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const a = e.target.closest("[data-a]");
+        if (a) done(a.dataset.a === "1");
+        else if (e.target === d) done(false);
+      });
+      document.addEventListener("keydown", key, true);
+      document.body.appendChild(d);
+      d.querySelector('[data-a="1"]').focus();
+    });
   }
 
   function fmtLeft(epoch) {
@@ -335,6 +371,7 @@
     else if (cc.installed) ccs = cc.sessions ? `<span class="ok">● 偵測到 ${cc.sessions} 個 Claude Code 工作階段</span>` : (cc.msg || "已連接，等待 Claude Code 啟動（已開著的請重新啟動）");
     $("ccst").innerHTML = ccs;
     $("auto").classList.toggle("on", !!s.autostart);
+    renderAppUpdate(s.appUpdate || {}, s.version);
     const sv = $("saver");
     if (document.activeElement !== sv) {
       const v = String(s.saverMin ?? 5);
@@ -347,6 +384,34 @@
       if (![...rm.options].some((o) => o.value === v)) rm.add(new Option("用量 ≥ " + v + "%", v));
       rm.value = v;
     }
+  }
+
+  // 電腦端新版：上方提示列（有新版 / 下載中 / 失敗原因），設定分頁的「檢查更新」開關與上次檢查結果
+  let updSig = "";
+  function renderAppUpdate(u, cur) {
+    const esc = (t) => String(t || "").replace(/[<&]/g, "");
+    let h = "";
+    if (u.running || u.msg) {
+      h = `<div class="upd"><div class="v">更新到 ${esc(u.latest)}：${esc(u.msg || "下載中…")} ${u.progress || 0}%
+        <div class="bar" style="background:#123"><i style="width:${u.progress || 0}%;background:#0a84ff"></i></div></div></div>`;
+    } else if (u.err) {
+      h = `<div class="upd" style="background:#3a1715"><div class="v"><span class="bad">更新失敗：${esc(u.err)}</span><div class="hint">目前的版本 ${esc(cur)} 照常執行</div></div>
+        ${u.latest ? `<button class="primary" data-cmd="appupdate">再試一次</button>` : ""}</div>`;
+    } else if (u.latest) {
+      h = `<div class="upd"><div class="v">有新版 <b>${esc(u.latest)}</b><div class="hint">目前 ${esc(cur)} · 設定會保留</div></div>
+        <button class="primary" data-cmd="appupdate">更新</button></div>`;
+    }
+    if (h !== updSig) { updSig = h; document.getElementById("upd").innerHTML = h; }
+    document.getElementById("updchk").classList.toggle("on", !!u.enabled);
+    let st = "";
+    if (!u.enabled) st = "";
+    else if (u.checking) st = "檢查中…";
+    else if (u.checkErr) st = `<span class="bad">上次檢查失敗：${esc(u.checkErr)}</span> · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">再檢查</a>`;
+    else if (u.checked) {
+      const t = new Date(u.checked * 1000);
+      st = `${u.latest ? `有新版 ${esc(u.latest)}` : "已是最新版"} · ${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")} 檢查 · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">立即檢查</a>`;
+    } else st = `<a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">立即檢查</a>`;
+    document.getElementById("updst").innerHTML = st;
   }
 
   // 螢幕的方向（AMOLED 多一個「自動」）、亮度、外接 LED，每塊各自記住。

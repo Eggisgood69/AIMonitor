@@ -94,6 +94,18 @@ push 到 GitHub 之前，先把這次（以及上次 push 之後所有還沒 pus
   `./firmware/preview/build-preview.ps1`（需要 zig：`winget install zig.zig`）。
   會更新 `preview.png`、`preview-pages.png`、`preview-saver.png`、`preview.gif`；新增畫面或狀態時順便改 `firmware/preview/preview.cpp` 的場景
 
+## 6. 發佈 GitHub Release（使用者同意發版 / push 之後才做）
+
+AIMonitor 1.12.0 起會檢查 GitHub 最新的 Release 並提示使用者更新，所以 push 了新版電腦端之後要發 Release，別人才收得到：
+
+```powershell
+./build.ps1 -Release                      # Release 說明預設用最後一個 commit 的訊息
+./build.ps1 -Release -Notes "這版改了什麼"
+```
+
+它會確認工作目錄乾淨、commit 已 push、`windows\AIMonitor.exe` 是這個版本編出來的，再 `gh release create v<版本>` 上傳 `AIMonitor.exe` 與 `AIMonitor.exe.sha256`。
+這是對外公開的動作：每次都要先問使用者，**不要在每次 build 時自動發**。只改文件、沒升版的 push 不用發。發完到 Release 頁面確認兩個檔案都在。
+
 ## 回報
 
 最後簡短告訴使用者：

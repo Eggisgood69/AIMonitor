@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.12.0"
+const version = "1.12.1"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -200,6 +200,7 @@ func installAndMaybeExit() (welcome, updated bool) {
 		}
 		if !strings.EqualFold(filepath.Clean(self), filepath.Clean(target)) {
 			cmd := exec.Command(target, arg)
+			cmd.Dir = filepath.Dir(target) // 不要繼承啟動來源的工作目錄（一鍵更新的暫存資料夾會被占住刪不掉）
 			if err := cmd.Start(); err == nil {
 				os.Exit(0)
 			}

@@ -170,7 +170,7 @@ func doAppUpdate(ri ReleaseInfo) error {
 	logf("app update: %s verified, starting it to replace this version", ri.Version)
 	// 新版從暫存資料夾啟動 → 它會請這個舊版結束、複製到 %LOCALAPPDATA%\AIMonitor、再以 --updated 啟動
 	cmd := exec.Command(path)
-	cmd.Dir = filepath.Dir(path)
+	cmd.Dir = appDir // 工作目錄不要放在 update 資料夾，否則它會被占住刪不掉
 	if err := cmd.Start(); err != nil {
 		return err
 	}

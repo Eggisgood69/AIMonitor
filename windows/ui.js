@@ -108,6 +108,10 @@
   .week .col.today .lbl { color: #f5f5f7; font-weight: 600; }
   .ok { color: #30d158; } .bad { color: #ff453a; }
   footer { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 8px; }
+  .ask { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.6); }
+  .ask .box { width: 100%; max-width: 360px; padding: 18px 18px 14px; border-radius: 16px; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.12); }
+  .ask .msg { margin-bottom: 14px; line-height: 1.6; }
+  .ask .btns { justify-content: flex-end; }
   .upd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 14px; background: #0a2a4a; }
   .upd .v { color: #f5f5f7; }
   .upd button { padding: 7px 14px; flex: none; }
@@ -185,14 +189,14 @@
     showTab(tab);
     document.getElementById("demo").onclick = () => window.aimonCmd("demo");
     document.getElementById("hide").onclick = () => window.aimonCmd("hide");
-    document.getElementById("quit").onclick = () => { if (confirm("結束後螢幕會停止更新，確定要結束嗎？")) window.aimonCmd("quit"); };
-    document.addEventListener("click", (e) => {
+    document.getElementById("quit").onclick = async () => { if (await ask("結束後螢幕會停止更新，確定要結束嗎？", "結束")) window.aimonCmd("quit"); };
+    document.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-cmd]");
       if (!b) return;
       e.preventDefault();
       const c = b.getAttribute("data-cmd");
-      if (c === "appupdate" && !confirm("會下載新版、驗證後自動換掉目前的程式並重新開啟（設定會保留）。要開始嗎？")) return;
-      if (c === "fwupdate" && !confirm("更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。要開始嗎？")) return;
+      if (c === "appupdate" && !(await ask("會下載新版、驗證後自動換掉目前的程式並重新開啟（設定會保留）。要開始嗎？", "更新"))) return;
+      if (c === "fwupdate" && !(await ask("更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。要開始嗎？", "更新"))) return;
       window.aimonCmd(c).then(render);
     });
     // 每塊螢幕的方向 / 亮度 / 外接 LED（scrset 裡的欄位帶 data-scr = 螢幕的 key）
@@ -214,6 +218,28 @@
       const on = e.currentTarget.classList.contains("on");
       window.aimonCmd(on ? "updchk-off" : "updchk-on").then(render);
     };
+  }
+
+  // 頁面內的確認框：WebView2 內建的 confirm() 是固定寬度，視窗窄時右半邊（含「確定」）會被切掉
+  function ask(msg, ok) {
+    return new Promise((resolve) => {
+      const d = document.createElement("div");
+      d.className = "ask";
+      d.innerHTML = `<div class="box"><div class="msg"></div><div class="btns"><button data-a="0">取消</button><button class="primary" data-a="1"></button></div></div>`;
+      d.querySelector(".msg").textContent = msg;
+      d.querySelector('[data-a="1"]').textContent = ok || "確定";
+      const done = (v) => { d.remove(); document.removeEventListener("keydown", key, true); resolve(v); };
+      const key = (e) => { if (e.key === "Escape") done(false); else if (e.key === "Enter") done(true); };
+      d.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const a = e.target.closest("[data-a]");
+        if (a) done(a.dataset.a === "1");
+        else if (e.target === d) done(false);
+      });
+      document.addEventListener("keydown", key, true);
+      document.body.appendChild(d);
+      d.querySelector('[data-a="1"]').focus();
+    });
   }
 
   function fmtLeft(epoch) {

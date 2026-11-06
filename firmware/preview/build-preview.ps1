@@ -1,4 +1,4 @@
-# 在 Windows 上重新產生 README 的預覽圖片（preview.png、preview-pages.png、preview-saver.png、preview.gif）
+# 在 Windows 上重新產生 README 的預覽圖片（docs/images/states.png、pages.png、demo.gif）
 # 用與韌體相同的 ui.h 渲染。需要：zig（winget install zig.zig）、Go、Arduino 程式庫 LovyanGFX
 # 用法（專案根目錄）：./firmware/preview/build-preview.ps1
 $ErrorActionPreference = 'Stop'
@@ -13,7 +13,7 @@ if (-not $zig) { throw "找不到 zig，請先執行 winget install zig.zig" }
 
 $work = Join-Path $env:TEMP 'aimon-preview'
 $obj = Join-Path $work 'obj'
-$out = Join-Path $work 'out'
+$out = Join-Path $work 'out'   # out/240、out/466
 New-Item -ItemType Directory -Force $obj, $out | Out-Null
 $flags = @('-std=c++17', '-O2', '-DLGFX_SDL', "-I$PSScriptRoot/win/fake", "-I$lib", '-include', "$PSScriptRoot/win/stub.hpp")
 
@@ -29,15 +29,21 @@ foreach ($f in $c) {
   if (-not (Test-Path $o)) { & $zig cc -O1 "-I$lib" -c $f.FullName -o $o; if ($LASTEXITCODE) { throw "編譯失敗：$($f.Name)" } }
 }
 
-$exe = Join-Path $work 'preview.exe'
 $objs = Get-ChildItem "$obj/*.o" | ForEach-Object FullName
-& $zig c++ @flags "$PSScriptRoot/preview.cpp" "$PSScriptRoot/win/stub.cpp" @objs -o $exe
-if ($LASTEXITCODE) { throw "preview.cpp 編譯失敗" }
+# 兩種螢幕各編一次：240 = 1.28 吋 LCD、466 = 1.75 吋 AMOLED
+foreach ($size in 240, 466) {
+  $exe = Join-Path $work "preview$size.exe"
+  & $zig c++ @flags "-DLCD_W=$size" "$PSScriptRoot/preview.cpp" "$PSScriptRoot/win/stub.cpp" @objs -o $exe
+  if ($LASTEXITCODE) { throw "preview.cpp 編譯失敗（$size）" }
+  $dir = Join-Path $out $size
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  Remove-Item "$dir/*.ppm" -ErrorAction SilentlyContinue
+  Push-Location $dir
+  try { & $exe; if ($LASTEXITCODE) { throw "preview$size.exe 執行失敗" } } finally { Pop-Location }
+}
 
-Remove-Item "$out/*.ppm" -ErrorAction SilentlyContinue
-Push-Location $out
-try { & $exe; if ($LASTEXITCODE) { throw "preview.exe 執行失敗" } } finally { Pop-Location }
-
-go run "$PSScriptRoot/compose/main.go" $out $root
+$img = Join-Path $root 'docs/images'
+New-Item -ItemType Directory -Force $img | Out-Null
+go run "$PSScriptRoot/compose/main.go" $out $img
 if ($LASTEXITCODE) { throw "合成圖片失敗" }
-Write-Host "已更新：preview.png、preview-pages.png、preview-saver.png、preview.gif"
+Write-Host "已更新：docs/images/states.png、pages.png、demo.gif"

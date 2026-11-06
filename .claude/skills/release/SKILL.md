@@ -92,7 +92,7 @@ push 到 GitHub 之前，先把這次（以及上次 push 之後所有還沒 pus
 - `CLAUDE.md`：版本號那一行、新踩到的坑、主燈規則、待處理清單
 - 用 `git log origin/main..HEAD` 和 `git diff` 找出要寫的東西；畫面（`firmware/aimon/ui.h`）有改就重新產生預覽圖片，檢查圖片跟現在的畫面一致：
   `./firmware/preview/build-preview.ps1`（需要 zig：`winget install zig.zig`）。
-  會更新 `preview.png`、`preview-pages.png`、`preview-saver.png`、`preview.gif`；新增畫面或狀態時順便改 `firmware/preview/preview.cpp` 的場景
+  會更新 `docs/images/` 的 `states.png`、`pages.png`、`demo.gif`（畫面用 AMOLED 466 版、目前只展示 Claude）；新增畫面或狀態時順便改 `firmware/preview/preview.cpp` 的場景
 
 ## 6. 發佈 GitHub Release（使用者同意發版 / push 之後才做）
 

@@ -2,13 +2,13 @@
 
 插上 USB 就能用：每台電腦第一次雙擊 `AIMonitor.exe`，之後插上螢幕就會自動顯示**你目前正在用的 AI**（Claude / ChatGPT / Gemini 桌面 App；網頁版要另外裝瀏覽器擴充功能），不需要 Wi-Fi。
 
-![預覽](preview.png)
+<p align="center"><img src="docs/images/states.png" alt="各種狀態：需審核、生成中、完成、錯誤、待命、未連線" width="720"></p>
 
-動態效果見 [preview.gif](preview.gif)。
+各頁面（BOOT 短按切換，AMOLED 版左右滑：狀態 → 額度詳細 → 今日統計 → 時鐘）：
 
-各頁面（BOOT 短按切換，AMOLED 版左右滑：狀態 → 額度詳細 → 今日統計 → 時鐘）與螢幕保護（預覽圖是 1.28 吋版）：
+<p align="center"><img src="docs/images/pages.png" alt="狀態、額度詳細、今日統計、時鐘四個頁面" width="880"></p>
 
-![頁面](preview-pages.png)
+預覽圖是 1.75 吋 AMOLED 版（1.28 吋版版面相同，名稱位置是文字、沒有 Clawd）。動態效果見 [demo.gif](docs/images/demo.gif)。
 
 Apple Watch 活動圓環風格：純黑底、Apple 系統配色、Inter 字型（抗鋸齒）。
 

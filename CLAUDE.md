@@ -27,7 +27,7 @@ firmware/aimon/sensors.h   AMOLED 的觸控、陀螺儀（I2C）
 firmware/aimon/mic.h       AMOLED 的 USB 麥克風（ES7210 + I2S + 自訂 UAC1 class driver，執行中切 TinyUSB）
 firmware/tools/mic-off.ps1 燒錄前讓麥克風模式的 AMOLED 重開回 hwcdc，輸出新的 COM 埠
 firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
-firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）
+firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）→ docs/images/（用 AMOLED 466 的畫面、透明背景加機身邊框；目前只展示 Claude，ChatGPT / Gemini 還沒完全好）
 windows/                   Go 程式（Windows only，WebView2）
   main_windows.go          進入點、設定、序列埠連線（每個埠一條，runScreen）、指令（onCmd）、狀態 JSON（uiStatusJSON）
   state.go                 偵測結果 → 送給螢幕的 Frame（可跨平台測試）

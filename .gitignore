@@ -7,3 +7,6 @@ firmware/preview/*.o
 *.SLDBAK
 *.swbak
 enclosure/lcd128/reference/
+
+# 電腦端執行檔只放在 GitHub Release（./build.ps1 -Release 從乾淨的程式碼重新編），不進版控，避免 repo 每版多 10 MB
+windows/AIMonitor.exe

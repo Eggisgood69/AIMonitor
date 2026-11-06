@@ -95,7 +95,9 @@ AMOLED 版：DIN 接 8-pin 排座的 **GPIO16**，電源接排座的 **3V3** / *
 1. 用 Chrome 開啟 <https://espressif.github.io/esptool-js/>
 2. 用 USB 接上螢幕，按 **Connect**，選擇裝置。
    - 如果連不上：按住板子的 BOOT 鍵，再按一下 RST 鍵，然後放開 BOOT，再試一次。
-3. Flash Address 填 **0x0**，檔案選 `firmware/aimon-usb-esp32c3.bin`（1.28 吋）或 `firmware/aimon-usb-esp32s3-amoled175.bin`（1.75 吋 AMOLED），按 **Program**。
+3. Flash Address 填 **0x0**，檔案選 `aimon-usb-esp32c3.bin`（1.28 吋）或 `aimon-usb-esp32s3-amoled175.bin`（1.75 吋 AMOLED），按 **Program**。
+   兩個檔案都附在 [Releases](https://github.com/Eggisgood69/AIMonitor/releases/latest) 頁面（repo 的 `firmware/` 資料夾裡也有）。
+   這是含開機程式的完整韌體，只有新板子第一次要燒；之後的更新都在 AIMonitor 裡一鍵完成（AIMonitor 內建的只有程式本體，不能用來燒新板子）。
 4. 完成後按一下 RST 鍵，畫面會出現 **Not Connected**。
 
 ### 方法 B：Arduino IDE
@@ -111,7 +113,7 @@ PlatformIO 使用者：在 `firmware/` 目錄執行 `pio run -t upload`。
 
 ## 二、每台電腦：雙擊 `AIMonitor.exe`（Windows）
 
-1. 到 [Releases](https://github.com/Eggisgood69/AIMonitor/releases/latest) 下載最新的 `AIMonitor.exe`（或用 repo 裡的 `windows/AIMonitor.exe`），雙擊它。
+1. 到 [Releases](https://github.com/Eggisgood69/AIMonitor/releases/latest) 下載最新的 `AIMonitor.exe`，雙擊它（exe 只放在 Releases，repo 裡沒有；也可以自己用 `./build.ps1` 編）。
    - 如果出現「Windows 已保護您的電腦」：按「**其他資訊** → **仍要執行**」。這是因為這個程式沒有付費數位簽章。
 2. 它會自動安裝到 `%LOCALAPPDATA%\AIMonitor`，並設定成開機自動執行，然後打開設定視窗。之後雙擊新版來更新時，會安靜地取代執行中的舊版，不會再跳出設定視窗。
 3. 在設定視窗按「**登入 Claude**」，登入一次就好（建議用 Email 登入）。登入後就會自動在背景查詢額度。
@@ -216,7 +218,6 @@ firmware/tools/fontgen.py       重新產生字型（Inter, SIL OFL；`fontgen.p
 firmware/tools/logogen.py       重新產生今日統計頁的 LOGO 小圖（logos.h，來源是設定視窗的官方 LOGO）
 firmware/tools/mic-off.ps1      燒錄前讓開著麥克風的 AMOLED 重開回一般 USB，輸出它的 COM 埠（build.ps1 -Flash 會自動做）
 firmware/preview/               重新產生 README 的預覽圖片（`build-preview.ps1`，開發用）
-windows/AIMonitor.exe           Windows 程式（每台電腦雙擊一次）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）
 windows/extension/              AIMonitor 網頁偵測擴充功能（打包在 exe 裡，啟動時解開到 %LOCALAPPDATA%\AIMonitor\extension）
 extension/                      舊的 Chrome 擴充功能（選用，Mac 用，已不維護）

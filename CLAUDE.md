@@ -66,8 +66,9 @@ extension/                 舊的 Chrome 擴充功能（Mac 選用，直接連 U
 - S3 的 FQBN：`esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB`（核心一樣 2.0.9）
 - 只改電腦端：`cd windows; go test ./...; go build -trimpath -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
 - 雙擊新的 AIMonitor.exe 會自動取代執行中的舊版並安裝到 `%LOCALAPPDATA%\AIMonitor`
-- 發版：使用者同意後 commit + push，再 `./build.ps1 -Release`（`gh release create v<版本>`，上傳 `AIMonitor.exe` 與 `AIMonitor.exe.sha256`）。
-  它會檢查工作目錄乾淨、commit 已 push、exe 是這個版本編的（exe 裡有 `AIMonitor/<版本>` 字串）。每次 build 不會自動發佈
+- 發版：使用者同意後 commit + push，再 `./build.ps1 -Release`（`gh release create v<版本>`，上傳 `AIMonitor.exe`、`AIMonitor.exe.sha256`，
+  以及第一次燒錄用的完整韌體 `firmware/aimon-usb-*.bin`）。它會檢查工作目錄乾淨、commit 已 push，再從這份程式碼重新編 exe（確認 exe 裡有 `AIMonitor/<版本>` 字串）。每次 build 不會自動發佈
+- **exe 不進版控**（.gitignore，1.13.0 之後）：以前每版 commit 10 MB 的 exe，repo 漲到 155 MB。exe 只放在 Release；`windows/fw/*` 與 `firmware/aimon-usb-*.bin` 照樣 commit（exe 編譯時內嵌、第一次燒錄要用）
 
 ## 版本規則（改了就要升版）
 

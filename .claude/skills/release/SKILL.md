@@ -71,7 +71,7 @@ git diff --stat HEAD   # 再加上尚未 commit 的改動
 
 ## 4. Commit
 
-exe 和內建韌體都要進版控（`windows/AIMonitor.exe`、`windows/fw/*`、`firmware/aimon-usb-*.bin`），使用者是直接從 repo 拿 exe 的。
+內建韌體要進版控（`windows/fw/*`、`firmware/aimon-usb-*.bin`）。`windows/AIMonitor.exe` **不進版控**（.gitignore）：別人從 GitHub Release 下載，`./build.ps1 -Release` 會從 commit 好的程式碼重新編。
 
 訊息格式沿用既有慣例，用繁體中文：
 
@@ -103,8 +103,8 @@ AIMonitor 1.12.0 起會檢查 GitHub 最新的 Release 並提示使用者更新�
 ./build.ps1 -Release -Notes "這版改了什麼"
 ```
 
-它會確認工作目錄乾淨、commit 已 push、`windows\AIMonitor.exe` 是這個版本編出來的，再 `gh release create v<版本>` 上傳 `AIMonitor.exe` 與 `AIMonitor.exe.sha256`。
-這是對外公開的動作：每次都要先問使用者，**不要在每次 build 時自動發**。只改文件、沒升版的 push 不用發。發完到 Release 頁面確認兩個檔案都在。
+它會確認工作目錄乾淨、commit 已 push，從這份程式碼重新 `go test` + 編 exe，再 `gh release create v<版本>` 上傳 `AIMonitor.exe`、`AIMonitor.exe.sha256` 與兩個完整韌體 `aimon-usb-esp32c3.bin`、`aimon-usb-esp32s3-amoled175.bin`（新板子第一次燒錄用，Release 說明會自動附上燒錄說明）。
+這是對外公開的動作：每次都要先問使用者，**不要在每次 build 時自動發**。只改文件、沒升版的 push 不用發。發完到 Release 頁面確認四個檔案都在。
 
 ## 回報
 

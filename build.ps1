@@ -3,8 +3,9 @@
 #   ./build.ps1 -Flash COM5  建置後直接燒錄韌體到螢幕（自動判斷是哪種螢幕；先結束 AIMonitor，避免序列埠被占用）
 #   ./build.ps1 -Flash COM8 -Board s3a175   指定螢幕種類（c3 / s3a175）
 #   ./build.ps1 -AppOnly     只編譯電腦端程式
-#   ./build.ps1 -Release     發版：把已 commit、已 push 的 windows\AIMonitor.exe 和它的 SHA256 上傳成 GitHub Release v<版本>
-#                            （AIMonitor 會檢查這裡的最新版、提示使用者更新）。只在使用者同意發版後執行，不會自動跑
+#   ./build.ps1 -Release     發版：從已 commit、已 push 的程式碼重新編 AIMonitor.exe，連同 SHA256 與兩個完整韌體（第一次燒錄用）
+#                            上傳成 GitHub Release v<版本>（AIMonitor 會檢查這裡的最新版、提示使用者更新）。
+#                            exe 不進版控，只放在 Release。只在使用者同意發版後執行，不會自動跑
 #   ./build.ps1 -Release -Notes "這版改了什麼"   Release 說明（預設用最後一個 commit 的訊息）
 param([string]$Flash = "", [string]$Board = "", [switch]$AppOnly, [switch]$Release, [string]$Notes = "")
 $ErrorActionPreference = 'Stop'
@@ -16,22 +17,39 @@ if ($Release) {
   $exe = Join-Path $root 'windows\AIMonitor.exe'
   Push-Location $root
   try {
-    if (git status --porcelain) { throw '還有沒 commit 的改動：先 commit（exe 要跟程式碼一致）再發版' }
+    # exe 不進版控（.gitignore）：工作目錄乾淨 = 內建韌體（windows\fw）與程式碼都已 commit，再從這份程式碼重新編 exe
+    if (git status --porcelain) { throw '還有沒 commit 的改動：先 commit 再發版（Release 的 exe 要跟 GitHub 上的程式碼一致）' }
     git fetch -q origin
     if (-not (git branch -r --contains HEAD)) { throw '這個 commit 還沒 push 到 GitHub：先 push 再發版' }
-    # exe 裡的 User-Agent 字串帶版本號：確認 exe 是這個版本編出來的
-    $bin = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
-    if ($bin.IndexOf("AIMonitor/$ver") -lt 0) { throw "windows\AIMonitor.exe 不是 $ver 編出來的：先 ./build.ps1 再 commit" }
     gh release view $tag 2>$null | Out-Null
     if (-not $LASTEXITCODE) { throw "GitHub 上已經有 $tag 了" }
+    Write-Host "== 從 $(git rev-parse --short HEAD) 重新編 AIMonitor.exe ==" -ForegroundColor Cyan
+    Push-Location (Join-Path $root 'windows')
+    try {
+      go test ./...
+      if ($LASTEXITCODE) { throw '測試失敗' }
+      go build -trimpath -ldflags '-H windowsgui -s -w' -o AIMonitor.exe .
+      if ($LASTEXITCODE) { throw '編譯失敗' }
+    } finally { Pop-Location }
+    # exe 裡的 User-Agent 字串帶版本號：再確認一次是這個版本
+    $bin = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($exe))
+    if ($bin.IndexOf("AIMonitor/$ver") -lt 0) { throw "windows\AIMonitor.exe 不是 $ver 編出來的" }
     $out = Join-Path $root 'build\release'
     New-Item -ItemType Directory -Force $out | Out-Null
     Copy-Item $exe (Join-Path $out 'AIMonitor.exe') -Force
     $hash = (Get-FileHash (Join-Path $out 'AIMonitor.exe') -Algorithm SHA256).Hash.ToLower()
     [IO.File]::WriteAllText((Join-Path $out 'AIMonitor.exe.sha256'), "$hash  AIMonitor.exe`n")
+    # 完整韌體（含開機程式，從 0x0 燒）：新板子第一次燒錄用（README「一、燒錄韌體」）
+    $fws = @('aimon-usb-esp32c3.bin', 'aimon-usb-esp32s3-amoled175.bin') | ForEach-Object {
+      $f = Join-Path $root "firmware\$_"
+      if (-not (Test-Path $f)) { throw "找不到 firmware\$_：先 ./build.ps1" }
+      $f
+    }
     if (-not $Notes) { $Notes = (git log -1 --format=%B) -join "`n" }
-    Write-Host "== 發佈 $tag（SHA256 $hash）==" -ForegroundColor Cyan
-    gh release create $tag (Join-Path $out 'AIMonitor.exe') (Join-Path $out 'AIMonitor.exe.sha256') --target (git rev-parse HEAD) --title "AIMonitor $ver" --notes $Notes
+    $fwVer = (Get-Content (Join-Path $root 'windows\fw\version.txt') -Raw).Trim()
+    $Notes += "`n`n---`n新板子第一次燒錄：下載 ``aimon-usb-esp32c3.bin``（1.28 吋 LCD）或 ``aimon-usb-esp32s3-amoled175.bin``（1.75 吋 AMOLED），韌體 $fwVer，從 **0x0** 燒錄（見 README「一、燒錄韌體」）。已經燒過的螢幕不用下載，AIMonitor 會提示一鍵更新。"
+    Write-Host "== 發佈 $tag（SHA256 $hash，韌體 $fwVer）==" -ForegroundColor Cyan
+    gh release create $tag (Join-Path $out 'AIMonitor.exe') (Join-Path $out 'AIMonitor.exe.sha256') @fws --target (git rev-parse HEAD) --title "AIMonitor $ver" --notes $Notes
     if ($LASTEXITCODE) { throw '建立 Release 失敗' }
     Write-Host "完成：$tag 已發佈" -ForegroundColor Green
   } finally { Pop-Location }

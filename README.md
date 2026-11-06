@@ -140,7 +140,7 @@ Windows 只讀得到瀏覽器每個視窗**正在顯示的分頁**，切到別�
 
 ### Mac 或不想裝 exe：舊的 Chrome 擴充功能（選用）
 
-專案根目錄的 `extension` 資料夾是舊的 Chrome 擴充功能版本（直接透過 USB 送到螢幕，不需要 AIMonitor.exe），Mac 也能用，但只偵測得到 Chrome 分頁、已不維護。Windows 請用上一節的「AIMonitor 網頁偵測」，不是這個。安裝方式：到 `chrome://extensions` 開啟開發人員模式 → 載入未封裝項目 → 選 `extension` 資料夾 → 在跳出的頁面配對螢幕。**不要和 AIMonitor.exe 同時使用。**
+專案根目錄的 `extension-mac-legacy` 資料夾是舊的 Chrome 擴充功能版本（直接透過 USB 送到螢幕，不需要 AIMonitor.exe），Mac 也能用，但只偵測得到 Chrome 分頁、已不維護。Windows 請用上一節的「AIMonitor 網頁偵測」，不是這個。安裝方式：到 `chrome://extensions` 開啟開發人員模式 → 載入未封裝項目 → 選 `extension-mac-legacy` 資料夾 → 在跳出的頁面配對螢幕。**不要和 AIMonitor.exe 同時使用。**
 
 ## 額度（三家都支援）
 
@@ -220,7 +220,8 @@ firmware/tools/mic-off.ps1      燒錄前讓開著麥克風的 AMOLED 重開回�
 firmware/preview/               重新產生 README 的預覽圖片（`build-preview.ps1`，開發用）
 windows/                        程式原始碼（Go；monitor.ps1 是畫面偵測規則）
 windows/extension/              AIMonitor 網頁偵測擴充功能（打包在 exe 裡，啟動時解開到 %LOCALAPPDATA%\AIMonitor\extension）
-extension/                      舊的 Chrome 擴充功能（選用，Mac 用，已不維護）
+extension-mac-legacy/           舊的 Chrome 擴充功能（選用，Mac 用，已不維護）
+.github/workflows/test.yml      每次 push / PR 在 GitHub 上自動跑電腦端的測試
 ```
 
 ## 授權

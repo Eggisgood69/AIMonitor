@@ -45,7 +45,8 @@ windows/                   Go 程式（Windows only，WebView2）
   fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/                 3D 列印外殼（使用者自己用 SolidWorks 畫，設計中），每種螢幕一個資料夾：
   lcd128/ amoled175/       原始檔、export/ 匯出檔、reference/ 板子參考模型（amoled175 是 Waveshare 官方 STEP，公開；lcd128 的來源不明，.gitignore 排除）
-extension/                 舊的 Chrome 擴充功能（Mac 選用，直接連 USB，已不維護；Windows 的是 windows/extension/）
+extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 USB，已不維護；Windows 的是 windows/extension/）。以前叫 extension/，容易跟 windows/extension/ 搞混才改名
+.github/workflows/test.yml 每次 push / PR 在 GitHub Actions（Linux）跑 `go vet` + `go test`：只編得到非 *_windows.go 的檔案，新的可測邏輯放在沒有 build tag 的檔案
 ```
 
 ## 建置（Windows，PowerShell）

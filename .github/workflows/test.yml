@@ -1,0 +1,25 @@
+# 每次 push / PR 自動跑電腦端的測試（state.go、appupdate.go 等可跨平台的部分；Windows 專用的 *_windows.go 不在 Linux 編）
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/go.mod
+          cache-dependency-path: windows/go.sum
+      - run: go vet ./...
+      - run: go test ./...

@@ -673,26 +673,10 @@ static void gaugeArcBox(float a, float b, int& x, int& y, int& w, int& h) {
   if (y + h > H) h = (H - y) & ~1;
 }
 
-// 主畫面的經過時間（ChatGPT / Gemini 沒有額度時的大數字）：每秒只重畫那一塊；範圍偶數對齊，含防烙印挪動
-static bool numBox(int& x, int& y, int& w, int& h) {
-  if (g_saver || g_page != 0 || !linkAlive() || g_frame.p5 >= 0 || g_frame.brand == N_BRANDS - 1) return false;
-  const int tw = textW("88:88", &fNum.font) + SI(16);
-  x = (CX - tw / 2 + g_shX) & ~1; w = (tw + 2) & ~1;
-  y = (SI(80) + g_shY) & ~1; h = (SI(54)) & ~1;          // 上面是 LOGO（到 66）、下面是 Generating（從 136）
-  return true;
-}
-static void numDraw() {
-  char num[12];
-  const uint32_t el = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
-  if (el >= 3600) snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 3600), (unsigned)((el % 3600) / 60));
-  else snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 60), (unsigned)(el % 60));
-  bigValue(num, false, SI(106));
-}
-
 // 主畫面「Generating」那一列的範圍（偶數對齊，含防烙印挪動）與它的 y；不是生成中就不用動畫
 static bool genBox(int& x, int& y, int& w, int& h, int& ly) {
   if (g_saver || g_page != 0 || !linkAlive() || g_frame.st != S_WORKING) return false;
-  ly = g_frame.p5 >= 0 ? SI(145) : SI(148);              // 跟 drawScene 一樣
+  ly = g_frame.brand != N_BRANDS - 1 ? SI(145) : SI(148);   // 跟 drawScene 一樣
   const int tw = textW(ST_TITLE[S_WORKING], &fLabel.font) + SI(12);
   x = (CX - tw / 2 - SI(4) + g_shX) & ~1; w = (tw + SI(8) + 2) & ~1;
   y = (ly - SI(12) + g_shY) & ~1; h = (SI(24) + 2) & ~1;
@@ -952,20 +936,33 @@ static void drawTodayPage(uint32_t ms) {
   uint32_t maxS = 1, totS = 0; int totC = 0;
   for (int i = 0; i < f.nToday; i++) { if (f.today[i].secs > maxS) maxS = f.today[i].secs; totS += f.today[i].secs; totC += f.today[i].count; }
   const int rowH = SI(36), y0 = SI(122) - (f.nToday - 1) * rowH / 2 - SI(4);
-  const int bx = SI(64), bw = SI(84);
+  // 版面依實際字寬算：時間靠右對齊在圓裡（離外環留空），長條從 LOGO 右邊延伸到最寬的那個時間前面。
+  // 以前長條固定 84、時間接在後面，「4H 44M」這種長的會切到外環
+  int maxTW = 0;
+  for (int i = 0; i < f.nToday; i++) maxTW = max(maxTW, textW(fmtDur(f.today[i].secs).c_str(), &fLabel.font));
+  const float RS = S(98);                                   // 字和圖示不超出這個半徑（外環從 110.5 開始）
+  float half = RS;                                          // 每一列都放得下的最小半寬
+  for (int i = 0; i < f.nToday; i++) {
+    const float dy = (y0 + i * rowH) - CY;
+    const float dy2 = fabsf(dy) + SI(10);                   // 字有高度：用字的上 / 下緣算
+    half = min(half, sqrtf(max(0.0f, RS * RS - dy2 * dy2)));
+  }
+  const int txr = CX + (int)half;                           // 時間的右緣
+  const int lx = CX - (int)half + LOGO_N / 2;               // LOGO 中心
+  const int bx = lx + LOGO_N / 2 + SI(7), bw = txr - maxTW - SI(8) - bx;   // 長條：LOGO 右邊到最寬的時間前面
   for (int i = 0; i < f.nToday; i++) {
     const Frame::Today& t = f.today[i];
     const Brand& b = BRANDS[t.brand];
     int y = y0 + i * rowH;
     // 品牌 LOGO（官方圖示；跟字一樣跟著防烙印挪動）
-    if (t.brand < 3) band.pushImage(SI(48) + g_shX - LOGO_N / 2, y + g_shY - LOGO_N / 2 - OY, LOGO_N, LOGO_N, (const lgfx::rgb565_t*)LOGOS[t.brand]);
-    else band.fillSmoothCircle(SI(48) + g_shX, y + g_shY - OY, S(9), b.color);
+    if (t.brand < 3) band.pushImage(lx + g_shX - LOGO_N / 2, y + g_shY - LOGO_N / 2 - OY, LOGO_N, LOGO_N, (const lgfx::rgb565_t*)LOGOS[t.brand]);
+    else band.fillSmoothCircle(lx + g_shX, y + g_shY - OY, S(9), b.color);
     // 生成時間長條
-    band.fillSmoothRoundRect(bx + g_shX, y - SI(4) + g_shY - OY, bw, SI(8), SI(4), mix(C_BG, b.color, 0.22f));
+    band.fillSmoothRoundRect(bx + g_shX, y - SI(4) + g_shY - OY, bw, SI(8), SI(4), mix(C_BG, b.color, 0.12f));   // 底色暗一點（白色的 ChatGPT 0.22 時看起來像整條滿的）
     int w = (int)((float)bw * t.secs / maxS + 0.5f);
     if (w < SI(8)) w = SI(8);
     band.fillSmoothRoundRect(bx + g_shX, y - SI(4) + g_shY - OY, w, SI(8), SI(4), b.color);
-    text(fmtDur(t.secs).c_str(), bx + bw + SI(8), y + SI(1), C_LABEL, &fLabel.font, middle_left);
+    text(fmtDur(t.secs).c_str(), txr, y + SI(1), C_LABEL, &fLabel.font, middle_right);
     char c[20]; snprintf(c, sizeof c, "%d %s", t.count, t.count == 1 ? "REPLY" : "REPLIES");
     text(c, bx, y + SI(15), C_LABEL2, &fTiny.font, middle_left);
   }
@@ -999,15 +996,17 @@ static void drawScene(uint32_t ms) {
 
   statusRingBand(ms);
 
-  char num[12];
-  if (hasUsage) {
-    const float p5 = p5View();                              // 額度變了會慢慢跑過去（韌體 gaugeTick）
+  // 有 AI 時一律用額度的版面。還沒讀到額度（例如 AIMonitor 剛重開、ChatGPT 額度晚一分鐘才讀到）時只畫軌道、數字寫「--」，
+  // 讀到後 gaugeTick 從 0 捲上去。以前沒有額度時改顯示經過時間（0:15 ELAPSED），使用者不要、也看不懂為什麼跳成那樣
+  if (hasAI) {
+    const float p5 = hasUsage ? p5View() : 0;               // 額度變了會慢慢跑過去（韌體 gaugeTick）
     uint32_t uc = f.p5 >= g_redAt ? C_RED : b.color;        // 顏色看目標值、不看捲動中的值：捲過門檻時整圈突然變色很醜（切換 AI 時最明顯）
     progressRing(R_USAGE, HW_USAGE, p5, uc);
 
     if (!clawdBox(bx, by, bw, bh)) brandMark(f.brand, SI(54));   // 官方 LOGO 取代名稱（比名稱文字高一點，跟數字留空間）
     else clawdDraw(ms);                                     // AMOLED：Claude 換成會動的 Clawd
-    pctDraw();
+    if (hasUsage) pctDraw();
+    else bigValue("--", false, SI(106));
     statusLine(f.st, SI(145), ms);
 
     // 每週額度：只顯示文字
@@ -1021,29 +1020,25 @@ static void drawScene(uint32_t ms) {
     if (f.note.length()) cap = f.note;
     else if (f.msg.length()) cap = f.msg;
     else {
-      String left = fmtLeft(f.r5);
+      String left = hasUsage ? fmtLeft(f.r5) : String("");
       cap = left.length() ? String("RESETS ") + left : String("");
     }
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL3;
     if (cap.length()) text(fitText(cap, SI(150), &fTiny.font).c_str(), CX, SI(185), capCol, &fTiny.font);
     if (f.nOthers > 0) othersRow(f);
   } else {
-    if (clawdBox(bx, by, bw, bh)) clawdDraw(ms);
-    else if (hasAI) brandMark(f.brand, SI(50));             // 官方 LOGO 取代名稱（跟數字留空間）
-    else text("No AI Tab", CX, SI(56), C_LABEL2, &fName.font);
-    if (hasAI) numDraw();                                   // 經過時間（韌體每秒只重畫這一塊，numBox）
-    else bigValue("--", false, SI(106));
+    text("No AI Tab", CX, SI(56), C_LABEL2, &fName.font);   // 沒有任何 AI 開著
+    bigValue("--", false, SI(106));
     statusLine(f.st, SI(148), ms);
-    String cap = f.note.length() ? f.note : f.msg.length() ? f.msg : String(hasAI ? (f.st == S_IDLE ? "SINCE LAST REPLY" : "ELAPSED") : "OPEN CHATGPT, CLAUDE OR GEMINI");
+    String cap = f.note.length() ? f.note : f.msg.length() ? f.msg : String("OPEN CHATGPT, CLAUDE OR GEMINI");
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL2;
     text(fitText(cap, SI(170), &fTiny.font).c_str(), CX, SI(173), capCol, &fTiny.font);
     if (f.nOthers > 0) othersRow(f);
   }
 }
 
-// 整個畫面是否需要每秒重畫（經過時間、倒數）
+// 整個畫面是否需要每秒重畫（其他頁的倒數）；狀態頁由 viewKey 決定
 static bool animating() {
   if (g_saver) return false;              // 螢幕保護每 5 秒更新就夠（時鐘到分鐘）
-  if (g_page != 0) return true;
-  return linkAlive() && g_frame.p5 < 0 && g_frame.brand != N_BRANDS - 1;
+  return g_page != 0;
 }

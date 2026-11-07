@@ -92,7 +92,7 @@ push 到 GitHub 之前，先把這次（以及上次 push 之後所有還沒 pus
 - `CLAUDE.md`：版本號那一行、新踩到的坑、主燈規則、待處理清單
 - 用 `git log origin/main..HEAD` 和 `git diff` 找出要寫的東西；畫面（`firmware/aimon/ui.h`）有改就重新產生預覽圖片，檢查圖片跟現在的畫面一致：
   `./firmware/preview/build-preview.ps1`（需要 zig：`winget install zig.zig`）。
-  會更新 `docs/images/` 的 `states-v2.png`、`ais.png`、`pages-v3.png`、`demo-v2.gif`（GitHub 會快取圖片，內容改了就換新檔名，例如 -v3，並改 compose/main.go 與 README）（畫面用 AMOLED 466 版；狀態圖用 Claude，ais.png 是三家 AI 各一張）；新增畫面或狀態時順便改 `firmware/preview/preview.cpp` 的場景
+  會更新 `docs/images/` 的 `states-v2.png`、`ais.png`、`pages-v4.png`、`demo-v2.gif`（GitHub 會快取圖片，內容改了就換新檔名，例如 -v3，並改 compose/main.go 與 README）（畫面用 AMOLED 466 版；狀態圖用 Claude，ais.png 是三家 AI 各一張）；新增畫面或狀態時順便改 `firmware/preview/preview.cpp` 的場景
 
 ## 6. 發佈 GitHub Release（使用者同意發版 / push 之後才做）
 
@@ -102,6 +102,10 @@ AIMonitor 1.12.0 起會檢查 GitHub 最新的 Release 並提示使用者更新�
 ./build.ps1 -Release                      # Release 說明預設用最後一個 commit 的訊息
 ./build.ps1 -Release -Notes "這版改了什麼"
 ```
+
+**有看得到的改動（螢幕畫面、設定視窗）就在說明裡附圖**（使用者要求）：用 `docs/images/` 的預覽圖，網址固定在這個 tag，之後換圖也不會變：
+`![說明](https://raw.githubusercontent.com/Eggisgood69/AIMonitor/v<版本>/docs/images/<檔名>)`。
+README 的圖沒有涵蓋這次的改動時，先另外產生一張只放改動頁面的圖、commit 進 `docs/images/`。純邏輯改動不用附。發完打開 Release 頁面確認圖片顯示得出來。
 
 它會確認工作目錄乾淨、commit 已 push，從這份程式碼重新 `go test` + 編 exe，再 `gh release create v<版本>` 上傳 `AIMonitor.exe`、`AIMonitor.exe.sha256` 與兩個完整韌體 `aimon-usb-esp32c3.bin`、`aimon-usb-esp32s3-amoled175.bin`（新板子第一次燒錄用，Release 說明會自動附上燒錄說明）。
 這是對外公開的動作：每次都要先問使用者，**不要在每次 build 時自動發**。只改文件、沒升版的 push 不用發。發完到 Release 頁面確認四個檔案都在。

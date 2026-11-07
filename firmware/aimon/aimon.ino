@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.39"
+#define FW_VERSION "1.10.41"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -585,6 +585,8 @@ static void handleLine(Stream* src, const String& line) {
   }
   // 需要你處理的狀態：自動回到狀態頁
   if ((f.st == S_REVIEW || f.st == S_ERROR || (f.st == S_WORKING && g_frame.st != S_WORKING)) && g_page != 0) g_page = 0;
+  // 剛讀到額度（之前這家沒有額度）：從 0 捲上去，不要直接跳到數字（gaugeTick 看到 g_p5Shown < 0 會直接跳）
+  if (f.p5 >= 0 && (g_frame.p5 < 0 || f.brand != g_frame.brand) && g_p5Shown < 0) g_p5Shown = 0;
   g_frame = f;
   g_lastFrameMs = millis();
   if (!g_everConnected) g_everConnected = true;
@@ -873,17 +875,6 @@ static void genTick(uint32_t now, bool force) {
   last = now;
   g_genMs = now;
   redrawRect(bx, by, bw, bh, genDraw);
-}
-
-// 經過時間（ChatGPT / Gemini 的大數字）：秒數變了只重畫那一塊
-static void numTick() {
-  static uint32_t lastSec = 0xFFFFFFFF;
-  int bx, by, bw, bh;
-  if (!numBox(bx, by, bw, bh)) { lastSec = 0xFFFFFFFF; return; }
-  const uint32_t sec = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
-  if (sec == lastSec) return;
-  lastSec = sec;
-  redrawRect(bx, by, bw, bh, numDraw);
 }
 
 // 額度環的漸進動畫：電腦送來的 5 小時額度變了，畫面上的值（g_p5Shown）在 GAUGE_ANIM_MS 內跑到新值（先快後慢），
@@ -1213,7 +1204,7 @@ void loop() {
   showBright();
 #endif
   bool periodic = now - lastFull >= (animating() ? 1000u : 5000u);
-  if (periodic && !g_saver && g_page == 0) {   // 狀態頁：倒數、日期到分鐘才變，經過時間由 numTick 只重畫數字
+  if (periodic && !g_saver && g_page == 0) {   // 狀態頁：倒數、日期到分鐘才變
     static uint32_t lastView = 0;
     const uint32_t k = viewKey();
     periodic = k != lastView;
@@ -1252,7 +1243,6 @@ void loop() {
     clawdTick(now);
 #endif
     genTick(now, false);
-    numTick();
     gaugeTick(now);
     othersTick(now);
   }
@@ -1263,7 +1253,7 @@ void loop() {
     const uint32_t t0 = millis();
     renderStrip(stripMs);
     stripSinceRing = true;
-    if (g_fadeDir == 0) { genTick(millis(), false); gaugeTick(millis()); numTick(); }   // 重畫中光、額度、經過時間也照常走（不然完成 / 待命時整張重畫，動畫會停一下）
+    if (g_fadeDir == 0) { genTick(millis(), false); gaugeTick(millis()); }   // 重畫中光、額度也照常走（不然完成 / 待命時整張重畫，動畫會停一下）
     if (millis() - t0 > g_maxStripMs) g_maxStripMs = millis() - t0;
     OY = 0;
     if (++strip * BAND_H >= H) {

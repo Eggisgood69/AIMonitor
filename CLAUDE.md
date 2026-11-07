@@ -76,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.28、韌體 1.10.39（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.30、韌體 1.10.41（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -95,7 +95,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   以像素中心算距離才會跟舊畫法對齊（`drawWideLine` 只吃整數座標），邊緣多 0.2 px（`GAUGE_AA`）補回舊畫法重疊造成的粗細
 - 螢幕方向存在 NVS（Preferences "aimon"/"rot"）
 - 只重畫一小塊的動畫（aimon.ino `redrawRect`，兩種螢幕共用）：「Generating」的光（`genTick`，每 40 ms）、
-  ChatGPT / Gemini 的經過時間（`numTick`，秒數變了才畫）、額度環與里程表數字（`gaugeTick`，3 秒 ease-in-out，`GAUGE_ANIM_MS`）。
+  額度環與里程表數字（`gaugeTick`，3 秒 ease-in-out，`GAUGE_ANIM_MS`）。
   一次最多畫 BAND_H 列（外環 / 額度環查表一次只畫一條高），AMOLED 畫進 g_fb 再一段一段 `pushFbRect`：
   **轉向暫存區 `g_rotBuf` 只有 W × BAND_H**，整塊一次送會寫爆它、螢幕當機重開（曾經切到 ChatGPT 就全黑；`pushRect` 現在超過就不送）。
   1.28 吋借用分條的 sprite，送出時跳過 `RING_KEY`（不蓋掉螢幕上的外環）
@@ -114,6 +114,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   - 額度動畫踩過：差不到 0.05 就直接設成目標卻沒重畫 → 數字停在捲了 95% 的地方；ease-out cubic 最後 30% 時間只走 3%，看起來卡住；
     只有小數變（44.6 → 44.7）時不要重新計時；目標有小數時里程表停在四捨五入的整數（`pctDraw` 的 `disp`）
   - Arduino 的 `F()` 巨集會吃掉叫 `F` 的樣板參數，自動產生的函式原型也會弄壞樣板函式 → `redrawRect` 用函式指標
+- 主畫面沒有額度（剛重開、額度還沒讀到）時跟有額度同一個版面，數字顯示 `--`、讀到後從 0 捲上去（aimon.ino 設 `g_p5Shown = 0`）。
+  以前改顯示經過時間（0:15 ELAPSED），使用者不要（2026-11 拿掉 `numTick` / `numDraw`）。電腦端額度存在 `quota.json`（quotastore.go，只存數字與時間），啟動時讀回 15 分鐘內的
 - AMOLED 切換 AI 時淡出淡入（跟換頁同一套 `fadeTick`），以前直接整張送看得到撕裂；換 AI 時額度照樣捲（使用者喜歡從上一家捲到這一家）
 - 額度變紅的門檻 = 設定視窗「額度重置提醒」的門檻（frame 的 `red`，`redThreshold()`；提醒關閉時送 0 = 不變紅，韌體 `g_redAt` 預設 90 給舊版電腦端）。
   顏色看目標值 `f.p5`、**不看捲動中的 `p5View()`**：以前捲過 90 才在 gaugeTick 設 dirty 整張重畫成紅色，切換 AI（例如 GPT 白 → 紅）時看得到跳色、撕裂

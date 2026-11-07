@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.13.28"
+const version = "1.13.30"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -1160,6 +1160,7 @@ func main() {
 	}()
 
 	stats = NewStats(filepath.Join(appDir, "stats.json"))
+	state.LoadQuotas(filepath.Join(appDir, "quota.json")) // 重開前最後讀到的額度（15 分鐘內），重開後第一分鐘也有額度
 	startClaudeCodeServer()
 	go serialLoop()
 	go runMonitor(func(items []Item) {

@@ -83,14 +83,15 @@ type pendingFinish struct {
 }
 
 type State struct {
-	mu       sync.Mutex
-	pending  []pendingFinish  // Claude App 的完成：等幾秒確認不是 Claude Code 同一個對話，才算進統計
-	genAcc   map[string]int64 // 每個項目這次生成累積的毫秒數（不含需審核）
-	lastScan int64
-	done     []Finish
-	items    map[string]*Item
-	quota    map[string]*Quota
-	now      func() time.Time
+	mu        sync.Mutex
+	pending   []pendingFinish  // Claude App 的完成：等幾秒確認不是 Claude Code 同一個對話，才算進統計
+	genAcc    map[string]int64 // 每個項目這次生成累積的毫秒數（不含需審核）
+	lastScan  int64
+	done      []Finish
+	items     map[string]*Item
+	quota     map[string]*Quota
+	quotaPath string // 額度存檔（quotastore.go），空的 = 不存
+	now       func() time.Time
 }
 
 func NewState() *State {
@@ -272,6 +273,7 @@ func (s *State) SetQuota(ai string, q Quota) {
 	defer s.mu.Unlock()
 	q.T = s.now()
 	s.quota[ai] = &q
+	s.saveQuotasLocked()
 }
 
 func (s *State) GetQuota(ai string) *Quota {

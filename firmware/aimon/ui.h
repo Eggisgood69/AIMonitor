@@ -588,10 +588,15 @@ static uint32_t frameKey(const Frame& f) {
   k = k * 31 + (uint32_t)(int)(f.pw * 2 + 0.5f);
   k = k * 31 + f.r5;
   k = k * 31 + f.rw;
-  for (int i = 0; i < f.nOthers; i++) k = k * 31 + f.others[i].brand * 8 + f.others[i].st;
-  k = k * 31 + f.nOthers;
   for (int i = 0; i < f.nToday; i++) k = (k * 31 + f.today[i].brand * 1000 + f.today[i].count) * 31 + f.today[i].secs;
   return k * 31 + f.nToday;
+}
+// 其他對話的小圓點（othersRow）：只有這個變了時不整張重畫，韌體只重畫小圓點那一塊（othersBox）。
+// 狀態切換時電腦常在幾秒內連送好幾張只差在小圓點的畫面，每次整張重畫（AMOLED 一次 300-600 ms）Generating 的光就頓一下
+static uint32_t othersKey(const Frame& f) {
+  uint32_t k = f.nOthers;
+  for (int i = 0; i < f.nOthers; i++) k = k * 31 + f.others[i].brand * 8 + f.others[i].st;
+  return k;
 }
 // 跟時間有關、到分鐘才會變的東西（重置倒數、日期）與防烙印位置：變了才整張重畫
 static uint32_t viewKey() {
@@ -691,6 +696,19 @@ static bool genBox(int& x, int& y, int& w, int& h, int& ly) {
   const int tw = textW(ST_TITLE[S_WORKING], &fLabel.font) + SI(12);
   x = (CX - tw / 2 - SI(4) + g_shX) & ~1; w = (tw + SI(8) + 2) & ~1;
   y = (ly - SI(12) + g_shY) & ~1; h = (SI(24) + 2) & ~1;
+  return true;
+}
+
+// 小圓點那一塊（最多 5 顆：中心左右各 2 格，偶數對齊）。在額度環下方的缺口裡，碰不到額度環的圓頭與文字；
+// 最下面碰到外環內緣一點點（重畫時外環照樣畫進去）。看不到（其他頁、螢幕保護）就不用畫
+static bool othersBox(int& x, int& y, int& w, int& h) {
+  if (g_saver || g_page != 0 || !linkAlive()) return false;
+  const float a = 2 * S(16) / R_USAGE;                     // 最外面那顆離正下方的角度（弧度）
+  const float dx = R_USAGE * sinf(a) + HW_USAGE + S(2);
+  const float top = R_USAGE * cosf(a) - HW_USAGE - S(2), bot = R_USAGE + HW_USAGE + S(1.5f);
+  x = (int)(CX - dx) & ~1; w = ((int)(2 * dx) + 4) & ~1;
+  y = (int)(CY + top) & ~1; h = ((int)(bot - top) + 4) & ~1;
+  if (y + h > H) h = (H - y) & ~1;
   return true;
 }
 

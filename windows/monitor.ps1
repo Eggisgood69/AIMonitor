@@ -23,6 +23,7 @@ public static class AimonWin {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
 }
 "@
 
@@ -55,6 +56,9 @@ $WAIT_RE = '^(.*[，,]\s*)?(等待輸入|正在等待您的輸入|waiting for (y
 # 等你核准時對話列名稱後面多「待核准」，完成後沒點開前面多「未讀」。英文介面的說法沒實測過
 $GPT_BUSY_RE = '^(處理中|processing)$'
 $GPT_WAIT_RE = '^(未讀|unread)?(.+?)(待核准|awaiting approval|needs approval)$'
+# 出錯：ChatGPT 聊天模式生成失敗時停止鈕消失、出現「再試一次」（2026-11 實測）。舊訊息上的也會一直留著，
+# 所以要比生成開始時多一個才算這次出錯。Codex 模式斷網只會「正在重新連線 n/5」，網路回來自己接著做完，不算錯誤
+$RETRY_RE = '^(再試一次|重試|重新嘗試|try again|retry)$'
 
 function Now-Ms { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
 
@@ -73,6 +77,7 @@ $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 $items = @{}        # key -> 狀態
 $bg = @{}           # Claude App 背景對話：標題 -> 狀態（畫面上看不到停止鈕，只能看側邊欄）
 $bgGpt = @{}        # ChatGPT App 背景對話：標題 -> 狀態
+$appWins = @{}      # 桌面 App -> 看過的主視窗 handle（視窗隱藏後還能繼續讀）
 $tracked = @{}      # 瀏覽器視窗 hwnd -> $true（前景過的視窗，切走後仍持續追蹤，才能偵測到「背景完成」）
 $omni = @{}         # 瀏覽器視窗 hwnd -> 網址列元素（快取，避免每次搜尋整個畫面）
 
@@ -85,6 +90,8 @@ function Get-ButtonNames([IntPtr]$hwnd) {
       try {
         $n = $e.Current.Name
         if ($n -and -not $e.Current.IsOffscreen) { $names.Add($n.Trim()) }
+        # 捲到畫面外的「再試一次」也要算（前面加 ~，不會被當成別的按鈕）：只算畫面上的話，捲動或縮小視窗時數量會變，誤判成出錯
+        elseif ($n -and $n.Trim() -match $RETRY_RE) { $names.Add('~' + $n.Trim()) }
       } catch {}
     }
   } catch {}
@@ -131,32 +138,39 @@ function Get-View($names) {
 
 function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$now, [string]$view = '', [bool]$busy = $false, [bool]$wait = $false) {
   if (-not $items.ContainsKey($key)) {
-    $items[$key] = @{ key = $key; ai = $ai; gen = $false; genSince = 0; genOffAt = 0; review = $false; reviewSince = 0; finishedAt = 0 }
+    $items[$key] = @{ key = $key; ai = $ai; gen = $false; genSince = 0; genOffAt = 0; review = $false; reviewSince = 0; finishedAt = 0; failed = $false; msg = ''; retries = 0 }
   }
   $s = $items[$key]
   $s.ai = $ai
   $s.focused = $focused
   $s.seen = $now
+  $s.view = $view
   $stops = @($names | Where-Object { $_ -match $STOP_RE -and $_ -notmatch $STOP_NOT_RE })
   $reviews = @($names | Where-Object { $_ -match $REVIEW_RE })
+  $retries = @($names | Where-Object { ($_ -replace '^~', '') -match $RETRY_RE }).Count
   # 除錯畫面只列 30 個：判斷依據（停止 / 允許）排最前面，才不會被一般按鈕擠掉
-  $s.buttons = @(@($stops) + @($reviews) + @($names) | Select-Object -Unique | Select-Object -First 30)
+  $s.buttons = @(@($stops) + @($reviews) + @($names | Where-Object { $_ -notlike '~*' }) | Select-Object -Unique | Select-Object -First 30)
   # $busy：Claude App 側邊欄說畫面上這個對話「執行中」（停止鈕在跑工具等時候會暫時不見）
   $g = $stops.Count -gt 0 -or $busy
   $r = $reviews.Count -gt 0 -or $wait
   # 停止按鈕會短暫消失，要連續消失 1.5 秒才算真的結束
   if ($g) {
-    if (-not $s.gen) { $s.gen = $true; $s.genSince = $now }
+    if (-not $s.gen) { $s.gen = $true; $s.genSince = $now; $s.failed = $false; $s.msg = '' }
     $s.genOffAt = 0
+    if ($s.genView -ne $view) { $s.retries = $retries }   # 開始生成 / 換了對話：記下畫面上原本有幾個「再試一次」
     $s.genView = $view
   } elseif ($s.gen) {
     if (-not $s.genOffAt) { $s.genOffAt = $now }
     if ($now - $s.genOffAt -gt 1500) {
       $s.gen = $false
       # 畫面已經換成別的對話：是你切走了（那個對話還在跑），不算完成
-      if (-not ($s.genView -and $view -and $view -ne $s.genView)) { $s.finishedAt = $now }
+      if (-not ($s.genView -and $view -and $view -ne $s.genView)) {
+        $s.finishedAt = $now
+        if ($retries -gt $s.retries) { $s.failed = $true; $s.msg = 'FAILED' }
+      }
     }
   }
+  if (-not $s.gen) { $s.genView = '' }
   if ($r -and -not $s.review) { $s.reviewSince = $now }
   $s.review = $r
 }
@@ -252,7 +266,7 @@ function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
 # ChatGPT App 的背景對話：跟 Claude App 一樣看側邊欄，每個背景對話一個項目 app:chatgpt:bg:<標題>。
 # ChatGPT 與 Codex 模式的對話都列在側邊欄，不用分模式。畫面上的對話 = Document 的名稱（就是對話標題）。
 # 等你核准時「處理中」和停止鈕都會消失，要靠「待核准」撐住，不然會先算一次完成
-function Update-ChatGPTSide($wins, [bool]$focused, [long]$now) {
+function Update-ChatGPTSide($wins, [bool]$focused, [long]$now, [bool]$hidden) {
   $view = ''
   $running = @{}
   $waiting = @{}
@@ -303,7 +317,7 @@ function Update-ChatGPTSide($wins, [bool]$focused, [long]$now) {
     }
     if (-not $s.gen -and $s.finishedAt -and $now - $s.finishedAt -gt 12 * 3600000) { $bgGpt.Remove($t); continue }
     $items['app:chatgpt:bg:' + $t] = @{ key = 'app:chatgpt:bg:' + $t; ai = 'chatgpt'; focused = [bool]($s.viewedAt -and $focused); gen = $s.gen; genSince = $s.genSince;
-                                        review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; seen = $now; buttons = @($t) }
+                                        review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; seen = $now; buttons = @($t); hidden = $hidden }
   }
   return @{ view = $view; busy = [bool]($view -and ($running.ContainsKey($view) -or $waiting.ContainsKey($view))); wait = [bool]($view -and $waiting.ContainsKey($view)) }
 }
@@ -321,7 +335,20 @@ function Scan {
   # ---- 桌面 App ----
   foreach ($a in $APPS) {
     $procs = @(Get-Process -Name $a.procs)
-    $wins = @($procs | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
+    # 視窗隱藏（例如按 X 縮到系統匣、App 還在背景跑）時 MainWindowHandle 會變 0，但用原本的 handle 還讀得到整個畫面：
+    # 記住看過的視窗，還在、還是這個 App 的就繼續讀（縮小到工作列不受影響）
+    $ids = @($procs | ForEach-Object { $_.Id })
+    $hs = @($procs | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | ForEach-Object { $_.MainWindowHandle })
+    foreach ($h in @($appWins[$a.ai])) {
+      if ($hs -contains $h -or -not [AimonWin]::IsWindow($h)) { continue }
+      [uint32]$wp = 0
+      [void][AimonWin]::GetWindowThreadProcessId($h, [ref]$wp)
+      if ($ids -contains [int]$wp) { $hs += $h }
+    }
+    $appWins[$a.ai] = $hs
+    $wins = @($hs | ForEach-Object { [pscustomobject]@{ MainWindowHandle = $_ } })
+    # 全部視窗都隱藏了：讀到的畫面停在隱藏那一刻（Chromium 不再更新），讓 AIMonitor 知道（Codex 改看紀錄）
+    $hidden = -not ($hs | Where-Object { [AimonWin]::IsWindowVisible($_) })
     $diag.Add(("{0} App：行程 {1} 個、視窗 {2} 個" -f $a.ai, $procs.Count, $wins.Count))
     if ($wins.Count -eq 0) { if ($a.ai -eq 'claude') { $bg.Clear() } elseif ($a.ai -eq 'chatgpt') { $bgGpt.Clear() }; continue }
     $names = New-Object System.Collections.Generic.List[string]
@@ -330,8 +357,9 @@ function Scan {
     $view = Get-View $names
     $side = @{ busy = $false; wait = $false }
     if ($a.ai -eq 'claude') { $side = Update-ClaudeBg $wins $focused $view $now }
-    elseif ($a.ai -eq 'chatgpt') { $side = Update-ChatGPTSide $wins $focused $now; $view = $side.view }
+    elseif ($a.ai -eq 'chatgpt') { $side = Update-ChatGPTSide $wins $focused $now $hidden; $view = $side.view }
     Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view $side.busy $side.wait
+    $items['app:' + $a.ai].hidden = $hidden
   }
 
   # ---- 瀏覽器分頁 ----
@@ -378,7 +406,7 @@ function Get-StateJson {
   $list = @()
   foreach ($s in $items.Values) {
     $list += [ordered]@{ key = $s.key; ai = $s.ai; focused = $s.focused; gen = $s.gen; genSince = $s.genSince;
-                         review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; buttons = @($s.buttons) }
+                         review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; failed = [bool]$s.failed; msg = [string]$s.msg; view = [string]$s.view; hidden = [bool]$s.hidden; buttons = @($s.buttons) }
   }
   return (ConvertTo-Json -InputObject ([ordered]@{ t = (Now-Ms); items = @($list); diag = $script:diagText; fg = $script:fgName; uia = [bool]$UIA }) -Depth 4 -Compress)
 }

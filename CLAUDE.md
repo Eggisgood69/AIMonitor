@@ -37,6 +37,7 @@ windows/                   Go 程式（Windows only，WebView2）
   providers.js / providers_windows.go   ChatGPT（wham/usage）與 Gemini（gemini.google.com/usage）用量
   ui.js                    設定視窗（注入到 claude.ai 頁面上畫出來，因為要用 claude.ai 的登入 cookie 讀 Claude 用量）
   claudecode*.go           Claude Code hooks（http hook → 127.0.0.1:47322/cc）
+  codex.go                 Codex 對話紀錄（~/.codex/sessions 的 rollout-*.jsonl）→ cx:<id> 項目，跟 ChatGPT App 畫面項目配對去重
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
   stats.go                 今日統計（stats.json，保留 7 天）
   tray_windows.go          系統匣圖示
@@ -75,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.17、韌體 1.10.31（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.18、韌體 1.10.31（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -215,7 +216,24 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   生成中停止鈕「停止」，畫面上的對話 = Document 名稱（對話標題）。側邊欄對話列是 ListItem > Group > Button（標題），在跑時 Button 底下有 StatusBar「處理中」；
   等你核准時出現「允許一次」「拒絕」「核准選項」，而且**停止鈕與「處理中」都會消失**，對話列名稱變成「<標題>待核准」（沒點開的完成是「未讀<標題>」）
   → monitor.ps1 `Update-ChatGPTSide`：「處理中」或「待核准」都算在跑，否則等核准時先算一次完成；背景對話 `app:chatgpt:bg:<標題>`（跟 Claude App 同樣的規則）。
-  專案那一列的 ListItem 名稱是底下所有對話接起來，要比對這一列自己的 Button 才不會誤認。同名對話會併成一個（沒處理）；英文介面、出錯（紅燈）、視窗關掉後 Codex 繼續跑、雲端 / 已排程任務都還沒實測
+  專案那一列的 ListItem 名稱是底下所有對話接起來，要比對這一列自己的 Button 才不會誤認。同名對話會併成一個（沒處理）；英文介面、雲端 / 已排程任務都還沒實測
+  - 出錯（紅燈）：聊天模式生成失敗時停止鈕消失、出現「再試一次」（有時還有「重試」、圖片「任務失敗」）。舊訊息上的會一直留著 →
+    生成結束時「再試一次」**比開始時多**才算出錯（`$RETRY_RE`）；捲到畫面外的也要算（`Get-ButtonNames` 加 `~` 前綴），只算畫面上的話縮小 / 捲動時數量會變，曾經誤亮紅燈。
+    Codex 模式斷網只顯示「正在重新連線 n /5」「Reconnecting... waiting for network」，停止鈕還在，網路回來自己接著做完，不是錯誤
+  - 縮小到工作列照樣讀得到；按 X 是**隱藏**視窗（縮到系統匣）：MainWindowHandle 變 0，但用原本的 handle 還讀得到（monitor.ps1 `$appWins` 記住看過的視窗，Claude App 也適用）。
+    不過隱藏後 Chromium 不再更新給 UI Automation 的畫面，停在隱藏那一刻（Codex 15:21:27 就完成，畫面到 15:22:03 重新打開才變）→ Codex 改看紀錄檔（下一條）；聊天模式沒有紀錄，隱藏時一樣停住
+- Codex 對話紀錄（codex.go，2026-11）：`%USERPROFILE%\.codex\sessions\YYYY\MM\DD\rollout-*.jsonl`（`CODEX_HOME` 可改），一個對話一個檔，每行一個 JSON。
+  第一行 `session_meta`（id、cwd、`originator` 含 desktop 是 ChatGPT App（舊對話「Codex Desktop」、新開的「codex_work_desktop」，只認前者時新對話配不上、亮兩個燈）、`source` 含 `subagent` 是子代理 / guardian，不單獨亮燈；這行含整份系統提示，很長）；
+  `event_msg` 的 `task_started` / `task_complete` / `turn_aborted`（你中斷，不算完成）。**沒有等你核准的事件**：看得到畫面時黃燈看畫面的「待核准」；
+  視窗隱藏時（monitor 送 `hidden`）改看紀錄：`turn_context.approvals_reviewer` = user（「要求核准」；auto_review =「代我核准」不算）時，
+  `custom_tool_call` / `function_call` 的 input 含 `tools.request_permissions(` 或 `sandbox_permissions:"require_escalated"`、1.5 秒後還沒有同 call_id 的 `*_output` = 在等你（`cxAskMarks`、`logReview`）。
+  按過「一律允許」的指令不會再問、但紀錄分不出來，所以看得到畫面時不用這招。紀錄裡也沒有對話標題
+  （`session_index.jsonl` 只有新對話，App 更新時搬進來的舊對話標題在 sqlite）→ 用「畫面上開始生成的 5 秒內有 Codex 對話也開始」配對（`cxPairWindow`），
+  配對後畫面那項（app:chatgpt / app:chatgpt:bg:<標題>，monitor 送 `view` = 畫面上的對話標題）不送出，cx 項目借它的「正在看」「待核准」。
+  新對話生成到一半標題會從第一句話換成自動產生的標題：同一次生成（key@GenSince，只在生成中）也認得（`genPairs`）。
+  AIMonitor 重開時配對不見、開始時間也對不上：畫面上沒配對的生成中、紀錄裡沒配對的生成中各只有一個時直接配（兩個以上不猜）。
+  App 更新時會把舊對話搬成新檔（同一天幾十個、好幾 MB、裡面上千個舊 task 事件）：第一次只讀最後 256 KB；生成中 30 分鐘沒寫紀錄當作已結束（`cxStale`）。
+  紀錄檔被 Codex 開著，PowerShell 的 `[IO.File]::ReadLines` 會說被占用，Go 的 os.Open / Get-Content 可以讀
 - 正看著 Claude App 裡的 Claude Code 對話時出錯：StopFailure 跟 App 停止鈕消失配對成同一個對話，
   App 那項不要亮完成蓋掉紅燈（state.go `matchClaudeApp`），紅燈亮 8 秒
 - 網頁版（claude.ai / chatgpt.com / gemini.google.com）只靠擴充功能（2026-11）：UI Automation 只讀得到每個視窗正在顯示的分頁，切到別的分頁燈號就沒了，

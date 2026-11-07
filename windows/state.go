@@ -34,6 +34,8 @@ type Item struct {
 	Msg         string   `json:"msg"`    // 錯誤的短字（螢幕顯示）
 	Asking      bool     `json:"asking"` // 需審核是因為 Claude 問你問題（等你回覆），不是權限提示
 	Buttons     []string `json:"buttons"`
+	View        string   `json:"view"`   // 桌面 App 畫面上的對話標題（ChatGPT App 用來跟 Codex 紀錄配對）
+	Hidden      bool     `json:"hidden"` // 桌面 App 的視窗隱藏了（縮到系統匣）：讀到的畫面停在隱藏那一刻
 
 	doneUntil int64 // 完成 / 錯誤亮到何時；forever = 你還沒看過（背景發生的）
 	pairedFin int64 // app:claude：這次完成已經併到對應的 Claude Code 對話

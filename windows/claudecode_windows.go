@@ -14,6 +14,7 @@ import (
 
 var (
 	claudeCode   = NewClaudeCode()
+	codex        = NewCodex(codexSessionsDir())
 	lastScanMu   sync.Mutex
 	lastScanList []Item
 	ccServerErr  string
@@ -25,6 +26,15 @@ func ccSettingsPath() string {
 		return filepath.Join(d, "settings.json")
 	}
 	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// Codex 的對話紀錄（CODEX_HOME 預設 ~/.codex）
+func codexSessionsDir() string {
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		return filepath.Join(d, "sessions")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "sessions")
 }
 
 // 本機 HTTP：只聽 127.0.0.1，接收 Claude Code hooks
@@ -82,7 +92,7 @@ func mergedScan(fromMonitor []Item) []Item {
 	if ext := extension.Items(); extEnabled() {
 		base = append(base, ext...)
 	}
-	return base
+	return codex.Merge(base) // 加上 Codex 對話，拿掉跟它重複的 ChatGPT App 畫面項目
 }
 
 // hook 事件進來時立刻更新螢幕（不用等下一次掃描）

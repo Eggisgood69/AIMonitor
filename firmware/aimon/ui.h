@@ -375,8 +375,9 @@ static const float GAUGE_START = 180.0f + GAUGE_GAP / 2, GAUGE_SPAN = 360.0f - G
 
 // 原本的畫法（drawWideLine 拼 76 段）：每個像素都要算浮點距離，ESP32-C3 沒有 FPU，一條畫面要 130-170 ms，
 // 這段時間外環沒辦法更新（呼吸會頓）。只在查表用的記憶體配置失敗時才用
+static float g_trackK = 0.20f;   // 額度環沒用到的部分（底色）有多亮；額度詳細頁兩圈時調暗（白色的 ChatGPT 底色太亮，看起來兩圈都快滿了）
 static void progressRingSlow(float r, float hw, float pct, uint32_t col) {
-  uint32_t track = mix(C_BG, col, 0.20f);
+  uint32_t track = mix(C_BG, col, g_trackK);
   float e = GAUGE_START + GAUGE_SPAN;
   ringArc(r, hw, GAUGE_START, e, track, track);
   band.fillSmoothCircle(px(r, GAUGE_START - 90), py(r, GAUGE_START - 90) - OY, hw, track);   // 圓頭
@@ -485,7 +486,7 @@ static inline uint32_t blend888(uint32_t u, uint32_t c, int a) {   // a = 0..256
 static void progressRing(float r, float hw, float pct, uint32_t col) {
   GaugeLut* L = band.getColorDepth() == 16 ? gaugeLut(r, hw) : nullptr;
   if (!L) { progressRingSlow(r, hw, pct, col); return; }
-  const uint32_t track = mix(C_BG, col, 0.20f), c0 = mix(col, C_BG, 0.25f);
+  const uint32_t track = mix(C_BG, col, g_trackK), c0 = mix(col, C_BG, 0.25f);
   const float p = pct > 100 ? 100 : pct;
   const int rr = (int)((r - L->r0) * GAUGE_DQ + 0.5f);    // 環的中心線
   const int edge = (int)((hw + GAUGE_AA) * GAUGE_DQ + 0.5f);   // 距中心線這麼遠以外完全透明
@@ -875,26 +876,37 @@ static void drawUsagePage(uint32_t ms) {
   }
   const bool hasWeek = f.pw >= 0;
   const bool red5 = f.p5 >= g_redAt, redW = f.pw >= g_redAt;
-  progressRing(R_USAGE, HW_USAGE, f.p5, red5 ? C_RED : b.color);
-  if (hasWeek) progressRing(R_USAGE - S(14), HW_USAGE, f.pw, redW ? C_RED : mix(b.color, 0xFFFFFF, 0.5f));   // 半徑要跟 gaugeInit 一致
+  // 外圈 5 小時用品牌色、內圈每週用暗一半的同色，下面的標籤字也用各自環的顏色，一眼分得出哪圈是哪個。
+  // 以前每週是品牌色混白：ChatGPT 本來就是白色，兩圈一樣、分不出來
+  const uint32_t col5 = red5 ? C_RED : b.color;
+  const uint32_t colW = redW ? C_RED : mix(C_BG, b.color, 0.5f);
+  g_trackK = 0.11f;
+  progressRing(R_USAGE, HW_USAGE, f.p5, col5);
+  if (hasWeek) progressRing(R_USAGE - S(14), HW_USAGE, f.pw, colW);   // 半徑要跟 gaugeInit 一致
+  g_trackK = 0.20f;
 
   char buf[40];
   brandMark(f.brand, SI(63));                               // 離內環的空隙跟下面兩欄的字差不多（53 時貼著內環）
   snprintf(buf, sizeof buf, "%d", (int)(f.p5 + 0.5f));
   bigValue(buf, true, SI(109));
 
-  // 兩欄：上面標籤（灰，超過門檻紅）、下面重置倒數（白）。倒數一律在「5-HOUR」下面，避免「5H · 16M」被看成 5 小時 16 分
+  // 兩欄：上面標籤（跟各自的環同色，超過門檻紅）、下面重置倒數（白）。倒數一律在「5-HOUR」下面，避免「5H · 16M」被看成 5 小時 16 分
   const int y1 = SI(152), y2 = SI(168);
-  if (hasWeek) band.fillRect(CX + g_shX, y1 - SI(6) + g_shY - OY, S(1) < 1 ? 1 : (int)S(1), SI(32), C_LABEL3);   // 中間的分隔線
-  auto column = [&](int x, textdatum_t dt, const char* label, bool red, const String& left) {
-    text(label, x, y1, red ? C_RED : C_LABEL2, &fTiny.font, dt);
+  auto column = [&](int x, textdatum_t dt, const char* label, uint32_t lc, const String& left) {
+    text(label, x, y1, lc, &fTiny.font, dt);
     if (left.length()) text(left.c_str(), x, y2, C_LABEL, &fTiny.font, dt);
   };
-  if (!hasWeek) column(CX, middle_center, "5-HOUR", red5, fmtLeft(f.r5));
+  const String l5 = fmtLeft(f.r5), lw = fmtLeft(f.rw);
+  if (!hasWeek) column(CX, middle_center, "5-HOUR", col5, l5);
   else {
-    column(CX - SI(9), middle_right, "5-HOUR", red5, fmtLeft(f.r5));   // 兩欄往中線對齊，離內環最遠
     snprintf(buf, sizeof buf, "WEEK %d%%", (int)(f.pw + 0.5f));
-    column(CX + SI(9), middle_left, buf, redW, fmtLeft(f.rw));
+    // 兩欄整組置中：右欄比較寬（WEEK 100%）時中線往左移，兩邊離內環一樣遠（固定在中間時 WEEK 100% 會碰到內環）
+    const int wl = max(textW("5-HOUR", &fTiny.font), textW(l5.c_str(), &fTiny.font));
+    const int wr = max(textW(buf, &fTiny.font), textW(lw.c_str(), &fTiny.font));
+    const int dx = (wl - wr) / 2, g = SI(7);
+    band.fillRect(CX + dx + g_shX, y1 - SI(6) + g_shY - OY, S(1) < 1 ? 1 : (int)S(1), SI(32), C_LABEL3);   // 中間的分隔線
+    column(CX + dx - g, middle_right, "5-HOUR", col5, l5);
+    column(CX + dx + g, middle_left, buf, colW, lw);
   }
   pageDots(SI(196));
 }

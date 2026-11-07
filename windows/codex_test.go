@@ -95,15 +95,18 @@ func TestCodexTurns(t *testing.T) {
 func TestCodexPartialLine(t *testing.T) {
 	f := newCxFixture(t, cxID, "Codex Desktop", `"vscode"`)
 	line := fmt.Sprintf(`{"timestamp":"%s","type":"event_msg","payload":{"type":"task_started"}}`, f.now.UTC().Format(time.RFC3339Nano))
+	// 檔案時間要跟測試的「現在」一致（不然在 UTC 的機器上會被當成很久沒動靜）
 	fh, _ := os.OpenFile(f.path, os.O_APPEND|os.O_WRONLY, 0o644)
 	fh.WriteString(line[:20])
 	fh.Close()
+	os.Chtimes(f.path, *f.now, *f.now)
 	if it := findKey(f.merge(), "cx:"); it != nil {
 		t.Fatalf("半行不該處理：%+v", it)
 	}
 	fh, _ = os.OpenFile(f.path, os.O_APPEND|os.O_WRONLY, 0o644)
 	fh.WriteString(line[20:] + "\n")
 	fh.Close()
+	os.Chtimes(f.path, f.now.Add(time.Second), f.now.Add(time.Second))
 	if it := findKey(f.merge(), "cx:"); it == nil || !it.Gen {
 		t.Fatalf("整行寫完後：%+v", it)
 	}

@@ -40,8 +40,11 @@ int main() {
   band.createSprite(W, BAND_H);
   loadFonts();
   struct Sc { const char* file; const char* ai; St st; float p5, pw; const char* msg; int age; int no; bool link; uint32_t ms; };
-  // 預覽圖只展示 Claude（ChatGPT / Gemini 還沒完全好）
+  // 各種狀態用 Claude 展示；ai_*.ppm 是三家 AI 各一張（官方 LOGO）
   Sc sc[] = {
+    {"ai_claude.ppm",  "claude",  S_WORKING, 38, 52, "", 42, 0, true, 101300},
+    {"ai_chatgpt.ppm", "chatgpt", S_REVIEW,  40,  6, "", 18, 0, true, 100700},
+    {"ai_gemini.ppm",  "gemini",  S_DONE,     3,  6, "", 95, 0, true, 100000},
     {"review.ppm",  "claude",  S_REVIEW,  45, 63, "", 12, 0, true, 100700},
     {"working.ppm", "claude",  S_WORKING, 38, 52, "", 42, 4, true, 101300},
     {"done.ppm",    "claude",  S_DONE,     4, 30, "", 95, 1, true, 100000},
@@ -72,7 +75,9 @@ int main() {
   for (int pg = 1; pg <= 3; pg++) {
     Frame f; f.brand = brandIndex("claude"); f.st = S_WORKING; f.p5 = 68; f.pw = 12;
     f.r5 = 1792226400 + 2 * 3600 + 600; f.rw = 1792226400 + 3 * 86400 + 4 * 3600;
-    f.today[0] = {0, 12, 1083}; f.nToday = 1;
+    // 今日統計：三家都有（照秒數排，最多的在上面）
+    f.today[0] = {brandIndex("claude"), 12, 1083}; f.today[1] = {brandIndex("chatgpt"), 7, 642};
+    f.today[2] = {brandIndex("gemini"), 3, 158}; f.nToday = 3;
     g_frame = f; g_ms = 900000; g_lastFrameMs = g_ms - 500; g_page = pg;
     g_epochOffset = 1792226400 - g_ms / 1000;
     char fn[32]; snprintf(fn, sizeof fn, "page%d.ppm", pg);

@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.32"
+#define FW_VERSION "1.10.35"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -530,6 +530,7 @@ static void handleLine(Stream* src, const String& line) {
   { const char* nk = doc["nk"] | ""; f.noteKind = !strcmp(nk, "reset") ? 2 : (f.note.length() ? 1 : 0); }
   if (doc["p5"].is<float>()) f.p5 = doc["p5"].as<float>();
   if (doc["pw"].is<float>()) f.pw = doc["pw"].as<float>();
+  if (doc["red"].is<float>()) { const float r = doc["red"].as<float>(); g_redAt = r > 0 ? r : 1e9f; }   // 變紅門檻；0 = 不變紅（提醒關閉），舊版電腦端不送 = 90
   f.r5 = doc["r5"] | 0UL;
   f.rw = doc["rw"] | 0UL;
   JsonArray o = doc["o"].as<JsonArray>();
@@ -895,7 +896,7 @@ static void gaugeTick(uint32_t now) {
   }
   const float t = min(1.0f, (now - t0) / (float)GAUGE_ANIM_MS), e = 0.5f - 0.5f * cosf(t * PI);
   g_p5Shown = t >= 1 ? to : from + (to - from) * e;
-  if ((old >= 90) != (g_p5Shown >= 90)) { dirty = true; return; }    // 整圈換顏色（紅）：整張重畫
+  // 紅色看目標值（ui.h），捲動途中不換色；門檻跨過時由 frameKey 整張重畫（切換 AI 時跟著淡入）。以前捲過 90 才整張重畫成紅色，切換時看得到跳色、撕裂
   int bx, by, bw, bh;
   g_sceneMs = now;
   gaugeArcBox(old, g_p5Shown, bx, by, bw, bh);

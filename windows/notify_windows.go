@@ -72,7 +72,8 @@ var (
 	noteUntil time.Time
 )
 
-// 螢幕顯示用：mainAI 是目前螢幕上的 AI，不同的話前面加上名字
+// 螢幕顯示用：只顯示目前螢幕上這家 AI（mainAI）的提醒，別家的不顯示（Windows 通知照樣跳）。
+// 以前別家的提醒在字前面加名字，「CHATGPT 5H RESETS IN 4M」太長被截成「…」；試過改放小 LOGO，使用者覺得太複雜
 func currentNote(mainAI string) (text, kind string) {
 	noteMu.Lock()
 	defer noteMu.Unlock()
@@ -80,11 +81,10 @@ func currentNote(mainAI string) (text, kind string) {
 	if now.After(noteUntil) {
 		return "", ""
 	}
-	t := noteEv.Short(now)
 	if noteEv.AI != mainAI {
-		t = strings.ToUpper(aiNames[noteEv.AI]) + " " + t
+		return "", ""
 	}
-	return t, noteEv.Kind
+	return noteEv.Short(now), noteEv.Kind
 }
 
 func remindThreshold() float64 {
@@ -94,6 +94,14 @@ func remindThreshold() float64 {
 		return 90
 	}
 	return float64(*settings.RemindAt)
+}
+
+// 螢幕上額度變紅的門檻：跟額度重置提醒同一個設定（使用者調成 80% 就 80% 變紅）；0 = 提醒關閉，螢幕也不變紅
+func redThreshold() int {
+	if t := remindThreshold(); t > 0 {
+		return int(t)
+	}
+	return 0
 }
 
 // 每次讀到新的用量就呼叫

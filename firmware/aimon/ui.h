@@ -99,6 +99,7 @@ struct Frame {
 };
 
 static Frame g_frame;
+static float g_redAt = 90;             // 額度幾 % 以上變紅：跟著電腦端「額度重置提醒」的門檻（frame 的 red，提醒關閉時電腦送 0 = 不變紅）
 static uint32_t g_lastFrameMs = 0;
 static bool g_everConnected = false;
 static int32_t g_epochOffset = 0;
@@ -582,7 +583,7 @@ static uint32_t frameKey(const Frame& f) {
   k = k * 31 + f.st;
   k = hashStr(k, f.msg);
   k = hashStr(k, f.note) * 31 + f.noteKind;
-  k = k * 31 + (f.p5 >= 0 ? 1 : 0) + (f.p5 >= 90 ? 2 : 0);   // 5 小時額度的數字由 gaugeTick 慢慢跑過去，不整張重畫
+  k = k * 31 + (f.p5 >= 0 ? 1 : 0) + (f.p5 >= g_redAt ? 2 : 0);   // 5 小時額度的數字由 gaugeTick 慢慢跑過去，不整張重畫
   k = k * 31 + (uint32_t)(int)(f.pw * 2 + 0.5f);
   k = k * 31 + f.r5;
   k = k * 31 + f.rw;
@@ -832,7 +833,7 @@ static void drawClock(uint32_t ms, bool pageMode) {
 #else
     const float r = S(112), lit = 0.55f, trk = 0.25f, hw = S(1.5f);
 #endif
-    uint32_t col = mix(C_BG, p >= 90 ? C_RED : b.color, lit);
+    uint32_t col = mix(C_BG, p >= g_redAt ? C_RED : b.color, lit);
     if (trk > 0) ringArc(r, hw, GAUGE_START, GAUGE_START + GAUGE_SPAN, mix(C_BG, col, trk), mix(C_BG, col, trk));
     if (p > 0) ringArc(r, hw, GAUGE_START, GAUGE_START + GAUGE_SPAN * p / 100, col, col);
   }
@@ -870,8 +871,8 @@ static void drawUsagePage(uint32_t ms) {
     pageDots(SI(200));
     return;
   }
-  uint32_t c5 = f.p5 >= 90 ? C_RED : b.color;
-  uint32_t cw = f.pw >= 90 ? C_RED : mix(b.color, 0xFFFFFF, 0.5f);
+  uint32_t c5 = f.p5 >= g_redAt ? C_RED : b.color;
+  uint32_t cw = f.pw >= g_redAt ? C_RED : mix(b.color, 0xFFFFFF, 0.5f);
   progressRing(R_USAGE, HW_USAGE, f.p5, c5);
   if (f.pw >= 0) progressRing(R_USAGE - S(14), HW_USAGE, f.pw, cw);   // 半徑要跟 gaugeInit 一致
 
@@ -971,7 +972,7 @@ static void drawScene(uint32_t ms) {
   char num[12];
   if (hasUsage) {
     const float p5 = p5View();                              // 額度變了會慢慢跑過去（韌體 gaugeTick）
-    uint32_t uc = p5 >= 90 ? C_RED : b.color;
+    uint32_t uc = f.p5 >= g_redAt ? C_RED : b.color;        // 顏色看目標值、不看捲動中的值：捲過門檻時整圈突然變色很醜（切換 AI 時最明顯）
     progressRing(R_USAGE, HW_USAGE, p5, uc);
 
     if (!clawdBox(bx, by, bw, bh)) brandMark(f.brand, SI(54));   // 官方 LOGO 取代名稱（比名稱文字高一點，跟數字留空間）
@@ -983,7 +984,7 @@ static void drawScene(uint32_t ms) {
     if (f.pw >= 0) {
       char w[24];
       snprintf(w, sizeof w, "WEEK %d%%", (int)(f.pw + 0.5f));
-      text(w, CX, SI(167), f.pw >= 90 ? C_RED : C_LABEL2, &fTiny.font);
+      text(w, CX, SI(167), f.pw >= g_redAt ? C_RED : C_LABEL2, &fTiny.font);
     }
 
     String cap;

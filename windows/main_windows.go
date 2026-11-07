@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.13.19"
+const version = "1.13.22"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -822,6 +822,7 @@ func pushFrame(force bool) {
 	}
 	lastFrameMu.Unlock()
 	f.Saver = saverMin()
+	f.Red = redThreshold()
 	f.Bri = brightness()
 	settingsMu.Lock()
 	f.Rot = settings.Rotation & 3

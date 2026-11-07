@@ -56,6 +56,7 @@ type Frame struct {
 	O     [][]string      `json:"o"`
 	P5    *float64        `json:"p5,omitempty"`
 	PW    *float64        `json:"pw,omitempty"`
+	Red   int             `json:"red"` // 額度幾 % 以上螢幕顯示紅色（跟著額度重置提醒的門檻），0 = 不變紅
 	R5    int64           `json:"r5,omitempty"`
 	RW    int64           `json:"rw,omitempty"`
 	TZ    int             `json:"tz"`             // 時區（秒），螢幕保護的時鐘用

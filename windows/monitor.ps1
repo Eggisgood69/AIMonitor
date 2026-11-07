@@ -51,6 +51,10 @@ $REVIEW_RE = '^(allow( .{1,30})?|always allow|approve|允許.{0,8}|一律允許|
 $BUSY_RE = '^(.*[，,]\s*)?(執行中|running)$'
 # 背景聊天在等你允許：側邊欄是「等待輸入」，Code 模式時模式按鈕是「Claude，正在等待您的輸入」
 $WAIT_RE = '^(.*[，,]\s*)?(等待輸入|正在等待您的輸入|waiting for (your )?input|needs? (your )?input)$'
+# ChatGPT App（ChatGPT / Codex 合一，2026-11 實測）側邊欄：對話列（ListItem > Group > Button）裡有「處理中」= 在跑；
+# 等你核准時對話列名稱後面多「待核准」，完成後沒點開前面多「未讀」。英文介面的說法沒實測過
+$GPT_BUSY_RE = '^(處理中|processing)$'
+$GPT_WAIT_RE = '^(未讀|unread)?(.+?)(待核准|awaiting approval|needs approval)$'
 
 function Now-Ms { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
 
@@ -60,10 +64,15 @@ $editCond = New-Object System.Windows.Automation.PropertyCondition($UIA::Control
 $sideCond = New-Object System.Windows.Automation.OrCondition(
   (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::StatusBar)),
   (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::RadioButton)))
+$gptCond = New-Object System.Windows.Automation.OrCondition(
+  (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::StatusBar)),
+  (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)),
+  (New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document)))
 $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 
 $items = @{}        # key -> 狀態
 $bg = @{}           # Claude App 背景對話：標題 -> 狀態（畫面上看不到停止鈕，只能看側邊欄）
+$bgGpt = @{}        # ChatGPT App 背景對話：標題 -> 狀態
 $tracked = @{}      # 瀏覽器視窗 hwnd -> $true（前景過的視窗，切走後仍持續追蹤，才能偵測到「背景完成」）
 $omni = @{}         # 瀏覽器視窗 hwnd -> 網址列元素（快取，避免每次搜尋整個畫面）
 
@@ -240,6 +249,65 @@ function Update-ClaudeBg($wins, [bool]$focused, [string]$view, [long]$now) {
   return @{ busy = [bool]($onView -and $running.ContainsKey($view)); wait = [bool]($onView -and $waiting.ContainsKey($view)) }
 }
 
+# ChatGPT App 的背景對話：跟 Claude App 一樣看側邊欄，每個背景對話一個項目 app:chatgpt:bg:<標題>。
+# ChatGPT 與 Codex 模式的對話都列在側邊欄，不用分模式。畫面上的對話 = Document 的名稱（就是對話標題）。
+# 等你核准時「處理中」和停止鈕都會消失，要靠「待核准」撐住，不然會先算一次完成
+function Update-ChatGPTSide($wins, [bool]$focused, [long]$now) {
+  $view = ''
+  $running = @{}
+  $waiting = @{}
+  foreach ($p in $wins) {
+    try {
+      $els = $UIA::FromHandle($p.MainWindowHandle).FindAll([System.Windows.Automation.TreeScope]::Descendants, $gptCond)
+      foreach ($e in $els) {
+        $c = $e.Current
+        $n = [string]$c.Name
+        if ($c.ControlType -eq [System.Windows.Automation.ControlType]::Document) {
+          if (-not $view -and $n) { $view = $n.Trim() }
+        } elseif ($c.ControlType -eq [System.Windows.Automation.ControlType]::StatusBar) {
+          if ($n -match $GPT_BUSY_RE) {
+            # StatusBar 的上兩層是對話按鈕（名稱就是標題）
+            $b = $walker.GetParent($walker.GetParent($e))
+            if ($b -and $b.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $b.Current.Name) { $running[$b.Current.Name.Trim()] = $true }
+          }
+        } elseif ($n -match $GPT_WAIT_RE) {
+          # 專案那一列的名稱是底下所有對話接起來，最後一個對話待核准時也會符合：要對得上這一列自己的對話按鈕
+          $t = $Matches[2].Trim()
+          $g = $walker.GetFirstChild($e)
+          $b = if ($g) { $walker.GetFirstChild($g) }
+          if ($b -and $b.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $b.Current.Name.Trim() -eq $t) { $waiting[$t] = $true }
+        }
+      }
+    } catch {}
+  }
+  foreach ($t in @(@($running.Keys) + @($waiting.Keys) | Where-Object { $_ -ne $view })) {
+    if (-not $bgGpt.ContainsKey($t)) { $bgGpt[$t] = @{ gen = $false; genSince = 0; genOffAt = 0; finishedAt = 0; viewedAt = 0; review = $false; reviewSince = 0 } }
+    $s = $bgGpt[$t]
+    if (-not $s.gen) { $s.gen = $true; $s.genSince = $now; $s.viewedAt = 0 }
+    $s.genOffAt = 0
+  }
+  foreach ($t in @($bgGpt.Keys)) {
+    $s = $bgGpt[$t]
+    if ($t -eq $view) {
+      # 點開了：還在跑就交給 app:chatgpt；已完成就算看過，亮 8 秒後移除
+      if ($s.gen) { $bgGpt.Remove($t); continue }
+      if ($focused -and -not $s.viewedAt) { $s.viewedAt = $now }
+    }
+    if ($s.viewedAt -and $now - $s.viewedAt -gt 10000) { $bgGpt.Remove($t); continue }
+    $wait = $waiting.ContainsKey($t)
+    if ($wait -and -not $s.review) { $s.reviewSince = $now }
+    $s.review = [bool]($wait -and $s.gen)
+    if ($s.gen -and -not ($running.ContainsKey($t) -or $wait)) {
+      if (-not $s.genOffAt) { $s.genOffAt = $now }
+      if ($now - $s.genOffAt -gt 1500) { $s.gen = $false; $s.review = $false; $s.finishedAt = $now }
+    }
+    if (-not $s.gen -and $s.finishedAt -and $now - $s.finishedAt -gt 12 * 3600000) { $bgGpt.Remove($t); continue }
+    $items['app:chatgpt:bg:' + $t] = @{ key = 'app:chatgpt:bg:' + $t; ai = 'chatgpt'; focused = [bool]($s.viewedAt -and $focused); gen = $s.gen; genSince = $s.genSince;
+                                        review = $s.review; reviewSince = $s.reviewSince; finishedAt = $s.finishedAt; seen = $now; buttons = @($t) }
+  }
+  return @{ view = $view; busy = [bool]($view -and ($running.ContainsKey($view) -or $waiting.ContainsKey($view))); wait = [bool]($view -and $waiting.ContainsKey($view)) }
+}
+
 function Scan {
   $now = Now-Ms
   $fg = [AimonWin]::GetForegroundWindow()
@@ -255,13 +323,14 @@ function Scan {
     $procs = @(Get-Process -Name $a.procs)
     $wins = @($procs | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero })
     $diag.Add(("{0} App：行程 {1} 個、視窗 {2} 個" -f $a.ai, $procs.Count, $wins.Count))
-    if ($wins.Count -eq 0) { if ($a.ai -eq 'claude') { $bg.Clear() }; continue }
+    if ($wins.Count -eq 0) { if ($a.ai -eq 'claude') { $bg.Clear() } elseif ($a.ai -eq 'chatgpt') { $bgGpt.Clear() }; continue }
     $names = New-Object System.Collections.Generic.List[string]
     foreach ($p in $wins) { $names.AddRange((Get-ButtonNames $p.MainWindowHandle)) }
     $focused = [bool]($procs | Where-Object { $_.Id -eq $fgPid })
     $view = Get-View $names
     $side = @{ busy = $false; wait = $false }
     if ($a.ai -eq 'claude') { $side = Update-ClaudeBg $wins $focused $view $now }
+    elseif ($a.ai -eq 'chatgpt') { $side = Update-ChatGPTSide $wins $focused $now; $view = $side.view }
     Update-Item ('app:' + $a.ai) $a.ai $focused $names $now $view $side.busy $side.wait
   }
 

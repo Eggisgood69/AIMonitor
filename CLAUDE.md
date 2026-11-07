@@ -75,7 +75,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.16、韌體 1.10.31（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.17、韌體 1.10.31（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -211,6 +211,11 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   在等你允許時側邊欄是「等待輸入」、Code 模式的模式按鈕是「Claude，正在等待您的輸入」（`$WAIT_RE`）→ 亮黃燈（`$wait`）；
   允許按鈕說法常變（「允許本次工作階段」等），`$REVIEW_RE` 認「允許 / allow」開頭的短名稱。
   背景聊天出錯（例如斷網）時側邊欄狀態只會消失，跟完成分不出來，只能當完成（對話內才有「重試」）
+- ChatGPT App（Microsoft Store 套件 `OpenAI.Codex`，行程還是 `ChatGPT`；ChatGPT / Codex 合一，「切換模式，目前模式：Codex」，2026-11 實測）：
+  生成中停止鈕「停止」，畫面上的對話 = Document 名稱（對話標題）。側邊欄對話列是 ListItem > Group > Button（標題），在跑時 Button 底下有 StatusBar「處理中」；
+  等你核准時出現「允許一次」「拒絕」「核准選項」，而且**停止鈕與「處理中」都會消失**，對話列名稱變成「<標題>待核准」（沒點開的完成是「未讀<標題>」）
+  → monitor.ps1 `Update-ChatGPTSide`：「處理中」或「待核准」都算在跑，否則等核准時先算一次完成；背景對話 `app:chatgpt:bg:<標題>`（跟 Claude App 同樣的規則）。
+  專案那一列的 ListItem 名稱是底下所有對話接起來，要比對這一列自己的 Button 才不會誤認。同名對話會併成一個（沒處理）；英文介面、出錯（紅燈）、視窗關掉後 Codex 繼續跑、雲端 / 已排程任務都還沒實測
 - 正看著 Claude App 裡的 Claude Code 對話時出錯：StopFailure 跟 App 停止鈕消失配對成同一個對話，
   App 那項不要亮完成蓋掉紅燈（state.go `matchClaudeApp`），紅燈亮 8 秒
 - 網頁版（claude.ai / chatgpt.com / gemini.google.com）只靠擴充功能（2026-11）：UI Automation 只讀得到每個視窗正在顯示的分頁，切到別的分頁燈號就沒了，

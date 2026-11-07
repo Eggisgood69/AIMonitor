@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.38"
+#define FW_VERSION "1.10.39"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -116,6 +116,11 @@ static LGFX_Sprite band(&lcd);
 static uint8_t brightness = BRIGHTNESS;
 static int g_rot = 0;
 static bool dirty = true;
+static bool g_othersDirty = false;   // 只有其他對話的小圓點變了：只重畫那一塊（othersTick）
+// 正在畫的那張、螢幕上那張是什麼狀態（-1 = 還沒畫過）。Generating 的光只在螢幕上真的是生成中畫面時才走：
+// 需審核 → 生成中時，整張重畫完成之前螢幕上還是「Needs Review」（比 Generating 寬），光先畫上去會留下舊字的頭尾
+static int8_t g_drawSt = -1, g_shownSt = -1;
+static bool g_rectFbOnly = false;    // AMOLED：redrawRect 只畫進 g_fb、不送（整張送出前補畫用，馬上整張送）
 
 // 亮度（每次 loop 套用，亮度只在這裡設）。AMOLED 換頁、轉向、進出螢幕保護時：淡出 → 全暗時換上新畫面 → 淡入。
 // 整張送出要 20 ms，比面板掃一次（16.7 ms）久，亮著直接換會看到撕裂
@@ -361,6 +366,7 @@ static void renderStrip(uint32_t ms) {
 
 static void render() {          // 一次畫完整個畫面（開機用）
   uint32_t ms = millis();
+  g_drawSt = g_shownSt = g_frame.st;
   for (OY = 0; OY < H; OY += BAND_H) renderStrip(ms);
   OY = 0;
 #if BOARD_AMOLED
@@ -477,15 +483,18 @@ static void IRAM_ATTR onTE() { g_teUs = micros(); g_teN++; }
 static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整張送出（AMOLED，只算 SPI 寫入）
 static uint32_t g_maxPrepMs = 0;    // 最長的一次送出前準備（外環、轉向）
 static uint32_t g_maxRoamGap = 0;   // 螢幕保護的 Clawd 兩步之間最長隔多久（正常 50 ms，大了就是卡頓）
+static uint32_t g_maxGenGap = 0;    // 「Generating」的光兩次更新之間最長隔多久（正常 40 ms，大了就是停頓）
+static uint32_t g_fullN = 0;        // 上次回報之後整張重畫了幾次
 
 static void sendHello(Stream* src) {
-  char b[384];
+  char b[448];
   // id：晶片 MAC，電腦端用它分辨每塊螢幕（各自的方向、亮度；換 USB 孔也認得）
   const uint64_t mac = ESP.getEfuseMac();
-  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"id\":\"%04x%08lx\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu}",
+  snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"id\":\"%04x%08lx\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu,\"gen\":%lu,\"full\":%lu}",
            (unsigned)((mac >> 32) & 0xFFFF), (unsigned long)(mac & 0xFFFFFFFFUL),
            (unsigned long)(millis() / 1000), (unsigned long)g_maxLoopMs, (unsigned long)g_maxStripMs,
-           (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap());
+           (unsigned long)g_badLines, (unsigned long)g_longLines, (unsigned long)ESP.getFreeHeap(),
+           (unsigned long)g_maxGenGap, (unsigned long)g_fullN);
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
@@ -500,7 +509,7 @@ static void sendHello(Stream* src) {
   g_maxRoamGap = 0;
 #endif
   sendLine(src, b);
-  g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = g_maxPrepMs = 0;
+  g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = g_maxPrepMs = g_maxGenGap = g_fullN = 0;
 }
 
 static void handleLine(Stream* src, const String& line) {
@@ -581,10 +590,15 @@ static void handleLine(Stream* src, const String& line) {
   if (!g_everConnected) g_everConnected = true;
   // 電腦每 1-3 秒送一次，每次都整張重畫的話 Generating 的光、Clawd 會跟著頓一下 → 內容變了才重畫。
   // AMOLED 螢幕保護另外由 loop 看 saverKey
-  static uint32_t lastKey = 0;
-  const uint32_t k = frameKey(f);
-  if (k != lastKey && !(BOARD_AMOLED && g_saver)) dirty = true;
+  // 只差在其他對話的小圓點（狀態切換時常在幾秒內連送好幾張）：只重畫小圓點那一塊，不整張重畫
+  static uint32_t lastKey = 0, lastOthers = 0;
+  const uint32_t k = frameKey(f), ko = othersKey(f);
+  if (!(BOARD_AMOLED && g_saver)) {
+    if (k != lastKey) dirty = true;
+    else if (ko != lastOthers) g_othersDirty = true;
+  }
   lastKey = k;
+  lastOthers = ko;
 }
 
 static void pollReader(LineReader& r) {
@@ -627,6 +641,7 @@ static void startSlide(int dir, uint32_t now) {
   // 轉向或有說話光暈時是 g_fbRot）
   const uint16_t* shown = g_sliding ? g_fbSlide : (g_fbOut ? g_fbOut : g_fb);
   memcpy(g_fbOld, shown, W * H * 2);
+  g_drawSt = g_shownSt = g_frame.st;
   for (OY = 0; OY < H; OY += BAND_H) renderStrip(now);
   OY = 0;
   prepareFrame(now);
@@ -833,7 +848,7 @@ static void redrawRect(int bx, int by, int bw, int bh, void (*draw)()) {
     draw();
     OY = 0;
 #if BOARD_AMOLED
-    pushFbRect(bx, y0, bw, rh);
+    if (!g_rectFbOnly) pushFbRect(bx, y0, bw, rh);
 #else
     lcd.startWrite();
     lcd.setClipRect(bx, y0, bw, rh);
@@ -852,7 +867,9 @@ static void genDraw() { statusLine(S_WORKING, g_genY, g_genMs); }
 static void genTick(uint32_t now, bool force) {
   static uint32_t last = 0;
   int bx, by, bw, bh;
+  if ((force ? g_drawSt : g_shownSt) != S_WORKING) return;   // 整張送出前（force）看要送的那張，平常看螢幕上那張
   if ((!force && now - last < 40) || !genBox(bx, by, bw, bh, g_genY)) return;
+  if (last && now - last < 1000 && now - last > g_maxGenGap) g_maxGenGap = now - last;   // 剛開始生成（上次是很久以前）不算
   last = now;
   g_genMs = now;
   redrawRect(bx, by, bw, bh, genDraw);
@@ -903,6 +920,16 @@ static void gaugeTick(uint32_t now) {
   redrawRect(bx, by, bw, bh, sceneDraw);
   pctBox(bx, by, bw, bh);                                   // 數字像里程表一樣捲：每一步都重畫
   redrawRect(bx, by, bw, bh, pctDraw);
+}
+
+// 其他對話的小圓點變了：只重畫那一塊（不在整張重畫中才呼叫；整張重畫途中變的，畫完後再補一次也沒關係）
+static void othersTick(uint32_t now) {
+  if (!g_othersDirty) return;
+  g_othersDirty = false;
+  int bx, by, bw, bh;
+  if (dirty || !othersBox(bx, by, bw, bh)) return;          // 馬上要整張重畫 / 看不到
+  g_sceneMs = now;
+  redrawRect(bx, by, bw, bh, sceneDraw);
 }
 
 // ---------------- BOOT 鍵、觸控 ----------------
@@ -1157,7 +1184,11 @@ void loop() {
     if (g_saver && g_fadeDir == 0) clawdTick(now);   // 等著送出時 Clawd 也照常走
     if (!g_frameReady) {
       const uint32_t t0 = millis();
-      if (g_fadeDir == 0) { genTick(t0, true); gaugeTick(t0); }   // 這張開始重畫時的光、額度位置已經舊了
+      if (g_fadeDir == 0) {                 // 這張開始重畫時的光、額度位置已經舊了（只畫進 g_fb，馬上整張送）
+        g_rectFbOnly = true;
+        genTick(t0, true); gaugeTick(t0);
+        g_rectFbOnly = false;
+      }
       prepareFrame(t0);
       g_frameReady = true;
       if (millis() - t0 > g_maxPrepMs) g_maxPrepMs = millis() - t0;
@@ -1167,6 +1198,7 @@ void loop() {
     if (g_fadeDir < 0 ? g_fadeLv == 0 : (!teOk || te < 2000)) {
       const uint32_t t0 = millis();
       pushFrame();
+      g_shownSt = g_drawSt;
       if (g_fadeDir < 0) g_fadeDir = 1;
       g_framePending = g_frameReady = false;
       lastRing = millis();
@@ -1200,6 +1232,8 @@ void loop() {
 #endif
   if (strip < 0 && (dirty || periodic)) {
     strip = 0; stripMs = now; lastFull = now; dirty = false; g_anyKeyed = false;
+    g_fullN++;
+    g_drawSt = g_frame.st;
   }
   // 淡出中不畫外環：新畫面一條接一條畫完，早點送出
   const int ringState = g_fadeDir < 0 ? 0 : ringFrameState(now, lastRing, strip >= 0 && !stripSinceRing);
@@ -1220,7 +1254,10 @@ void loop() {
     genTick(now, false);
     numTick();
     gaugeTick(now);
+    othersTick(now);
   }
+  // 整張重畫中、等 TE 畫外環的空檔：光照常走（不然只在每條之後才有機會，外環 + 一條要 30-60 ms，光一頓一頓的）
+  else if (ringState == 2 && strip >= 0 && g_fadeDir == 0) genTick(now, false);
   else if (ringState == 0 && strip >= 0) {
     OY = strip * BAND_H;
     const uint32_t t0 = millis();
@@ -1234,6 +1271,7 @@ void loop() {
 #if BOARD_AMOLED
       if (g_fb) { g_framePending = true; roamFrameDone(); }
 #endif
+      if (!g_fb) g_shownSt = g_drawSt;
       if (g_anyKeyed && !ringAnimating()) { lcd.startWrite(); statusRingOn(lcd, 0, millis()); lcd.endWrite(); }   // 靜態外環（完成、待命）
     }
   }

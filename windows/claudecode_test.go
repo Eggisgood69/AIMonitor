@@ -467,3 +467,74 @@ func TestClaudeCodeWrapUpRetryWithoutAsk(t *testing.T) {
 		t.Fatalf("failed wrap_up should not ask: %+v", it)
 	}
 }
+
+// 實測（2026-11-07 22:05:10）：結尾問你「要發版嗎？」亮黃燈，同一秒 App 因為別的工作階段回報自動叫醒開了新的一輪，
+// 黃燈被當成你回答了而熄掉；那一輪沒再問，結束後就待命了，但問題方塊其實還在等你
+func TestClaudeCodeAutoTurnKeepsAsk(t *testing.T) {
+	newC := func() (*ClaudeCode, func(string, string)) {
+		c := NewClaudeCode()
+		now := time.Date(2026, 11, 7, 22, 5, 0, 0, time.UTC)
+		c.now = func() time.Time { return now }
+		return c, func(name, extra string) {
+			if err := c.Handle([]byte(`{"session_id":"96f4ec81aaaa","hook_event_name":"` + name + `"` + extra + `}`)); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Second)
+		}
+	}
+	ask := `,"tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"推送了","ask":"要發版嗎？"}`
+	noAsk := `,"tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"好了"}`
+	auto := `,"prompt":"<system-reminder>\nThe session finished a turn.\n</system-reminder>\n\n<side-sessions-event>None of the sessions you started is working now</side-sessions-event>"`
+	start := func(ev func(string, string)) {
+		ev("UserPromptSubmit", `,"prompt":"提交推送"`)
+		ev("PreToolUse", ask)
+		ev("PostToolUse", ask)
+		ev("Stop", "")
+	}
+
+	c, ev := newC()
+	start(ev)
+	if it := c.Items()[0]; !it.Review || !it.Asking {
+		t.Fatalf("asked: %+v", it)
+	}
+	ev("UserPromptSubmit", auto)
+	if it := c.Items()[0]; !it.Gen || it.Review {
+		t.Fatalf("auto turn is working: %+v", it)
+	}
+	ev("Stop", "")
+	if it := c.Items()[0]; !it.Review || !it.Asking {
+		t.Fatalf("question box still waiting after the auto turn: %+v", it)
+	}
+	// 你自己回覆：熄
+	ev("UserPromptSubmit", `,"prompt":"<system-reminder>\nInstruction files were re-read\n</system-reminder>\n發版"`)
+	ev("Stop", "")
+	if it := c.Items()[0]; it.Review {
+		t.Fatalf("you replied: %+v", it)
+	}
+
+	// 自動那一輪的 wrap_up 換掉了方塊（沒有問題）：不亮
+	c, ev = newC()
+	start(ev)
+	ev("UserPromptSubmit", `,"prompt":"<cross-session-message from=\"local_x\">已經 commit</cross-session-message>"`)
+	ev("PreToolUse", noAsk)
+	ev("PostToolUse", noAsk)
+	ev("Stop", "")
+	if it := c.Items()[0]; it.Review {
+		t.Fatalf("auto turn replaced the box without a question: %+v", it)
+	}
+}
+
+func TestCCAutoPrompt(t *testing.T) {
+	for p, want := range map[string]bool{
+		"<side-sessions-event>x</side-sessions-event>": true,
+		"<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>x</task-notification></system-reminder>": true,
+		"<task-notification><task-id>b1</task-id></task-notification>":                                                          true,
+		"<cross-session-message from=\"a\">hi</cross-session-message>":                                                          true,
+		"<system-reminder>a</system-reminder>\n<system-reminder>b</system-reminder>\n好，可以。":                                     false,
+		"先 push": false,
+	} {
+		if got := ccAutoPrompt(p); got != want {
+			t.Errorf("ccAutoPrompt(%q) = %v, want %v", p, got, want)
+		}
+	}
+}

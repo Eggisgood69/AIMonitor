@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -123,6 +124,31 @@ type ccEvent struct {
 	ToolName         string          `json:"tool_name"`
 	ToolInput        json.RawMessage `json:"tool_input"`
 	TranscriptPath   string          `json:"transcript_path"`
+	Prompt           string          `json:"prompt"` // UserPromptSubmit：這一輪的內容
+}
+
+// 不是你送的那一輪：Claude App 自動叫醒（別的工作階段回報、背景工作結束、工作階段之間傳訊息）。
+// 你自己打的訊息前面也可能先有 <system-reminder> 提示，所以先拿掉那些，剩下的是空的或是這些標記開頭才算
+var ccReminderRE = regexp.MustCompile(`(?s)^\s*<system-reminder>.*?</system-reminder>`)
+
+func ccAutoPrompt(p string) bool {
+	for {
+		q := ccReminderRE.ReplaceAllString(p, "")
+		if q == p {
+			break
+		}
+		p = q
+	}
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return true
+	}
+	for _, tag := range []string{"<side-sessions-event>", "<cross-session-message", "<task-notification>", "[SYSTEM NOTIFICATION"} {
+		if strings.HasPrefix(p, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 // 你按了中斷（Esc / 停止）時 Claude Code 不送 Stop，綠燈會一直亮：
@@ -257,9 +283,11 @@ func (c *ClaudeCode) Handle(body []byte) error {
 	}
 	switch e.HookEventName {
 	case "UserPromptSubmit":
+		// 自動叫醒的一輪：你還沒回答的問題方塊還在，這一輪結束時要亮回黃燈（除非這一輪的 wrap_up 換掉了方塊）
+		keepAsk := s.Review && s.Asking && e.Prompt != "" && ccAutoPrompt(e.Prompt)
 		s.Gen, s.GenSince, s.Review = true, ms, false
 		s.Failed, s.ErrMsg = false, ""
-		s.Asking, s.AskAfter = false, false
+		s.Asking, s.AskAfter = false, keepAsk
 	case "PermissionRequest":
 		startGen()
 		if !s.Review {

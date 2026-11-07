@@ -65,7 +65,11 @@ func startClaudeCodeServer() {
 		// 記下收到的事件（除錯用；每個工具都會觸發的 Pre/PostToolUse 不記，避免洗版）
 		var e ccEvent
 		if json.Unmarshal(body, &e) == nil && e.HookEventName != "PreToolUse" && e.HookEventName != "PostToolUse" {
-			logf("claude code hook: %s %s %s", e.HookEventName, shortID(e.SessionID), e.NotificationType)
+			extra := e.NotificationType
+			if e.HookEventName == "UserPromptSubmit" && e.Prompt != "" && ccAutoPrompt(e.Prompt) {
+				extra = "(auto)" // App 自動叫醒的一輪，不是你送的（不記內容）
+			}
+			logf("claude code hook: %s %s %s", e.HookEventName, shortID(e.SessionID), extra)
 		}
 		go rescan()
 	})

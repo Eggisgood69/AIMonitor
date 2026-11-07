@@ -858,43 +858,43 @@ static void pageDots(int y) {
     band.fillSmoothCircle(x0 + i * gap + g_shX, y + g_shY - OY, i == g_page ? S(3) : S(2.2f), i == g_page ? C_LABEL : C_LABEL3);
 }
 
-// 額度詳細頁：5 小時（外環）＋本週（內環）＋今天的 5 小時用量折線
+// 額度詳細頁：5 小時（外環）＋本週（內環）。由上往下：官方 LOGO、5 小時大數字、左右兩欄（5-HOUR | WEEK）各一行重置倒數。
+// 以前是名稱文字 + 「5-HOUR · RESETS 4H 18M」一整行 + 本週兩行，使用者覺得太擠、字快碰到內環 → 改成兩欄往中線對齊（2026-11）
 static void drawUsagePage(uint32_t ms) {
   band.fillScreen(C_BG);
   statusRingBand(ms);
   const Frame& f = g_frame;
   const Brand& b = BRANDS[f.brand];
   if (f.p5 < 0) {
-    text(f.brand == N_BRANDS - 1 ? "Usage" : b.name, CX, SI(92), f.brand == N_BRANDS - 1 ? C_LABEL2 : b.color, &fName.font);
+    if (f.brand == N_BRANDS - 1) text("Usage", CX, SI(92), C_LABEL2, &fName.font);
+    else brandMark(f.brand, SI(88));
     text("NO USAGE DATA", CX, SI(124), C_LABEL2, &fLabel.font);
     text("ONLY CLAUDE PROVIDES IT", CX, SI(146), C_LABEL3, &fTiny.font);
     pageDots(SI(200));
     return;
   }
-  uint32_t c5 = f.p5 >= g_redAt ? C_RED : b.color;
-  uint32_t cw = f.pw >= g_redAt ? C_RED : mix(b.color, 0xFFFFFF, 0.5f);
-  progressRing(R_USAGE, HW_USAGE, f.p5, c5);
-  if (f.pw >= 0) progressRing(R_USAGE - S(14), HW_USAGE, f.pw, cw);   // 半徑要跟 gaugeInit 一致
-
-  // 由上往下：名稱、5 小時大數字、5 小時重置、本週＋重置；沒有本週時整組往下移，保持在環內置中
-  bool hasWeek = f.pw >= 0;
-  int dy = SI(14 + (hasWeek ? 0 : 16));
-  int yWeek = SI(134) + dy;
+  const bool hasWeek = f.pw >= 0;
+  const bool red5 = f.p5 >= g_redAt, redW = f.pw >= g_redAt;
+  progressRing(R_USAGE, HW_USAGE, f.p5, red5 ? C_RED : b.color);
+  if (hasWeek) progressRing(R_USAGE - S(14), HW_USAGE, f.pw, redW ? C_RED : mix(b.color, 0xFFFFFF, 0.5f));   // 半徑要跟 gaugeInit 一致
 
   char buf[40];
-  text(b.name, CX, SI(50) + dy, b.color, &fLabel.font);
+  brandMark(f.brand, SI(63));                               // 離內環的空隙跟下面兩欄的字差不多（53 時貼著內環）
   snprintf(buf, sizeof buf, "%d", (int)(f.p5 + 0.5f));
-  bigValue(buf, true, SI(84) + dy);
-  String l5 = fmtLeft(f.r5);   // 倒數一律寫 RESETS，避免「5H · 16M」被看成 5 小時 16 分
-  snprintf(buf, sizeof buf, "5-HOUR%s%s", l5.length() ? " · RESETS " : "", l5.c_str());
-  text(buf, CX, SI(116) + dy, C_LABEL2, &fTiny.font);
+  bigValue(buf, true, SI(109));
 
-  // 本週分兩行：一行寫不下（內環裡的寬度不夠），也跟上面的 5 小時分得開
-  if (hasWeek) {
+  // 兩欄：上面標籤（灰，超過門檻紅）、下面重置倒數（白）。倒數一律在「5-HOUR」下面，避免「5H · 16M」被看成 5 小時 16 分
+  const int y1 = SI(152), y2 = SI(168);
+  if (hasWeek) band.fillRect(CX + g_shX, y1 - SI(6) + g_shY - OY, S(1) < 1 ? 1 : (int)S(1), SI(32), C_LABEL3);   // 中間的分隔線
+  auto column = [&](int x, textdatum_t dt, const char* label, bool red, const String& left) {
+    text(label, x, y1, red ? C_RED : C_LABEL2, &fTiny.font, dt);
+    if (left.length()) text(left.c_str(), x, y2, C_LABEL, &fTiny.font, dt);
+  };
+  if (!hasWeek) column(CX, middle_center, "5-HOUR", red5, fmtLeft(f.r5));
+  else {
+    column(CX - SI(9), middle_right, "5-HOUR", red5, fmtLeft(f.r5));   // 兩欄往中線對齊，離內環最遠
     snprintf(buf, sizeof buf, "WEEK %d%%", (int)(f.pw + 0.5f));
-    text(buf, CX, yWeek, cw, &fTiny.font);
-    String lw = fmtLeft(f.rw);
-    if (lw.length()) text((String("RESETS ") + lw).c_str(), CX, yWeek + SI(15), C_LABEL2, &fTiny.font);
+    column(CX + SI(9), middle_left, buf, redW, fmtLeft(f.rw));
   }
   pageDots(SI(196));
 }

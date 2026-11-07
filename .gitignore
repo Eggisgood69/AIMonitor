@@ -10,3 +10,7 @@ enclosure/lcd128/reference/
 
 # 電腦端執行檔只放在 GitHub Release（./build.ps1 -Release 從乾淨的程式碼重新編），不進版控，避免 repo 每版多 10 MB
 windows/AIMonitor.exe
+
+# 只用 Claude Code 開發：Codex App 匯入 Claude 設定時會自動產生這兩個（CLAUDE.md、.claude/skills 的複本），不要
+AGENTS.md
+.agents/

@@ -105,12 +105,21 @@ static void micSetGain(int g) {
 static int16_t* g_micRing = nullptr;
 static volatile uint32_t g_micWr = 0, g_micRd = 0;
 
+// 音量（給螢幕的說話光暈）：每次讀進來的一段（240 格 = 5 ms）兩顆平均後的均方值
+static volatile uint32_t g_micMs = 0;
+
 static void micI2sTask(void*) {
   static int16_t buf[240 * 4];
   for (;;) {
     size_t got = 0;
     i2s_read(I2S_NUM_0, buf, sizeof(buf), &got, portMAX_DELAY);
     const int frames = got / 8;
+    uint64_t sq = 0;
+    for (int i = 0; i < frames; i++) {
+      const int32_t m = ((int32_t)buf[i * 4] + buf[i * 4 + 2]) / 2;
+      sq += (uint64_t)(m * m);
+    }
+    if (frames) g_micMs = (uint32_t)(sq / frames);
     for (int i = 0; i < frames; i++) {
       const uint32_t w = g_micWr;
       if (w - g_micRd >= MIC_RING) break;          // 電腦沒在收：丟掉（開始收時從最新的開始）
@@ -353,6 +362,19 @@ static bool micEnter() {
 }
 
 static Stream* micStream() { return g_micSerial; }
+
+// 有程式正在錄音（電腦把串流打開了，例如按了 Win+H）
+static bool micListening() { return g_micOn && g_uacAlt; }
+
+// 現在的音量 0-1（給說話光暈）：-56 dBFS 以下（環境噪音約 -63）= 0，-36 dBFS = 1（正常講話約 -48，大約一半）
+static float micLevel() {
+  if (!micListening()) return 0;
+  const float ms = (float)g_micMs;
+  if (ms < 1) return 0;
+  const float db = 10.0f * log10f(ms / (32768.0f * 32768.0f));
+  const float l = (db + 56.0f) / 20.0f;
+  return l < 0 ? 0 : (l > 1 ? 1 : l);
+}
 
 // 收到 mic:0：重開回 hwcdc（開機時 micBootCheck 會讓電腦重新列舉）
 static void micLeave() {

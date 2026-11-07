@@ -429,3 +429,41 @@ func TestClaudeCodeInterrupted(t *testing.T) {
 		t.Fatalf("interrupted should go idle without done: %+v", it)
 	}
 }
+
+// 實測（2026-11-07 21:58:48）：wrap_up 帶 ask 被 App 拒絕（按鈕不可用），改成不帶 ask 再呼叫一次 → Stop 時不該亮黃燈
+func TestClaudeCodeWrapUpRetryWithoutAsk(t *testing.T) {
+	for _, failFirst := range []bool{false, true} {
+		c := NewClaudeCode()
+		now := time.Date(2026, 11, 7, 21, 58, 0, 0, time.UTC)
+		c.now = func() time.Time { return now }
+		ev := func(name, extra string) {
+			if err := c.Handle([]byte(`{"session_id":"eb852a27aaaa","hook_event_name":"` + name + `"` + extra + `}`)); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Second)
+		}
+		withAsk := `,"tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"好了","ask":"要提交嗎？"}`
+		noAsk := `,"tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"好了"}`
+		ev("UserPromptSubmit", "")
+		ev("PreToolUse", withAsk)
+		if failFirst {
+			ev("PostToolUseFailure", withAsk)
+		} else {
+			ev("PostToolUse", withAsk)
+		}
+		ev("PreToolUse", noAsk)
+		ev("PostToolUse", noAsk)
+		ev("Stop", "")
+		if it := c.Items()[0]; it.Review || it.Gen || it.FinishedAt == 0 {
+			t.Fatalf("failFirst=%v: last wrap_up had no ask, should be done not review: %+v", failFirst, it)
+		}
+	}
+	// 只有 PostToolUseFailure（重試前就結束）也不算要問你
+	c := NewClaudeCode()
+	c.Handle([]byte(`{"session_id":"x1","hook_event_name":"PreToolUse","tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"ask":"要嗎？"}}`))
+	c.Handle([]byte(`{"session_id":"x1","hook_event_name":"PostToolUseFailure","tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"ask":"要嗎？"}}`))
+	c.Handle([]byte(`{"session_id":"x1","hook_event_name":"Stop"}`))
+	if it := c.Items()[0]; it.Review {
+		t.Fatalf("failed wrap_up should not ask: %+v", it)
+	}
+}

@@ -50,6 +50,10 @@ type ClaudeCode struct {
 	termFg   bool      // 前景視窗是終端機 / 編輯器：當作你正在看 Claude Code
 	store    string    // 對話狀態存檔路徑（AIMonitor 重啟後讀回來；空 = 不存）
 	loadedAt time.Time // 從檔案讀回來的時間
+	// Claude App 紀錄檔裡還沒回答的權限詢問（applog.go；hooks 不知道的那種，例如內建瀏覽器執行 JavaScript）
+	appPerms interface {
+		Waiting(cliID string) (time.Time, bool)
+	}
 }
 
 // 從檔案讀回來的「生成中」：這麼久都沒有新事件，就當作在 AIMonitor 重啟期間已經結束（漏掉了 Stop）
@@ -285,7 +289,14 @@ func (c *ClaudeCode) Handle(body []byte) error {
 				return nil
 			case "after":
 				s.AskAfter = true
+			default:
+				if strings.HasSuffix(e.ToolName, "wrap_up") {
+					s.AskAfter = false // 最後一次 wrap_up 說了算：帶 ask 那次被拒絕、改成不帶 ask 再呼叫時不要亮黃燈
+				}
 			}
+		}
+		if e.HookEventName == "PostToolUseFailure" && strings.HasSuffix(e.ToolName, "wrap_up") {
+			s.AskAfter = false // 帶 ask 的 wrap_up 失敗了：方塊沒出現，不算要問你
 		}
 		s.Review, s.Asking = false, false
 	case "Stop":
@@ -349,12 +360,18 @@ func (c *ClaudeCode) Items() []Item {
 		if s.Cwd != "" {
 			label += " · " + filepath.Base(strings.ReplaceAll(s.Cwd, "\\", "/"))
 		}
-		out = append(out, Item{
+		it := Item{
 			Key: "cc:" + short, AI: "claude", Focused: c.termFg,
 			Gen: s.Gen, GenSince: s.GenSince, Review: s.Review, ReviewSince: s.ReviewSince, FinishedAt: s.FinishedAt,
 			Failed: s.Failed, Msg: s.ErrMsg, Asking: s.Review && s.Asking,
 			Buttons: []string{label},
-		})
+		}
+		if c.appPerms != nil && s.Gen && !s.Review {
+			if at, ok := c.appPerms.Waiting(id); ok { // App 跳出權限詢問在等你（hooks 不會說）
+				it.Review, it.ReviewSince = true, at.UnixMilli()
+			}
+		}
+		out = append(out, it)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out

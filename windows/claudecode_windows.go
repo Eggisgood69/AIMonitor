@@ -14,11 +14,14 @@ import (
 
 var (
 	claudeCode   = NewClaudeCode()
+	appPerms     = NewAppPerms(filepath.Join(os.Getenv("LOCALAPPDATA"), "Claude", "logs", "main.log"))
 	codex        = NewCodex(codexSessionsDir())
 	lastScanMu   sync.Mutex
 	lastScanList []Item
 	ccServerErr  string
 )
+
+func init() { claudeCode.appPerms = appPerms }
 
 func ccSettingsPath() string {
 	home, _ := os.UserHomeDir()
@@ -88,6 +91,7 @@ func mergedScan(fromMonitor []Item) []Item {
 	}
 	base := append([]Item(nil), lastScanList...)
 	lastScanMu.Unlock()
+	appPerms.Poll() // Claude App 紀錄檔新增的部分（權限詢問）
 	base = append(base, claudeCode.Items()...)
 	if ext := extension.Items(); extEnabled() {
 		base = append(base, ext...)

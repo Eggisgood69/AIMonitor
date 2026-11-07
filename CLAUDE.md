@@ -201,7 +201,14 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   在生成中 / 需審核時每 2 秒看結尾，最後一則對話是「[Request interrupted by user…」就熄（不算完成，claudecode.go `ccInterrupted`）
 - Claude Code hooks：按下允許時沒有任何事件；`permission_prompt` 通知在提示等了約 6 秒才送（只送一次）
 - Claude 問你問題不是權限提示（只有 Stop）：看 PreToolUse 的工具判斷（`ccAskKind`）——AskUserQuestion / ExitPlanMode 題目出現就亮黃燈，
-  Claude App「下一步」方塊是 wrap_up 工具帶 `ask`，Stop 時亮黃燈、送出下一則訊息才熄。不要靠按鈕文字（每次都不一樣）
+  Claude App「下一步」方塊是 wrap_up 工具帶 `ask`，Stop 時亮黃燈、送出下一則訊息才熄。不要靠按鈕文字（每次都不一樣）。
+  一輪裡最後一次 wrap_up 說了算：帶 ask 那次被 App 拒絕（PostToolUseFailure）、改成不帶 ask 再呼叫時，AskAfter 要清掉（曾經 Stop 時誤亮黃燈）
+- Claude App 自己跳的權限詢問（例如內建瀏覽器「允許 Claude 在以下位置執行 JavaScript？」）**不經過 Claude Code 的權限系統**，hooks 沒有任何事件，
+  畫面上的「允許一次」也只有正在看那個對話時才讀得到 → 看 App 的紀錄檔 `%LOCALAPPDATA%\Claude\logs\main.log`（applog.go，2026-11 實測 App 4.23118）：
+  `Emitted tool permission request <id> for <工具> in session local_<內部 id>` 到 `Received permission response for <id>` 之間在等你；
+  `Mapping internal session local_<內部 id> to CLI session <session_id>` 對到 Claude Code 對話，那個 cc 項目亮黃燈（`AppPerms.Waiting`）。
+  每次掃描讀新增的部分（第一次只讀最後 2 MB；檔案變小 = App 換新檔、從頭讀），沒回答的詢問 6 小時後不算。
+  側邊欄在 Code 模式沒有「等待輸入」之類的標記可看（試過）
 - 主燈規則（state.go `rank`）：「你沒看到的事」優先——背景需審核 > 正在看的需審核 > 背景錯誤 > 背景完成 >
   背景生成中 > 正在看的生成中 > 背景完成（1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機。**不跳 Windows 通知**（使用者不要，已移除）。
   正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）

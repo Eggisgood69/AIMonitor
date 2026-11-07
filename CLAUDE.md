@@ -26,7 +26,7 @@ firmware/aimon/config.h    兩種板子的腳位、亮度（`#if CONFIG_IDF_TARG
 firmware/aimon/sensors.h   AMOLED 的觸控、陀螺儀（I2C）
 firmware/aimon/mic.h       AMOLED 的 USB 麥克風（ES7210 + I2S + 自訂 UAC1 class driver，執行中切 TinyUSB）
 firmware/tools/mic-off.ps1 燒錄前讓麥克風模式的 AMOLED 重開回 hwcdc，輸出新的 COM 埠
-firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
+firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁）與大圖（主畫面取代 AI 名稱，AMOLED 的 Claude 仍是 Clawd），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
 firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）→ docs/images/（用 AMOLED 466 的畫面、透明背景加機身邊框；目前只展示 Claude，ChatGPT / Gemini 還沒完全好）
 windows/                   Go 程式（Windows only，WebView2）
   main_windows.go          進入點、設定、序列埠連線（每個埠一條，runScreen）、指令（onCmd）、狀態 JSON（uiStatusJSON）
@@ -75,7 +75,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.0、韌體 1.10.15（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.16、韌體 1.10.31（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -93,6 +93,20 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   之後只做整數混色，最重的一條 7-15 ms。表約 50 KB（剩餘記憶體 255 → 198 KB）。
   以像素中心算距離才會跟舊畫法對齊（`drawWideLine` 只吃整數座標），邊緣多 0.2 px（`GAUGE_AA`）補回舊畫法重疊造成的粗細
 - 螢幕方向存在 NVS（Preferences "aimon"/"rot"）
+- 只重畫一小塊的動畫（aimon.ino `redrawRect`，兩種螢幕共用）：「Generating」的光（`genTick`，每 40 ms）、
+  ChatGPT / Gemini 的經過時間（`numTick`，秒數變了才畫）、額度環與里程表數字（`gaugeTick`，3 秒 ease-in-out，`GAUGE_ANIM_MS`）。
+  一次最多畫 BAND_H 列（外環 / 額度環查表一次只畫一條高），AMOLED 畫進 g_fb 再一段一段 `pushFbRect`：
+  **轉向暫存區 `g_rotBuf` 只有 W × BAND_H**，整塊一次送會寫爆它、螢幕當機重開（曾經切到 ChatGPT 就全黑；`pushRect` 現在超過就不送）。
+  1.28 吋借用分條的 sprite，送出時跳過 `RING_KEY`（不蓋掉螢幕上的外環）
+  - 排程：外環在呼吸時（有 TE）幾乎每一刻不是畫外環就是在等 TE（`ringFrameState` 回 2），只在 0 做的話動畫永遠排不到 → 等 TE 時也做；
+    整張重畫的每一條之間也做，整張送出前（`prepareFrame` 前）再用現在的時間補畫一次，否則每次整張重畫動畫就停一下或往回跳；
+    淡出時不做、淡入時照做（切換 AI 時淡入的同時開始捲額度）
+  - 整張重畫只在內容變了才做：收到資料比對 `frameKey`（不含 5 小時額度的數字，那個交給 gaugeTick 慢慢捲），
+    狀態頁的定時重畫改看 `viewKey`（到分鐘才變的倒數、日期、防烙印位置）。以前電腦每 1-3 秒送一次就整張重畫，動畫固定間隔頓一下
+  - 額度動畫踩過：差不到 0.05 就直接設成目標卻沒重畫 → 數字停在捲了 95% 的地方；ease-out cubic 最後 30% 時間只走 3%，看起來卡住；
+    只有小數變（44.6 → 44.7）時不要重新計時；目標有小數時里程表停在四捨五入的整數（`pctDraw` 的 `disp`）
+  - Arduino 的 `F()` 巨集會吃掉叫 `F` 的樣板參數，自動產生的函式原型也會弄壞樣板函式 → `redrawRect` 用函式指標
+- AMOLED 切換 AI 時淡出淡入（跟換頁同一套 `fadeTick`），以前直接整張送看得到撕裂；換 AI 時額度照樣捲（使用者喜歡從上一家捲到這一家）
 - AMOLED（CO5300，LovyanGFX 1.2.33 的 `Panel_CO5300` + `Bus_SPI` 四線）：
   - 直接寫到螢幕的範圍 x、y、寬、高都要是**偶數**（`LCD_EVEN`）：x / 寬奇數 LovyanGFX 會整段丟掉，y / 高奇數面板會亂掉（全白）。
     外環兩列一組推（`RING_ROWS`，兩列取聯集、每個像素照實際距離查色），sprite 每條 40 列；所以外環也畫進 sprite（`g_ringDirect = false`），不用透明色挖空
@@ -235,4 +249,4 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 ## 待處理
 
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
-- 其他提案：額度快用完警告、夜間自動調暗、生成太久提醒
+- 其他提案：額度跨過門檻當下主動提醒（現在只有 ≥ 90% 變紅、重置前 5 分鐘 / 重置時的提醒 reminder.go；使用者 2026-11 說先不做）、夜間自動調暗、生成太久提醒

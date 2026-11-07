@@ -9,7 +9,7 @@ from PIL import Image
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 UI_JS = os.path.join(ROOT, "windows", "ui.js")
 OUT = os.path.join(ROOT, "firmware", "aimon", "logos.h")
-SIZES = {240: 18, 466: 36}          # 螢幕寬度 → 圖示邊長（設計 18 px，AMOLED 要偶數）
+SIZES = {240: (18, 32), 466: (36, 62)}   # 螢幕寬度 → 小圖（今日統計）、大圖（主畫面取代名稱，設計 32 px）邊長，AMOLED 要偶數
 BRANDS = ["claude", "chatgpt", "gemini"]
 
 
@@ -41,16 +41,18 @@ def main():
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("#pragma once\n// 由 firmware/tools/logogen.py 產生（來源：windows/ui.js 的官方 LOGO），不要手動改\n")
         f.write("// 黑底 RGB565，順序跟 BRANDS 一樣：claude, chatgpt, gemini\n")
-        for w, n in SIZES.items():
-            f.write("\n#if LCD_W == %d\nstatic const int LOGO_N = %d;\n" % (w, n))
-            for b in BRANDS:
-                px = rgb565(svgs[b], n)
-                f.write("static const uint16_t LOGO_%s[%d] = {\n" % (b.upper(), n * n))
-                for i in range(0, len(px), 16):
-                    f.write("  " + ",".join("0x%04X" % v for v in px[i:i + 16]) + ",\n")
-                f.write("};\n")
+        for w, (n, nb) in SIZES.items():
+            f.write("\n#if LCD_W == %d\nstatic const int LOGO_N = %d;\nstatic const int LOGOB_N = %d;\n" % (w, n, nb))
+            for prefix, size in (("LOGO", n), ("LOGOB", nb)):
+                for b in BRANDS:
+                    px = rgb565(svgs[b], size)
+                    f.write("static const uint16_t %s_%s[%d] = {\n" % (prefix, b.upper(), size * size))
+                    for i in range(0, len(px), 16):
+                        f.write("  " + ",".join("0x%04X" % v for v in px[i:i + 16]) + ",\n")
+                    f.write("};\n")
             f.write("#endif\n")
         f.write("\nstatic const uint16_t* const LOGOS[] = {LOGO_CLAUDE, LOGO_CHATGPT, LOGO_GEMINI};\n")
+        f.write("static const uint16_t* const LOGOS_BIG[] = {LOGOB_CLAUDE, LOGOB_CHATGPT, LOGOB_GEMINI};\n")
     print("wrote", os.path.normpath(OUT))
 
 

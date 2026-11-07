@@ -20,9 +20,9 @@ import (
 // 預覽圖用 1.75 吋 AMOLED 的畫面（解析度高、有 Clawd）
 func main() {
 	in, outDir := filepath.Join(os.Args[1], "466"), os.Args[2]
-	grid(in, [][]string{{"review", "working", "done"}, {"error", "idle", "nolink"}}, 300, filepath.Join(outDir, "states.png"))
+	grid(in, [][]string{{"review", "working", "done"}, {"error", "idle", "nolink"}}, 300, filepath.Join(outDir, "states-v2.png"))
 	grid(in, [][]string{{"idle", "page1", "page2", "page3"}}, 300, filepath.Join(outDir, "pages.png"))
-	n := animGIF(in, 320, filepath.Join(outDir, "demo.gif"))
+	n := animGIF(in, 320, filepath.Join(outDir, "demo-v2.gif"))
 	fmt.Println("frames", n)
 }
 

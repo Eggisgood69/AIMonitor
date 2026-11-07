@@ -548,13 +548,148 @@ static void bigValue(const char* num, bool percent, int y) {
   if (percent) text("%", x + w + SI(2), y + SI(8), C_LABEL2, &fUnit.font, middle_left);
 }
 
+static const uint32_t GEN_SWEEP_MS = 1800;   // 「Generating」的光掃一次多久
+
 static void statusLine(St st, int y, uint32_t ms) {
   const char* s = ST_TITLE[st];
   uint32_t col = st == S_IDLE ? C_LABEL2 : stColor(st);
   int tw = textW(s, &fLabel.font);
   int x = CX - (tw + SI(12)) / 2;
   band.fillSmoothCircle(x + S(4) + g_shX, y + g_shY - OY, S(3.5f), col);
-  text(s, x + SI(12), y + SI(1), col, &fLabel.font, middle_left);
+  if (st != S_WORKING) { text(s, x + SI(12), y + SI(1), col, &fLabel.font, middle_left); return; }
+  // 生成中：暗綠的字，一道亮光由左掃到右（GEN_SWEEP_MS 一次）。亮帶分成幾條直條、各用 clip 重畫一次字，越靠中間越亮
+  const int tx = x + SI(12);
+  const uint32_t dim = mix(col, C_BG, 0.45f), peak = 0xB9FFCF;
+  text(s, tx, y + SI(1), dim, &fLabel.font, middle_left);
+  const float p = -0.3f + 1.6f * (ms % GEN_SWEEP_MS) / GEN_SWEEP_MS;
+  const int mid = tx + g_shX + (int)(p * tw), half = tw * 18 / 100, N = 4;
+  for (int i = -N; i < N; i++) {
+    const int a = mid + i * half / N, b = mid + (i + 1) * half / N;
+    if (b <= tx + g_shX || a >= tx + g_shX + tw) continue;          // 在字外面
+    band.setClipRect(a, 0, b - a, band.height());
+    text(s, tx, y + SI(1), mix(dim, peak, 1 - fabsf((i + 0.5f) / N)), &fLabel.font, middle_left);
+  }
+  band.clearClipRect();
+}
+
+// 畫面內容的指紋：電腦每 1-3 秒送一次資料，內容沒變就不要整張重畫（整張送出時動畫會頓一下）
+static uint32_t hashStr(uint32_t k, const String& s) {
+  for (size_t i = 0; i < s.length(); i++) k = k * 31 + (uint8_t)s.c_str()[i];
+  return k * 31 + s.length();
+}
+static uint32_t frameKey(const Frame& f) {
+  uint32_t k = f.brand;
+  k = k * 31 + f.st;
+  k = hashStr(k, f.msg);
+  k = hashStr(k, f.note) * 31 + f.noteKind;
+  k = k * 31 + (f.p5 >= 0 ? 1 : 0) + (f.p5 >= 90 ? 2 : 0);   // 5 小時額度的數字由 gaugeTick 慢慢跑過去，不整張重畫
+  k = k * 31 + (uint32_t)(int)(f.pw * 2 + 0.5f);
+  k = k * 31 + f.r5;
+  k = k * 31 + f.rw;
+  for (int i = 0; i < f.nOthers; i++) k = k * 31 + f.others[i].brand * 8 + f.others[i].st;
+  k = k * 31 + f.nOthers;
+  for (int i = 0; i < f.nToday; i++) k = (k * 31 + f.today[i].brand * 1000 + f.today[i].count) * 31 + f.today[i].secs;
+  return k * 31 + f.nToday;
+}
+// 跟時間有關、到分鐘才會變的東西（重置倒數、日期）與防烙印位置：變了才整張重畫
+static uint32_t viewKey() {
+  const uint32_t now = nowEpoch();
+  uint32_t k = now / 60;
+  if (g_frame.r5 > now) k = (k * 31 + (g_frame.r5 - now) / 60) * 31 + (g_frame.r5 - now + 59) / 60;
+  if (g_frame.rw > now) k = k * 31 + (g_frame.rw - now) / 60;
+  k = k * 31 + (linkAlive() ? 1 : 0);
+  return k * 31 + (uint32_t)((g_shX + 16) * 64 + g_shY + 16);
+}
+
+// 額度環的漸進動畫：畫面上顯示的 5 小時額度（g_p5Shown）每 33 ms 往電腦送來的值靠近（韌體 gaugeTick），
+// 每一步只重畫環上變化的那一小段（gaugeArcBox）與數字（pctBox）
+static float g_p5Shown = -1;
+static float p5View() { return g_p5Shown >= 0 && g_frame.p5 >= 0 ? g_p5Shown : g_frame.p5; }
+// 大百分比數字：里程表那樣捲動。顯示值的小數部分 = 往下一個數字捲了多少；個位每次都捲，
+// 十位、百位只有右邊全是 9 時才跟著捲（9 → 10、19 → 20…）。停住時（整數）就是一般的數字
+static void pctDraw() {
+  const float t = g_frame.p5;
+  float disp = p5View() + (floorf(t + 0.5f) - t);          // 目標本身有小數（例如 44.6）時，停在四捨五入的整數上
+  if (disp < 0) disp = 0;
+  const int n = (int)floorf(disp);
+  float fr = disp - n;
+  if (fr < 0.02f) fr = 0;
+  char cur[8];
+  snprintf(cur, sizeof cur, "%d", n);
+  const int len = strlen(cur), w = textW(cur, &fNum.font), y = SI(106), roll = SI(48);
+  const int x = CX - w / 2;                                 // 跟 bigValue 一樣：數字置中，「%」掛在右邊
+  bool allNine = true;
+  for (int i = 0; i < len; i++) allNine = allNine && cur[i] == '9';
+  if (fr > 0) band.setClipRect(x - SI(30) + g_shX, y - SI(25) + g_shY - OY, w + SI(34), SI(50));   // 只露出一個數字的高度
+  const int off = (int)(fr * roll);
+  int cx = x;
+  for (int i = 0; i < len; i++) {
+    char c[2] = {cur[i], 0};
+    const int cw = textW(c, &fNum.font);
+    bool rolls = fr > 0;
+    for (int j = i + 1; j < len && rolls; j++) rolls = cur[j] == '9';
+    if (!rolls) text(c, cx, y, C_LABEL, &fNum.font, middle_left);
+    else {
+      char nc[2] = {(char)(cur[i] == '9' ? '0' : cur[i] + 1), 0};
+      text(c, cx, y - off, C_LABEL, &fNum.font, middle_left);                                  // 舊數字往上捲出去
+      text(nc, cx + (cw - textW(nc, &fNum.font)) / 2, y - off + roll, C_LABEL, &fNum.font, middle_left);   // 新數字從下面捲上來
+    }
+    cx += cw;
+  }
+  if (allNine && fr > 0) text("1", x - textW("1", &fNum.font), y - off + roll, C_LABEL, &fNum.font, middle_left);   // 9 → 10 多出來的那一位
+  if (fr > 0) band.clearClipRect();
+  text("%", x + w + SI(2), y + SI(8), C_LABEL2, &fUnit.font, middle_left);
+}
+// 狀態頁大百分比數字的範圍（含「%」，偶數對齊、含防烙印挪動）：上面是 LOGO（到 70）、下面是狀態列（從 133）
+static void pctBox(int& x, int& y, int& w, int& h) {
+  const int nw = textW("100", &fNum.font);
+  x = (CX - nw / 2 - SI(6) + g_shX) & ~1; w = (nw + SI(34) + 2) & ~1;
+  y = (SI(80) + g_shY) & ~1; h = SI(52) & ~1;
+}
+// 額度環上 a% 到 b% 那一段（含圓頭、抗鋸齒）的範圍，偶數對齊
+static void gaugeArcBox(float a, float b, int& x, int& y, int& w, int& h) {
+  if (a > b) { const float t = a; a = b; b = t; }
+  a = a < 0 ? 0 : (a > 100 ? 100 : a); b = b < 0 ? 0 : (b > 100 ? 100 : b);
+  float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+  const int n = 2 + (int)((b - a) * GAUGE_SPAN / 100 / 4);   // 每 4° 取一點
+  for (int i = 0; i <= n; i++) {
+    const float d = GAUGE_START + GAUGE_SPAN * (a + (b - a) * i / n) / 100 - 90;
+    const float qx = px(R_USAGE, d), qy = py(R_USAGE, d);
+    x0 = qx < x0 ? qx : x0; x1 = qx > x1 ? qx : x1; y0 = qy < y0 ? qy : y0; y1 = qy > y1 ? qy : y1;
+  }
+  const float pad = HW_USAGE + S(3);
+  x = ((int)(x0 - pad) & ~1); y = ((int)(y0 - pad) & ~1);
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  w = ((int)(x1 + pad) - x + 2) & ~1; h = ((int)(y1 + pad) - y + 2) & ~1;
+  if (x + w > W) w = (W - x) & ~1;
+  if (y + h > H) h = (H - y) & ~1;
+}
+
+// 主畫面的經過時間（ChatGPT / Gemini 沒有額度時的大數字）：每秒只重畫那一塊；範圍偶數對齊，含防烙印挪動
+static bool numBox(int& x, int& y, int& w, int& h) {
+  if (g_saver || g_page != 0 || !linkAlive() || g_frame.p5 >= 0 || g_frame.brand == N_BRANDS - 1) return false;
+  const int tw = textW("88:88", &fNum.font) + SI(16);
+  x = (CX - tw / 2 + g_shX) & ~1; w = (tw + 2) & ~1;
+  y = (SI(80) + g_shY) & ~1; h = (SI(54)) & ~1;          // 上面是 LOGO（到 66）、下面是 Generating（從 136）
+  return true;
+}
+static void numDraw() {
+  char num[12];
+  const uint32_t el = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
+  if (el >= 3600) snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 3600), (unsigned)((el % 3600) / 60));
+  else snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 60), (unsigned)(el % 60));
+  bigValue(num, false, SI(106));
+}
+
+// 主畫面「Generating」那一列的範圍（偶數對齊，含防烙印挪動）與它的 y；不是生成中就不用動畫
+static bool genBox(int& x, int& y, int& w, int& h, int& ly) {
+  if (g_saver || g_page != 0 || !linkAlive() || g_frame.st != S_WORKING) return false;
+  ly = g_frame.p5 >= 0 ? SI(145) : SI(148);              // 跟 drawScene 一樣
+  const int tw = textW(ST_TITLE[S_WORKING], &fLabel.font) + SI(12);
+  x = (CX - tw / 2 - SI(4) + g_shX) & ~1; w = (tw + SI(8) + 2) & ~1;
+  y = (ly - SI(12) + g_shY) & ~1; h = (SI(24) + 2) & ~1;
+  return true;
 }
 
 static void othersRow(const Frame& f) {
@@ -635,6 +770,12 @@ static bool clawdBox(int& x, int& y, int& w, int& h) {
   (void)x; (void)y; (void)w; (void)h;
   return false;
 #endif
+}
+
+// 主畫面上方的 AI：官方 LOGO 取代名稱文字（跟字一樣跟著防烙印挪動）
+static void brandMark(int brand, int y) {
+  if (brand < 0 || brand >= 3) return;
+  band.pushImage(CX + g_shX - LOGOB_N / 2, y + g_shY - LOGOB_N / 2 - OY, LOGOB_N, LOGOB_N, (const lgfx::rgb565_t*)LOGOS_BIG[brand]);
 }
 
 // 畫主畫面的 Clawd
@@ -829,13 +970,13 @@ static void drawScene(uint32_t ms) {
 
   char num[12];
   if (hasUsage) {
-    uint32_t uc = f.p5 >= 90 ? C_RED : b.color;
-    progressRing(R_USAGE, HW_USAGE, f.p5, uc);
+    const float p5 = p5View();                              // 額度變了會慢慢跑過去（韌體 gaugeTick）
+    uint32_t uc = p5 >= 90 ? C_RED : b.color;
+    progressRing(R_USAGE, HW_USAGE, p5, uc);
 
-    if (!clawdBox(bx, by, bw, bh)) text(b.name, CX, SI(60), b.color, &fName.font);
-    else clawdDraw(ms);                                     // AMOLED：Claude 的名稱換成會動的 Clawd
-    snprintf(num, sizeof num, "%d", (int)(f.p5 + 0.5f));
-    bigValue(num, true, SI(106));
+    if (!clawdBox(bx, by, bw, bh)) brandMark(f.brand, SI(54));   // 官方 LOGO 取代名稱（比名稱文字高一點，跟數字留空間）
+    else clawdDraw(ms);                                     // AMOLED：Claude 換成會動的 Clawd
+    pctDraw();
     statusLine(f.st, SI(145), ms);
 
     // 每週額度：只顯示文字
@@ -856,16 +997,11 @@ static void drawScene(uint32_t ms) {
     if (cap.length()) text(fitText(cap, SI(150), &fTiny.font).c_str(), CX, SI(185), capCol, &fTiny.font);
     if (f.nOthers > 0) othersRow(f);
   } else {
-    if (!clawdBox(bx, by, bw, bh)) text(hasAI ? b.name : "No AI Tab", CX, SI(56), hasAI ? b.color : C_LABEL2, &fName.font);
-    else clawdDraw(ms);
-    if (hasAI) {
-      uint32_t el = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
-      if (el >= 3600) snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 3600), (unsigned)((el % 3600) / 60));
-      else snprintf(num, sizeof num, "%u:%02u", (unsigned)(el / 60), (unsigned)(el % 60));
-    } else {
-      strcpy(num, "--");
-    }
-    bigValue(num, false, SI(106));
+    if (clawdBox(bx, by, bw, bh)) clawdDraw(ms);
+    else if (hasAI) brandMark(f.brand, SI(50));             // 官方 LOGO 取代名稱（跟數字留空間）
+    else text("No AI Tab", CX, SI(56), C_LABEL2, &fName.font);
+    if (hasAI) numDraw();                                   // 經過時間（韌體每秒只重畫這一塊，numBox）
+    else bigValue("--", false, SI(106));
     statusLine(f.st, SI(148), ms);
     String cap = f.note.length() ? f.note : f.msg.length() ? f.msg : String(hasAI ? (f.st == S_IDLE ? "SINCE LAST REPLY" : "ELAPSED") : "OPEN CHATGPT, CLAUDE OR GEMINI");
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL2;

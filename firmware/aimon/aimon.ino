@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.15"
+#define FW_VERSION "1.10.31"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -464,8 +464,12 @@ static void handleLine(Stream* src, const String& line) {
   g_frame = f;
   g_lastFrameMs = millis();
   if (!g_everConnected) g_everConnected = true;
-  // AMOLED 螢幕保護：電腦每 1-3 秒送一次，每次都整張重畫的話 Clawd 會跟著頓一下 → 改由 loop 看畫面內容有沒有變（saverKey）
-  if (!(BOARD_AMOLED && g_saver)) dirty = true;
+  // 電腦每 1-3 秒送一次，每次都整張重畫的話 Generating 的光、Clawd 會跟著頓一下 → 內容變了才重畫。
+  // AMOLED 螢幕保護另外由 loop 看 saverKey
+  static uint32_t lastKey = 0;
+  const uint32_t k = frameKey(f);
+  if (k != lastKey && !(BOARD_AMOLED && g_saver)) dirty = true;
+  lastKey = k;
 }
 
 static void pollReader(LineReader& r) {
@@ -559,6 +563,7 @@ static bool slideTick() {
 // ---------------- Clawd 動畫 ----------------
 // 把一塊畫面（看到的畫面座標 x / y / 寬 / 高，都是偶數；src 指到這塊的左上角，每列隔 stride）轉向後送到螢幕
 static void pushRect(const uint16_t* src, int stride, int x, int y, int w, int h) {
+  if (w <= 0 || h <= 0 || w * h > W * BAND_H) return;   // 轉向暫存區只有一條大：超過會寫壞記憶體（曾經因此當機重開）
   uint16_t* d = g_rotBuf;
   int px = x, py = y, pw = w, ph = h;
   for (int r = 0; r < h; r++)
@@ -691,6 +696,96 @@ static void clawdTick(uint32_t now) {
   pushFbRect(bx, by, bw, bh);
 }
 #endif
+
+// 只重畫畫面上的一塊（範圍是偶數）。每次最多畫 BAND_H 列（外環、額度環的查表一次只畫一條的高度）：
+// AMOLED 畫進畫面緩衝（整張送出時一致），每畫好一段就送那一段（轉向暫存區 g_rotBuf 只有一條大，整塊一次送會寫爆它、當機重開）；
+// 1.28 吋借用分條的 sprite（沒在畫那一條時才呼叫），外環區域是透明色（RING_KEY），送出時跳過、不蓋掉螢幕上的外環
+// （不用樣板：Arduino 自動產生的函式原型會把樣板弄壞）
+static void redrawRect(int bx, int by, int bw, int bh, void (*draw)()) {
+#if BOARD_AMOLED
+  if (!g_fb) return;
+#endif
+  for (int y0 = by; y0 < by + bh; y0 += BAND_H) {
+    const int rh = min(BAND_H, by + bh - y0);
+    OY = y0;
+#if BOARD_AMOLED
+    band.setBuffer(g_fb + y0 * W, W, rh, 16);
+#endif
+    band.fillRect(bx, 0, bw, rh, C_BG);
+    draw();
+    OY = 0;
+#if BOARD_AMOLED
+    pushFbRect(bx, y0, bw, rh);
+#else
+    lcd.startWrite();
+    lcd.setClipRect(bx, y0, bw, rh);
+    band.pushSprite(&lcd, 0, y0, RING_KEY);
+    lcd.clearClipRect();
+    lcd.endWrite();
+#endif
+  }
+}
+
+// 「Generating」的光掃過：每 40 ms 只重畫那一列（不整張重畫）。
+// 整張重畫期間（每條之間）也照常更新，整張送出前再用現在的時間畫一次（force），光才不會停住或往回跳
+static int g_genY = 0;
+static uint32_t g_genMs = 0;
+static void genDraw() { statusLine(S_WORKING, g_genY, g_genMs); }
+static void genTick(uint32_t now, bool force) {
+  static uint32_t last = 0;
+  int bx, by, bw, bh;
+  if ((!force && now - last < 40) || !genBox(bx, by, bw, bh, g_genY)) return;
+  last = now;
+  g_genMs = now;
+  redrawRect(bx, by, bw, bh, genDraw);
+}
+
+// 經過時間（ChatGPT / Gemini 的大數字）：秒數變了只重畫那一塊
+static void numTick() {
+  static uint32_t lastSec = 0xFFFFFFFF;
+  int bx, by, bw, bh;
+  if (!numBox(bx, by, bw, bh)) { lastSec = 0xFFFFFFFF; return; }
+  const uint32_t sec = (millis() - g_stateSinceMs) / 1000 + g_stateSinceBase;
+  if (sec == lastSec) return;
+  lastSec = sec;
+  redrawRect(bx, by, bw, bh, numDraw);
+}
+
+// 額度環的漸進動畫：電腦送來的 5 小時額度變了，畫面上的值（g_p5Shown）在 GAUGE_ANIM_MS 內跑到新值（先快後慢），
+// 每一步只重畫環上變化的那一小段（整個畫面重畫一條的方式）與數字。看不到時（其他頁、螢幕保護）直接跳到新值
+static uint32_t g_sceneMs = 0;
+static void sceneDraw() { drawScene(g_sceneMs); }
+static const uint32_t GAUGE_ANIM_MS = 3000;   // 額度變動的動畫多久（使用者覺得 1 秒太快、一閃就沒了；2 秒後又試 3 秒）
+static void gaugeTick(uint32_t now) {
+  static uint32_t last = 0;
+  if (now - last < 33) return;
+  last = now;
+  const float target = g_frame.p5;
+  if (target < 0) { g_p5Shown = -1; return; }
+  const float old = g_p5Shown;
+  if (old < 0 || g_saver || g_page != 0 || !linkAlive()) { g_p5Shown = target; return; }   // 看不到：直接跳過去
+  if (old == target) return;                                // 已經停在目標上
+  // （以前差不到 0.05 就直接設成目標、卻沒重畫，數字停在捲了 95% 的地方，要等下次整張重畫才合上去）
+  // 固定 GAUGE_ANIM_MS 跑完，差多少都一樣慢。曲線兩頭稍慢、中間均速（ease-in-out sine）：
+  // 原本用 ease-out cubic，最後 30% 的時間只走 3%，數字捲到快到的地方看起來卡住。
+  // 途中目標變了才從現在的位置重新開始；只有小數變（44.6 → 44.7，顯示的整數一樣）就不重新計時
+  static float from = -1, to = -1;
+  static uint32_t t0 = 0;
+  if (target != to) {
+    if (to < 0 || (int)floorf(target + 0.5f) != (int)floorf(to + 0.5f)) { from = old; t0 = now; }
+    else if (now - t0 >= GAUGE_ANIM_MS) from = old;             // 已經停了：小數直接補上
+    to = target;
+  }
+  const float t = min(1.0f, (now - t0) / (float)GAUGE_ANIM_MS), e = 0.5f - 0.5f * cosf(t * PI);
+  g_p5Shown = t >= 1 ? to : from + (to - from) * e;
+  if ((old >= 90) != (g_p5Shown >= 90)) { dirty = true; return; }    // 整圈換顏色（紅）：整張重畫
+  int bx, by, bw, bh;
+  g_sceneMs = now;
+  gaugeArcBox(old, g_p5Shown, bx, by, bw, bh);
+  redrawRect(bx, by, bw, bh, sceneDraw);
+  pctBox(bx, by, bw, bh);                                   // 數字像里程表一樣捲：每一步都重畫
+  redrawRect(bx, by, bw, bh, pctDraw);
+}
 
 // ---------------- BOOT 鍵、觸控 ----------------
 // BOOT 鍵：短按 = 下一頁，長按 = 標為已讀。
@@ -896,12 +991,16 @@ void loop() {
   static bool stripSinceRing = false;   // 上一格外環之後畫過一條了
 #if BOARD_AMOLED
   imuTick(now);
-  // 換頁、轉向、進出螢幕保護：開始淡出，整個重畫（重畫到一半的那張可能還是舊畫面）
+  // 換頁、轉向、進出螢幕保護、切換 AI：開始淡出，整個重畫（重畫到一半的那張可能還是舊畫面）。
+  // 切換 AI 以前直接整張送，看得到撕裂（快速切換視窗時）→ 也淡出淡入。
+  // 淡入的同時從上一家的額度捲到這一家的（使用者喜歡這個效果；淡出時不走，淡入一開始就走）
   {
-    static int lastPage = -1, lastRot = 0;
+    static int lastPage = -1, lastRot = 0, lastBrand = 0;
     static bool lastSaver = false;
-    if (lastPage < 0) { lastPage = g_page; lastRot = g_rot; lastSaver = g_saver; }
-    if (g_page != lastPage || g_rot != lastRot || g_saver != lastSaver) {
+    if (lastPage < 0) { lastPage = g_page; lastRot = g_rot; lastSaver = g_saver; lastBrand = g_frame.brand; }
+    const bool brandChanged = g_frame.brand != lastBrand && !g_saver;
+    lastBrand = g_frame.brand;
+    if (g_page != lastPage || g_rot != lastRot || g_saver != lastSaver || brandChanged) {
       if (g_fb) {
         if (g_slideDir && g_page != lastPage && g_rot == lastRot && g_saver == lastSaver && g_fadeDir == 0 && slideReady()) {
           // 滑動 / BOOT 鍵換頁：新頁整張畫好，從滑的方向滑進來
@@ -931,6 +1030,7 @@ void loop() {
     if (g_saver && g_fadeDir == 0) clawdTick(now);   // 等著送出時 Clawd 也照常走
     if (!g_frameReady) {
       const uint32_t t0 = millis();
+      if (g_fadeDir == 0) { genTick(t0, true); gaugeTick(t0); }   // 這張開始重畫時的光、額度位置已經舊了
       prepareFrame(t0);
       g_frameReady = true;
       if (millis() - t0 > g_maxPrepMs) g_maxPrepMs = millis() - t0;
@@ -954,6 +1054,13 @@ void loop() {
   showBright();
 #endif
   bool periodic = now - lastFull >= (animating() ? 1000u : 5000u);
+  if (periodic && !g_saver && g_page == 0) {   // 狀態頁：倒數、日期到分鐘才變，經過時間由 numTick 只重畫數字
+    static uint32_t lastView = 0;
+    const uint32_t k = viewKey();
+    periodic = k != lastView;
+    if (periodic) lastView = k;
+    else lastFull = now;
+  }
 #if BOARD_AMOLED
   if (g_saver && periodic) {                // 螢幕保護：畫面內容變了才整張重畫（時間、倒數都到分鐘）
     static uint32_t lastKey = 0;
@@ -977,14 +1084,22 @@ void loop() {
     stripSinceRing = false;
     if (millis() - now > g_maxRingMs) g_maxRingMs = millis() - now;
   }
+  // 沒在重畫、轉場時才動 Clawd、Generating 的光、經過時間。外環在呼吸時（有 TE）幾乎每一刻不是畫外環就是在等 TE（ringState 2），
+  // 只看 0 的話這些永遠排不到（光停住不動）→ 等 TE 的空檔也做（各自限制頻率，一次只重畫一小塊）
+  else if ((ringState == 0 || ringState == 2) && strip < 0 && g_fadeDir >= 0) {   // 淡入中（新畫面已經送出，只是還在變亮）也照常走
 #if BOARD_AMOLED
-  else if (ringState == 0 && strip < 0 && g_fadeDir == 0) clawdTick(now);   // 沒在重畫、轉場時才動 Clawd
+    clawdTick(now);
 #endif
+    genTick(now, false);
+    numTick();
+    gaugeTick(now);
+  }
   else if (ringState == 0 && strip >= 0) {
     OY = strip * BAND_H;
     const uint32_t t0 = millis();
     renderStrip(stripMs);
     stripSinceRing = true;
+    if (g_fadeDir == 0) { genTick(millis(), false); gaugeTick(millis()); numTick(); }   // 重畫中光、額度、經過時間也照常走（不然完成 / 待命時整張重畫，動畫會停一下）
     if (millis() - t0 > g_maxStripMs) g_maxStripMs = millis() - t0;
     OY = 0;
     if (++strip * BAND_H >= H) {

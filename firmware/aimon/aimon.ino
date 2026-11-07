@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.31"
+#define FW_VERSION "1.10.32"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -181,37 +181,151 @@ static void pushRows(const uint16_t* src, int oy, int h) {
 // 整張送出不撕裂的條件：從 TE 開始寫，寫完的時間 ≤ 約兩格（33 ms）。
 // 寫得比面板掃描慢沒關係（第一格掃到的全是舊的、第二格全是新的），但超過兩格，第二格掃到下半部時還沒寫到 → 下面一段是舊的
 // 所以 TE 之後只做 SPI 寫入；外環、轉向先在等 TE 之前做好（prepareFrame）
-static uint16_t* g_fbRot = nullptr;     // 轉向後的整張（90° / 180° / 270°）
+static uint16_t* g_fbRot = nullptr;     // 轉向後的整張（90° / 180° / 270°）；說話光暈時 0° 也用它（加了光的那張）
+static uint16_t* g_fbOut = nullptr;     // 上次 prepareFrame 準備好要送的那張（g_fb 或 g_fbRot）
 static bool g_frameReady = false;       // 外環、轉向都做好了，只等 TE
 
-// 整張轉到 g_fbRot。16×16 一塊一塊搬，PSRAM 快取才不會一直換
-static void rotateFrame() {
+// ---------------- 說話光暈（麥克風錄音中）----------------
+// 有程式在錄音時（Win+H 等），黑色背景隨說話音量淡淡亮起：圓心最亮、往外淡掉，越大聲越亮、範圍越大。
+// 不重畫畫面（整張重畫要 150 ms 以上，也會搶 CPU 讓麥克風掉封包）：g_fb 保持原樣，送出前才把光「加」上去——
+// 整張送出時跟轉向一起搬到 g_fbRot（composeFrame），小範圍更新在 pushRect 裡加。
+// 加法混色：黑底變成光的顏色，白字加一點還是白，反鋸齒的字邊也不會出現黑邊。光的顏色是主燈那家 AI 的品牌色。
+// 螢幕保護時不亮（Clawd 亂跑用的是另一張底圖，整張送出會留下殘影）
+#define VG_BINS 48                        // 圓心到光的邊緣分幾格
+#define VG_STEPS 32                       // 光的強度分幾階（0 = 沒有光）
+static const float VG_MAX = 0.65f;        // 最大聲時圓心的亮度：品牌色的 65%（22%、45% 時使用者都覺得太暗）
+static uint8_t g_vgQ = 0;                 // 畫面上現在的光強度（0-VG_STEPS）
+static uint8_t g_vgAdd[VG_BINS + 1][3];   // 每格距離要加的 R / G / B（0-255）；最後一格 = 0
+static uint8_t g_vgPalQ = 0xFF, g_vgPalBrand = 0xFF;
+static uint8_t* g_vgBin = nullptr;        // 距離平方 / 64 → 第幾格
+static int g_vgR2Max = 0;                 // 光最大的範圍（距離平方）
+static int g_vgR2Act = 0;                 // 現在這張光照得到的範圍（距離平方），外面不加
+static float g_vgLevel = 0;               // 平滑後的音量 0-1
+static uint32_t g_vgMs = 0, g_vgPushMs = 0;
+
+static void vgInit() {
+  if (g_vgBin) return;
+  const float rmax = S(104);              // 只到額度環內側，不碰外環
+  g_vgR2Max = (int)(rmax * rmax);
+  const int n = (g_vgR2Max >> 6) + 1;
+  g_vgBin = (uint8_t*)malloc(n);
+  if (!g_vgBin) return;
+  for (int i = 0; i < n; i++) {
+    const int b = (int)(sqrtf(i * 64.0f) / rmax * VG_BINS);
+    g_vgBin[i] = b >= VG_BINS ? VG_BINS : b;
+  }
+}
+
+// 強度 q 的光：越大聲範圍越大（光的半徑 45% → 100%），中間最亮、往外平滑淡掉
+static void vgPalette(int q) {
+  const uint32_t col = BRANDS[g_frame.brand].color;
+  const float L = q / (float)VG_STEPS, R = 0.45f + 0.55f * L;
+  for (int b = 0; b < VG_BINS; b++) {
+    const float x = (b + 0.5f) / VG_BINS / R, f = x < 1 ? (1 - x * x) * (1 - x * x) : 0;
+    const float k = VG_MAX * L * f;
+    g_vgAdd[b][0] = (uint8_t)(((col >> 16) & 255) * k + 0.5f);
+    g_vgAdd[b][1] = (uint8_t)(((col >> 8) & 255) * k + 0.5f);
+    g_vgAdd[b][2] = (uint8_t)((col & 255) * k + 0.5f);
+  }
+  g_vgAdd[VG_BINS][0] = g_vgAdd[VG_BINS][1] = g_vgAdd[VG_BINS][2] = 0;
+  // 這次光照得到的範圍（最後一格有加東西的距離）：外面整段直接複製，小聲時少算一大半
+  int last = -1;
+  for (int b = 0; b < VG_BINS; b++) if (g_vgAdd[b][0] | g_vgAdd[b][1] | g_vgAdd[b][2]) last = b;
+  const float rr = (last + 1) * S(104) / VG_BINS;
+  g_vgR2Act = last < 0 ? 0 : min(g_vgR2Max, (int)(rr * rr) + 1);
+  g_vgPalQ = q;
+  g_vgPalBrand = g_frame.brand;
+}
+
+// 一個像素（看到的畫面座標 x, y；位元組對調的 RGB565）加上光。光很暗，RGB565 一階一階會看到一圈一圈：用 4×4 的 Bayer 抖動打散
+static inline uint16_t vgAddPx(uint16_t p, int x, int y) {
+  const int dx = x - CX, dy = y - CY, r2 = dx * dx + dy * dy;
+  if (r2 >= g_vgR2Act) return p;
+  const uint8_t* a = g_vgAdd[g_vgBin[r2 >> 6]];
+  if (!(a[0] | a[1] | a[2])) return p;
+  static const uint8_t BAYER[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+  const int d = BAYER[((y & 3) << 2) | (x & 3)];
+  const uint16_t v = (uint16_t)((p >> 8) | (p << 8));
+  int r = (v >> 11) + ((a[0] + (d >> 1)) >> 3), g = ((v >> 5) & 63) + ((a[1] + (d >> 2)) >> 2), b = (v & 31) + ((a[2] + (d >> 1)) >> 3);
+  if (r > 31) r = 31;
+  if (g > 63) g = 63;
+  if (b > 31) b = 31;
+  const uint16_t o = (uint16_t)((r << 11) | (g << 5) | b);
+  return (uint16_t)((o >> 8) | (o << 8));
+}
+
+// 音量平滑：變亮快（約 60 ms）、變暗慢（約 350 ms），看起來像呼吸，不會一閃一閃
+static void vgSmooth(uint32_t now) {
+  const float t = micLevel();
+  const float dt = min<uint32_t>(100, now - g_vgMs) / 1000.0f;
+  g_vgMs = now;
+  const float k = t > g_vgLevel ? min(1.0f, dt / 0.06f) : min(1.0f, dt / 0.35f);
+  g_vgLevel += (t - g_vgLevel) * k;
+  if (t == 0 && g_vgLevel < 0.02f) g_vgLevel = 0;
+}
+
+static int vgTarget() { return g_saver || !g_vgBin ? 0 : (int)(g_vgLevel * VG_STEPS + 0.5f); }
+
+// 這一張要加的光（prepareFrame 時決定，之後的小範圍更新照同一張的光）
+static void vgSet() {
+  g_vgQ = vgTarget();
+  if (g_vgQ && (g_vgQ != g_vgPalQ || g_frame.brand != g_vgPalBrand)) vgPalette(g_vgQ);
+}
+
+// g_fb → g_fbRot：加上光（有的話）、轉向（有的話）。16×16 一塊一塊搬，PSRAM 快取才不會一直換
+static void composeFrame() {
   const uint16_t* s = g_fb;
   uint16_t* d = g_fbRot;
+  const bool vg = g_vgQ;
+  if (g_rot == 0) {                       // 只有光：每一列只算圓裡那一段，其他直接複製
+    for (int y = 0; y < H; y++) {
+      const uint16_t* sr = s + y * W;
+      uint16_t* dr = d + y * W;
+      const int dy = y - CY, rem = g_vgR2Act - dy * dy;
+      if (rem <= 0) { memcpy(dr, sr, W * 2); continue; }
+      const int hw = (int)sqrtf((float)rem) + 1, x0 = max(0, CX - hw), x1 = min(W, CX + hw);
+      memcpy(dr, sr, x0 * 2);
+      for (int x = x0; x < x1; x++) dr[x] = vgAddPx(sr[x], x, y);
+      memcpy(dr + x1, sr + x1, (W - x1) * 2);
+    }
+    return;
+  }
   for (int by = 0; by < H; by += 16)
     for (int bx = 0; bx < W; bx += 16) {
       const int ye = by + 16 > H ? H : by + 16, xe = bx + 16 > W ? W : bx + 16;
-      for (int y = by; y < ye; y++)
-        for (int x = bx; x < xe; x++) {
-          const uint16_t p = s[y * W + x];
-          if (g_rot == 1) d[x * W + (W - 1 - y)] = p;              // 90°（順時針）：(x, y) → (W-1-y, x)
-          else if (g_rot == 2) d[(H - 1 - y) * W + (W - 1 - x)] = p;
-          else d[(H - 1 - x) * W + y] = p;                          // 270°：(x, y) → (y, H-1-x)
+      // 這一塊離圓心最近的點在光的範圍外：整塊不用算光（光只在中間，大部分的塊都是這樣）
+      const int ndx = max(0, max(CX - (xe - 1), bx - CX)), ndy = max(0, max(CY - (ye - 1), by - CY));
+      const bool g = vg && ndx * ndx + ndy * ndy < g_vgR2Act;
+      for (int y = by; y < ye; y++) {
+        const uint16_t* sr = s + y * W;
+        if (g_rot == 1) {                                           // 90°（順時針）：(x, y) → (W-1-y, x)
+          uint16_t* dc = d + (W - 1 - y);
+          for (int x = bx; x < xe; x++) dc[x * W] = g ? vgAddPx(sr[x], x, y) : sr[x];
+        } else if (g_rot == 2) {                                    // 180°：(x, y) → (W-1-x, H-1-y)
+          uint16_t* dr = d + (H - 1 - y) * W + (W - 1);
+          for (int x = bx; x < xe; x++) dr[-x] = g ? vgAddPx(sr[x], x, y) : sr[x];
+        } else {                                                    // 270°：(x, y) → (y, H-1-x)
+          uint16_t* dc = d + y;
+          for (int x = bx; x < xe; x++) dc[(H - 1 - x) * W] = g ? vgAddPx(sr[x], x, y) : sr[x];
         }
+      }
     }
 }
 
-// 外環換成現在的亮度（畫的時候是十幾格之前），要轉向就轉好
+// 外環換成現在的亮度（畫的時候是十幾格之前），要轉向、加光就做好
 static void prepareFrame(uint32_t ms) {
   ringDraw(g_fbSprite, 0, H, ms);
   g_ringShownMs = ms;
-  if (g_rot && g_fbRot) rotateFrame();
+  vgSet();
+  g_fbOut = g_fb;
+  if (g_fbRot && (g_rot || g_vgQ)) { composeFrame(); g_fbOut = g_fbRot; }
+  else g_vgQ = 0;                         // 配置不到 g_fbRot：沒有光
 }
 
 static void pushFrame() {
   lcd.startWrite();
-  if (g_rot == 0) lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fb);
-  else if (g_fbRot) lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fbRot);
+  if (g_fbOut == g_fbRot && g_fbRot) lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fbRot);
+  else if (g_rot == 0) lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fb);
   else for (int oy = 0; oy < H; oy += BAND_H) pushRows(g_fb + oy * W, oy, oy + BAND_H > H ? H - oy : BAND_H);   // 配置不到轉向緩衝
   lcd.endWrite();
 }
@@ -508,13 +622,14 @@ static bool slideReady() { return g_fbOld && g_fbSlide && (g_rot == 0 || g_fbRot
 
 // 開始滑動：記下螢幕上的舊畫面，新頁整張畫好、準備好（外環、轉向）
 static void startSlide(int dir, uint32_t now) {
-  // 螢幕上那張：滑動中就是正在顯示的那一格；0° 是 g_fb（可能已經重畫了幾條，只差在時間數字），轉向時是 g_fbRot
-  const uint16_t* shown = g_sliding ? g_fbSlide : (g_rot ? g_fbRot : g_fb);
+  // 螢幕上那張：滑動中就是正在顯示的那一格；否則是上次送出的那張（0° 是 g_fb，可能已經重畫了幾條，只差在時間數字；
+  // 轉向或有說話光暈時是 g_fbRot）
+  const uint16_t* shown = g_sliding ? g_fbSlide : (g_fbOut ? g_fbOut : g_fb);
   memcpy(g_fbOld, shown, W * H * 2);
   for (OY = 0; OY < H; OY += BAND_H) renderStrip(now);
   OY = 0;
   prepareFrame(now);
-  g_slideNew = g_rot ? g_fbRot : g_fb;
+  g_slideNew = g_fbOut;
   g_sliding = dir;
   g_slideT0 = millis();
 }
@@ -566,9 +681,11 @@ static void pushRect(const uint16_t* src, int stride, int x, int y, int w, int h
   if (w <= 0 || h <= 0 || w * h > W * BAND_H) return;   // 轉向暫存區只有一條大：超過會寫壞記憶體（曾經因此當機重開）
   uint16_t* d = g_rotBuf;
   int px = x, py = y, pw = w, ph = h;
+  const bool vg = g_vgQ;                 // 說話光暈：跟上一張整張送出的光一樣（不然更新的這一塊會是黑底）
   for (int r = 0; r < h; r++)
     for (int c = 0; c < w; c++) {
-      const uint16_t v = src[r * stride + c];
+      uint16_t v = src[r * stride + c];
+      if (vg) v = vgAddPx(v, x + c, y + r);
       if (g_rot == 0) d[r * w + c] = v;
       else if (g_rot == 2) d[(h - 1 - r) * w + (w - 1 - c)] = v;
       else if (g_rot == 1) d[c * h + (h - 1 - r)] = v;        // 90°：(x, y) → (W-1-y, x)
@@ -940,6 +1057,7 @@ void setup() {
     g_fbBg = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);   // 螢幕保護 Clawd 亂跑用的底圖
     g_roamTmp = (uint16_t*)heap_caps_malloc(W * BAND_H * 2, MALLOC_CAP_SPIRAM);
     if (g_fbSlide) g_slideSprite.setBuffer(g_fbSlide, W, H, 16);
+    vgInit();
   }
 #endif
   if (!g_fb) {
@@ -1024,6 +1142,14 @@ void loop() {
     return;
   }
   fadeTick(now);
+  // 說話光暈：音量變了就整張送一次（不用重畫，只在送出前加光），最多每 60 ms 一次。
+  // 整張重畫中、轉場中先不送（重畫到一半的那張不能送，送完那張時自然會帶上光）
+  vgSmooth(now);
+  if (g_fb && g_fbRot && !g_framePending && strip < 0 && g_fadeDir == 0 && vgTarget() != g_vgQ && now - g_vgPushMs >= 60) {
+    g_framePending = true;
+    g_frameReady = false;
+    g_vgPushMs = now;
+  }
   // 整張畫好了：先準備好（外環、轉向），在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送。
   // 轉場中：等全暗了才送（看不到，不用等 TE），送完開始淡入
   if (g_framePending) {

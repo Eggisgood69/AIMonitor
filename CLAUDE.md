@@ -76,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.18、韌體 1.10.31（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.19、韌體 1.10.32（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -171,6 +171,12 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   - Arduino 的函式原型產生器會弄壞 `extern "C" usbd_class_driver_t const* f()`，要寫成 `extern "C" { const usbd_class_driver_t* f() … }`
   - 一鍵更新：目標在麥克風模式時先強制送 `mic:0`（`fwMicOff`），等同一個 id 從 hwcdc 的埠回應再燒（`micOffForUpdate`）
   - 切過去後 Windows 要約 10 秒才把麥克風放進 waveIn 清單；安靜時錄到 -90 dB（板上量到 -63），應該是 Windows 的麥克風增強
+  - 說話光暈（aimon.ino `vg*`，使用者要「整個背景、淡淡的、看得到就好」）：有程式在錄音（`micListening` = alt 1）時背景隨音量亮起，
+    -56 dBFS 以下 = 0、-36 dBFS = 最亮（品牌色 65%，`VG_MAX`；一開始 -58 ~ -30、22%，之後 45% 使用者都覺得太暗），越大聲半徑越大（45% → 100%，只到額度環內側 S(104)）；變亮 60 ms、變暗 350 ms（`vgSmooth`）。
+    **不重畫畫面**（整張重畫 150 ms 以上，也會搶 CPU 讓麥克風掉封包）：g_fb 保持原樣，送出前才用加法混色加上去——整張送出時跟轉向一起搬到 g_fbRot（`composeFrame`，0° 時也用 g_fbRot，`g_fbOut` 記住送的是哪張），
+    小範圍更新在 `pushRect` 裡加同一張的光（不然 Clawd、Generating 的光那一塊會變黑底）。RGB565 太暗會一圈一圈 → 4×4 Bayer 抖動。
+    音量變了最多每 60 ms 整張送一次（整張重畫中、轉場中不送）。只算光照得到的範圍（`g_vgR2Act`）：準備一張 31-48 ms（全部逐點算時 72 ms）。
+    螢幕保護時不亮：Clawd 亂跑用另一張底圖，整張送 g_fb 會留下殘影
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）

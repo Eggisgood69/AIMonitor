@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.13.32"
+const version = "1.13.34"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -67,6 +67,8 @@ type Settings struct {
 	NoUpdateCheck bool `json:"noUpdateCheck"`
 	// 不用瀏覽器擴充功能的資料（預設會用：裝了擴充功能，網頁版背景分頁也偵測得到，ext*.go）
 	NoExtension bool `json:"noExtension"`
+	// 不要開機自動執行（設定頁的開關）。以前每次啟動都會把自己加回啟動清單，關掉也沒用
+	NoAutostart bool `json:"noAutostart"`
 	// 每塊螢幕自己的方向 / 亮度 / LED（screenset.go）；上面四項是沒設過的螢幕用的共用值
 	Screens map[string]*ScreenSet `json:"screens,omitempty"`
 }
@@ -186,6 +188,7 @@ func installAndMaybeExit() (welcome, updated bool) {
 		time.Sleep(500 * time.Millisecond) // 等舊程式完全釋放檔案
 	}
 	_ = h // 保持持有直到程式結束
+	autoOff := autostartOff()
 
 	if !strings.EqualFold(filepath.Clean(self), filepath.Clean(target)) {
 		// 從隨身碟 / 下載資料夾執行：複製到固定位置、設定開機自動執行，再從那裡啟動
@@ -193,7 +196,9 @@ func installAndMaybeExit() (welcome, updated bool) {
 			logf("copy failed: %v", err)
 			target = self // 複製失敗就直接用目前這份
 		}
-		setAutostart(target)
+		if !autoOff {
+			setAutostart(target)
+		}
 		windows.CloseHandle(h)
 		// 取代執行中的舊版（例如更新）：安靜換掉，不打開設定視窗；第一次安裝或舊版沒在跑：打開視窗
 		arg := "--welcome"
@@ -209,7 +214,7 @@ func installAndMaybeExit() (welcome, updated bool) {
 		}
 		h, _ = windows.CreateMutex(nil, false, name)
 		welcome, updated = !replacing, replacing
-	} else {
+	} else if !autoOff {
 		setAutostart(target)
 	}
 	return welcome, updated
@@ -233,6 +238,32 @@ func copyFile(src, dst string) error {
 	out.Close()
 	os.Remove(dst)
 	return os.Rename(tmp, dst)
+}
+
+// 使用者關掉了開機自動執行嗎？（這時 settings 還沒讀，直接看檔案）
+// 1.13.34 以前沒有記這個設定：settings.json 已經存在（不是第一次安裝）、沒有 noAutostart、啟動清單裡也沒有
+// = 上次執行時你關掉了（舊版每次啟動都會加回去），記下來
+func autostartOff() bool {
+	p := filepath.Join(appDir, "settings.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false // 第一次安裝：預設開機自動執行
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	if v, ok := m["noAutostart"]; ok {
+		return string(v) == "true"
+	}
+	if autostartEnabled() {
+		return false
+	}
+	m["noAutostart"] = json.RawMessage("true")
+	if nb, err := json.MarshalIndent(m, "", "  "); err == nil {
+		os.WriteFile(p, nb, 0o644)
+	}
+	return true
 }
 
 func setAutostart(path string) {
@@ -674,17 +705,20 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		answered = true
 		serMu.Lock()
 		if !sc.stat.Verified {
-			logf("%s: screen answered (fw %v, hw %v)", sc.stat.Port, m["fw"], m["hw"])
+			fw, _ := m["fw"].(string)
+			hw, _ := m["hw"].(string)
+			logf("%s: screen answered (fw %s, hw %s)", sc.stat.Port, orDash(devFW(fw)), orDash(devHW(hw)))
 		}
 		sc.stat.Verified = true
+		// 只收韌體真的會送的格式（devinfo.go）：這些字串會顯示在設定視窗
 		if fw, ok := m["fw"].(string); ok {
-			sc.stat.FW = fw
+			sc.stat.FW = devFW(fw)
 		}
 		if hw, ok := m["hw"].(string); ok {
-			sc.stat.HW = hw
+			sc.stat.HW = devHW(hw)
 		}
 		if id, ok := m["id"].(string); ok {
-			sc.stat.ID = id
+			sc.stat.ID = devID(id)
 		}
 		mic, micx := m["mic"] == 1.0, m["micx"] == 1.0
 		if mic != sc.stat.Mic || micx != sc.stat.MicX {
@@ -1099,8 +1133,16 @@ func onCmd(cmd string) string {
 	case "autostart-on":
 		self, _ := os.Executable()
 		setAutostart(self)
+		settingsMu.Lock()
+		settings.NoAutostart = false
+		settingsMu.Unlock()
+		saveSettings()
 	case "autostart-off":
 		removeAutostart()
+		settingsMu.Lock()
+		settings.NoAutostart = true
+		settingsMu.Unlock()
+		saveSettings()
 	case "appupdate":
 		startAppUpdate()
 	case "appcheck":

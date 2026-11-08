@@ -76,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.32、韌體 1.10.41（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.34、韌體 1.10.41（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -270,6 +270,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   background.js 把所有 AI 分頁 + 是否正在看（分頁 active 且視窗 focused）POST 過來，每 30 秒（alarms）沒分頁也送空清單報平安；
   停止鈕消失 1.5 秒才算完成、換網址不算完成在 ext.go 判斷；3 分鐘沒收到 = 不在了（`extStale`，背景分頁計時器會被 Chrome 放慢）。
   踩過：manifest 少 `storage` 權限時 `chrome.storage` 是 undefined（service worker 一直丟錯，什麼都沒送）；
+  background.js 的分頁狀態放在記憶體（`tabs`），每次改動都同步完成、不在中間 await，`storage.session` 只當 service worker 重開時的備份（1.0.4）：
+  以前「讀整份 → 改一筆 → 寫回」中間有 await，兩個分頁同時回報時後寫的蓋掉先寫的（AIMonitor 把缺席的分頁當成關掉，黃燈會掉）；`send()` 也不再寫回快照，送出前發現有新回報就整份重做。
   background.js 每次送出前用 `chrome.tabs.get` 的網址再確認分頁還是 AI 網站（`urlAI`；沒有 tabs 權限時別的網站讀不到網址 = 不是），哪家 AI 也照網址：
   避免分頁從 chatgpt.com 換走時舊頁面最後一次回報晚到、又被加回清單，之後一直算「正在看 ChatGPT」（1.0.3，保險用；當時跳成 GPT 的真正原因是下面主燈規則的 `lastView`）。
   POST JSON 前 Chrome 會先送 OPTIONS 預檢，要回 CORS + `Access-Control-Allow-Private-Network`（只對 `chrome-extension://` Origin），否則請求根本不會送出。
@@ -278,6 +280,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 - Claude for Sheets（Google 試算表側欄，2026-10 實測）：生成時按鈕「Stop」、等允許時「Allow once Enter」「Always allow Ctrl Enter」「Deny Esc」，
   monitor.ps1 `$SHEETS_RE` 的分頁算成 `web:claude:sheets`。試算表也有 Gemini 側欄，所以要看得到 Claude 側欄自己的按鈕（`$SHEETS_CLAUDE`）才算；
   網址去掉 `#gid=` / `range=` 才當對話（換工作表、選儲存格會改）；按鈕清單只留停止 / 允許（帳戶按鈕名稱含 email）
+- 螢幕 hello 的 `fw` / `hw` / `id` 會顯示在設定視窗（注入在 claude.ai 頁面上，`innerHTML` 拼字串）：任何會回 hello 的 USB 裝置都能送字串，
+  所以 Go 端只收韌體會送的格式（devinfo.go：`x.y.z`、小寫英數、12 碼 hex），ui.js 再用 `H()` 跳脫（螢幕 key 在選擇器裡用 `CSS.escape`）。新增外來字串進 innerHTML 時一樣要過 `H()`
 - hook 伺服器（127.0.0.1:47322）只收不帶 Origin、Content-Type 是 JSON 的請求，網頁送不進來（`ccRequestAllowed`）
 - Claude Code 對話狀態存在 `%LOCALAPPDATA%\AIMonitor\cc-sessions.json`，重啟後讀回（等你回覆 / 允許時對話不會再送事件，不存的話黃燈會消失）；
   讀回來的「生成中」10 分鐘沒新事件就當作重啟期間已結束（`ccRestoredStale`）
@@ -288,6 +292,9 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   背景聊天的 key 含對話標題（只寫在本機紀錄）
 - 螢幕顯示 Disconnected = 有收到資料但 20 秒沒解析到畫面（寫入不會失敗）：serialLoop 每 15 秒送 hello，
   40 秒沒回應就記錄「screen not answering」並 `resetScreen`（最多每 2 分鐘一次）
+- 開機自動執行：關掉時記在 settings.json `noAutostart`，啟動 / 更新時看到就不再寫登錄的 Run（1.13.33 以前每次啟動都加回去，關了也沒用）。
+  從舊版升上來時沒有這個欄位：settings.json 已存在、Run 裡又沒有 = 上次執行時關掉了，啟動時補記（`autostartOff`，這時 settings 還沒讀，直接看檔案）
+- 設定視窗的 `fwupdate:<埠>`（指定螢幕）也要先確認（以前只比對 `fwupdate`，一按就燒），確認框寫出是哪塊螢幕
 - 更新：從專案資料夾啟動新版、取代執行中的舊版時加 `--updated`，安靜換掉不開設定視窗；第一次安裝或舊版沒在跑才 `--welcome` 開視窗
 - 電腦端自動更新（1.12.0 起，appupdate*.go）：啟動 20 秒後、之後每天一次讀 `api.github.com/repos/Eggisgood69/AIMonitor/releases/latest`
   （失敗一小時後再試；只送 `User-Agent: AIMonitor/<版本>`）。有新版只在設定視窗上方、系統匣 tooltip / 右鍵選單提示，**不跳通知**，按了才更新。

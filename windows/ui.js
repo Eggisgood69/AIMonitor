@@ -3,6 +3,8 @@
 // 2. 在 /api/organizations 這個輕量頁面上畫出狀態頁
 (function () {
   if (location.hostname !== "claude.ai") return;
+  // 放進 innerHTML 的外來字串（螢幕回報的型號 / 版本 / ID、埠名稱）一律跳脫：只會成為文字或屬性值
+  const H = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
   window.__aimonPoll = async function () {
     try {
@@ -197,7 +199,11 @@
       e.preventDefault();
       const c = b.getAttribute("data-cmd");
       if (c === "appupdate" && !(await ask("會下載新版、驗證後自動換掉目前的程式並重新開啟（設定會保留）。要開始嗎？", "更新"))) return;
-      if (c === "fwupdate" && !(await ask("更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。要開始嗎？", "更新"))) return;
+      // 按鈕送的是 fwupdate:<埠>（指定哪塊螢幕），以前只比對 "fwupdate"，確認框不會出現、一按就開始燒
+      if (c === "fwupdate" || c.startsWith("fwupdate:")) {
+        const port = c.slice("fwupdate:".length), who = port ? `${scrNames[port] || "螢幕"}（${port}）` : "螢幕";
+        if (!(await ask(`要更新${who}的韌體嗎？更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。`, "更新"))) return;
+      }
       window.aimonCmd(c).then(render);
     });
     // 每塊螢幕的方向 / 亮度 / 外接 LED（scrset 裡的欄位帶 data-scr = 螢幕的 key）
@@ -224,6 +230,8 @@
       window.aimonCmd(on ? "updchk-off" : "updchk-on").then(render);
     };
   }
+
+  var scrNames = {}; // 埠 → 螢幕種類（render 時更新）
 
   // 頁面內的確認框：WebView2 內建的 confirm() 是固定寬度，視窗窄時右半邊（含「確定」）會被切掉
   function ask(msg, ok) {
@@ -265,10 +273,11 @@
     // 螢幕可以同時接好幾個；還沒回應的埠（可能是其他 USB 裝置）只在沒有任何螢幕時顯示
     const BOARD = { c3: "1.28 吋 LCD", s3a175: "1.75 吋 AMOLED" };
     const allScr = s.screens || [], scr = allScr.filter((x) => x.verified);
+    scrNames = Object.fromEntries(scr.map((x) => [x.port, BOARD[x.hw || "c3"] || x.hw])); // 更新韌體的確認框用（textContent，不用跳脫）
     $("serial").innerHTML = scr.length
-      ? scr.map((x) => `<div><span class="dot" style="background:#30d158"></span>${BOARD[x.hw || "c3"] || x.hw}（${x.port}）</div>`).join("")
+      ? scr.map((x) => `<div><span class="dot" style="background:#30d158"></span>${H(BOARD[x.hw || "c3"] || x.hw)}（${H(x.port)}）</div>`).join("")
       : allScr.length
-        ? `<span class="dot" style="background:#ffd60a"></span>已連線（${allScr.map((x) => x.port).join("、")}）<div class="hint">尚未收到螢幕回覆（已收到 ${allScr.reduce((n, x) => n + (x.rx || 0), 0)} bytes）</div>`
+        ? `<span class="dot" style="background:#ffd60a"></span>已連線（${H(allScr.map((x) => x.port).join("、"))}）<div class="hint">尚未收到螢幕回覆（已收到 ${allScr.reduce((n, x) => n + (x.rx || 0), 0)} bytes）</div>`
         : `<span class="dot" style="background:#ff453a"></span>未偵測到<div class="hint">用 USB 線插上螢幕即可，會自動連線。若燒錄工具或 Chrome 擴充功能正在使用序列埠，請先關閉。</div>`;
 
     const f = s.frame || {};
@@ -338,11 +347,11 @@
       $("fw").innerHTML = `<span class="muted">內建 ${fw.bundled}</span>`;
     } else {
       $("fw").innerHTML = scr.map((x) => {
-        const who = scr.length > 1 ? `<span class="muted">${x.port}：</span>` : "", dev = x.fw || "";
+        const who = scr.length > 1 ? `<span class="muted">${H(x.port)}：</span>` : "", dev = H(x.fw || "");
         return !dev || less(dev, fw.bundled)
           ? `<div>${who}${dev ? dev : "舊版"} <span class="muted">→ 可更新到 ${fw.bundled}</span>
-              <div class="btns" style="margin:6px 0 4px"><button class="primary" data-cmd="fwupdate:${x.port}">更新${scr.length > 1 ? " " + x.port : "螢幕韌體"}</button></div></div>`
-          : `<div>${who}${dev} <span class="muted">· 已是最新 · <a href="#" data-cmd="fwupdate:${x.port}" style="color:inherit">重新寫入</a></span></div>`;
+              <div class="btns" style="margin:6px 0 4px"><button class="primary" data-cmd="fwupdate:${H(x.port)}">更新${scr.length > 1 ? " " + H(x.port) : "螢幕韌體"}</button></div></div>`
+          : `<div>${who}${dev} <span class="muted">· 已是最新 · <a href="#" data-cmd="fwupdate:${H(x.port)}" style="color:inherit">重新寫入</a></span></div>`;
       }).join("");
     }
     renderScreenSettings(scr, BOARD);
@@ -449,10 +458,10 @@
       scrSig = sig;
       const pick = scr.length > 1
         ? `<div class="row sw"><div>調整哪塊螢幕<div class="hint">每塊螢幕的方向、亮度、外接 LED、麥克風各自記住</div></div>
-            <select id="scrpick">${scr.map((x) => `<option value="${x.key}">${BOARD[x.hw || "c3"] || x.hw}（${x.port}）</option>`).join("")}</select></div>`
+            <select id="scrpick">${scr.map((x) => `<option value="${H(x.key)}">${H(BOARD[x.hw || "c3"] || x.hw)}（${H(x.port)}）</option>`).join("")}</select></div>`
         : "";
       box.innerHTML = scr.length ? pick + scr.map((x) => {
-        const hw = x.hw || "c3", k = x.key, amoled = hw === "s3a175";
+        const hw = x.hw || "c3", k = H(x.key), amoled = hw === "s3a175";
         const rot = (amoled ? `<option value="auto">自動（依擺放方向）</option>` : "") +
           [0, 1, 2, 3].map((r) => `<option value="${r}">${r * 90}°</option>`).join("");
         const pin = amoled ? "DIN 接排座的 GPIO16" : "DIN 接背面排座的 RX 腳";
@@ -478,9 +487,9 @@
     for (const b of box.querySelectorAll("[data-blk]")) b.style.display = b.dataset.blk === scrSel ? "" : "none";
     for (const x of scr) {
       const set = x.set || {};
-      const mx = box.querySelector(`[data-micx="${x.key}"]`);
+      const mx = box.querySelector(`[data-micx="${CSS.escape(x.key)}"]`);
       if (mx) mx.style.display = x.micx && set.mic ? "" : "none";
-      for (const el of box.querySelectorAll(`[data-scr="${x.key}"]`)) {
+      for (const el of box.querySelectorAll(`[data-scr="${CSS.escape(x.key)}"]`)) {
         if (document.activeElement === el) continue;
         let v = el.dataset.k === "rot" ? (set.arot && x.hw === "s3a175" ? "auto" : String(set.rot & 3))
           : el.dataset.k === "mic" ? (set.mic ? "1" : "0")

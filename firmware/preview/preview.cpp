@@ -10,6 +10,7 @@ struct String : public std::string {
   String(const char* s) : std::string(s ? s : "") {}
   String(const std::string& s) : std::string(s) {}
   void remove(size_t i) { erase(i); }
+  String substring(size_t a, size_t b = npos) const { return String(substr(a, b == npos ? npos : b - a)); }   // Arduino String 一樣的參數
 };
 static uint32_t g_ms = 100000;
 static uint32_t millis() { return g_ms; }

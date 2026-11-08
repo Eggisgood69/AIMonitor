@@ -163,6 +163,12 @@ static void text(const char* s, int x, int y, uint32_t col, const lgfx::IFont* f
 }
 static int textW(const char* s, const lgfx::IFont* font) { band.setFont(font); return band.textWidth(s); }
 
+// 以 y 為中心、上下各 h 的一行字，整行都在半徑 r 的圓裡時最寬能多寬
+static int circleW(int y, int h, float r) {
+  const float dy = fabsf((float)(y - CY)) + h;
+  return dy >= r ? 0 : (int)(2 * sqrtf(r * r - dy * dy));
+}
+
 static String fitText(const String& s, int maxW, const lgfx::IFont* font) {
   if (textW(s.c_str(), font) <= maxW) return s;
   String out = s;
@@ -895,12 +901,13 @@ static void drawUsagePage(uint32_t ms) {
   g_trackK = 0.20f;
 
   char buf[40];
-  brandMark(f.brand, SI(63));                               // 離內環的空隙跟下面兩欄的字差不多（53 時貼著內環）
+  // 位置是量過的：最長的字（WEEK 100%、6D 23H）離內圈至少留 5 設計像素，LOGO 離內圈約 9（以前 1-3，快碰到）
+  brandMark(f.brand, SI(60));                               // 離內環的空隙跟下面兩欄的字差不多（53 時貼著內環）
   snprintf(buf, sizeof buf, "%d", (int)(f.p5 + 0.5f));
-  bigValue(buf, true, SI(109));
+  bigValue(buf, true, SI(104));
 
   // 兩欄：上面標籤（跟各自的環同色，超過門檻紅）、下面重置倒數（白）。倒數一律在「5-HOUR」下面，避免「5H · 16M」被看成 5 小時 16 分
-  const int y1 = SI(152), y2 = SI(168);
+  const int y1 = SI(143), y2 = SI(158);
   auto column = [&](int x, textdatum_t dt, const char* label, uint32_t lc, const String& left) {
     text(label, x, y1, lc, &fTiny.font, dt);
     if (left.length()) text(left.c_str(), x, y2, C_LABEL, &fTiny.font, dt);
@@ -912,7 +919,7 @@ static void drawUsagePage(uint32_t ms) {
     // 兩欄整組置中：右欄比較寬（WEEK 100%）時中線往左移，兩邊離內環一樣遠（固定在中間時 WEEK 100% 會碰到內環）
     const int wl = max(textW("5-HOUR", &fTiny.font), textW(l5.c_str(), &fTiny.font));
     const int wr = max(textW(buf, &fTiny.font), textW(lw.c_str(), &fTiny.font));
-    const int dx = (wl - wr) / 2, g = SI(7);
+    const int dx = (wl - wr) / 2, g = SI(6);
     band.fillRect(CX + dx + g_shX, y1 - SI(6) + g_shY - OY, S(1) < 1 ? 1 : (int)S(1), SI(32), C_LABEL3);   // 中間的分隔線
     column(CX + dx - g, middle_right, "5-HOUR", col5, l5);
     column(CX + dx + g, middle_left, buf, colW, lw);
@@ -1016,13 +1023,6 @@ static void drawScene(uint32_t ms) {
     else bigValue("--", false, SI(106));
     statusLine(f.st, SI(145), ms);
 
-    // 每週額度：只顯示文字
-    if (f.pw >= 0) {
-      char w[24];
-      snprintf(w, sizeof w, "WEEK %d%%", (int)(f.pw + 0.5f));
-      text(w, CX, SI(167), f.pw >= g_redAt ? C_RED : C_LABEL2, &fTiny.font);
-    }
-
     String cap;
     if (f.note.length()) cap = f.note;
     else if (f.msg.length()) cap = f.msg;
@@ -1031,7 +1031,28 @@ static void drawScene(uint32_t ms) {
       cap = left.length() ? String("RESETS ") + left : String("");
     }
     uint32_t capCol = f.note.length() ? (f.noteKind == 2 ? C_GREEN : C_YELLOW) : f.msg.length() ? stColor(f.st) : C_LABEL3;
-    if (cap.length()) text(fitText(cap, SI(150), &fTiny.font).c_str(), CX, SI(185), capCol, &fTiny.font);
+    char wk[24] = "";
+    if (f.pw >= 0) snprintf(wk, sizeof wk, "WEEK %d%%", (int)(f.pw + 0.5f));   // 每週額度：只顯示文字
+    const uint32_t wkCol = f.pw >= g_redAt ? C_RED : C_LABEL2;
+    // 下面兩行（WEEK、提醒 / 錯誤 / 重置倒數）的寬度依圓算：字的上下緣離額度環內緣（98.5）留 5。
+    // 最下面那行最窄：放不下就跟 WEEK 交換（上面那行比較寬）；還放不下就只顯示放得下的完整單字（不加「…」、不拆兩行）。
+    // 以前固定寬 150，長的訊息會碰到額度環；截成「USAGE LIMIT RE...」或拆兩行時第二行被截一半，使用者不要看到半句話
+    const int yA = SI(167), yB = SI(185), wA = circleW(yA, SI(7), S(93.5f)), wB = circleW(yB, SI(7), S(93.5f));
+    const int cw = textW(cap.c_str(), &fTiny.font);
+    if (!cap.length() || cw <= wB) {
+      if (wk[0]) text(wk, CX, yA, wkCol, &fTiny.font);
+      if (cap.length()) text(cap.c_str(), CX, yB, capCol, &fTiny.font);
+    } else {
+      String line = cap;
+      if (cw > wA) {   // 太長：從後面找第一個讓整行放得下的空白，去掉結尾的標點
+        line = "";
+        for (int i = cap.length() - 1; i > 0; i--)
+          if (cap[i] == ' ' && textW(cap.substring(0, i).c_str(), &fTiny.font) <= wA) { line = cap.substring(0, i); break; }
+        while (line.length() && strchr(",;:-", line[line.length() - 1])) line = line.substring(0, line.length() - 1);
+      }
+      if (line.length()) text(line.c_str(), CX, yA, capCol, &fTiny.font);
+      if (wk[0]) text(wk, CX, yB, wkCol, &fTiny.font);
+    }
     if (f.nOthers > 0) othersRow(f);
   } else {
     text("No AI Tab", CX, SI(56), C_LABEL2, &fName.font);   // 沒有任何 AI 開著

@@ -10,7 +10,7 @@ Claude、ChatGPT、Gemini 都支援，最上面是目前顯示的 AI（官方 LO
 
 各頁面（BOOT 短按切換，AMOLED 版左右滑：狀態 → 額度詳細 → 今日統計 → 時鐘）：
 
-<p align="center"><img src="docs/images/pages-v5.png" alt="狀態、額度詳細、今日統計、時鐘四個頁面" width="880"></p>
+<p align="center"><img src="docs/images/pages-v6.png" alt="狀態、額度詳細、今日統計、時鐘四個頁面" width="880"></p>
 
 預覽圖是 1.75 吋 AMOLED 版（1.28 吋版版面相同，Claude 的位置是官方 LOGO、沒有 Clawd）。動態效果見 [demo.gif](docs/images/demo-v2.gif)。
 

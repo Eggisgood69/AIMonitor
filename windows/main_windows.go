@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.13.38"
+const version = "1.13.39"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"

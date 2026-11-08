@@ -78,7 +78,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.38、韌體 1.10.44（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.39、韌體 1.10.44（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -253,6 +253,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   專案那一列的 ListItem 名稱是底下所有對話接起來，要比對這一列自己的 Button 才不會誤認。同名對話會併成一個（沒處理）；英文介面、雲端 / 已排程任務都還沒實測
   - 出錯（紅燈）：聊天模式生成失敗時停止鈕消失、出現「再試一次」（有時還有「重試」、圖片「任務失敗」）。舊訊息上的會一直留著 →
     生成結束時「再試一次」**比開始時多**才算出錯（`$RETRY_RE`）；捲到畫面外的也要算（`Get-ButtonNames` 加 `~` 前綴），只算畫面上的話縮小 / 捲動時數量會變，曾經誤亮紅燈。
+    **只用在 ChatGPT**（Update-Item 看 `$ai`）：Claude 對話模式每則回答下面本來就有「重試」圖示、回答完才出現，以前套到 Claude App 時正常回答完也閃一下紅燈（1.13.39 修）
     Codex 模式斷網只顯示「正在重新連線 n /5」「Reconnecting... waiting for network」，停止鈕還在，網路回來自己接著做完，不是錯誤
   - 縮小到工作列照樣讀得到；按 X 是**隱藏**視窗（縮到系統匣）：MainWindowHandle 變 0，但用原本的 handle 還讀得到（monitor.ps1 `$appWins` 記住看過的視窗，Claude App 也適用）。
     不過隱藏後 Chromium 不再更新給 UI Automation 的畫面，停在隱藏那一刻（Codex 15:21:27 就完成，畫面到 15:22:03 重新打開才變）→ Codex 改看紀錄檔（下一條）；聊天模式沒有紀錄，隱藏時一樣停住

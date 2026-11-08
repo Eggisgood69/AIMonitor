@@ -241,18 +241,19 @@ func copyFile(src, dst string) error {
 }
 
 // 使用者關掉了開機自動執行嗎？（這時 settings 還沒讀，直接看檔案）
-// 1.13.34 以前沒有記這個設定：settings.json 已經存在（不是第一次安裝）、沒有 noAutostart、啟動清單裡也沒有
+// 1.13.34 以前沒有記這個設定：已經裝過（有 settings.json 或裝好的 AIMonitor.exe）、沒有 noAutostart、啟動清單裡也沒有
 // = 上次執行時你關掉了（舊版每次啟動都會加回去），記下來
 func autostartOff() bool {
 	p := filepath.Join(appDir, "settings.json")
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return false // 第一次安裝：預設開機自動執行
+	m := map[string]json.RawMessage{}
+	if b, err := os.ReadFile(p); err == nil {
+		if json.Unmarshal(b, &m) != nil {
+			return false
+		}
+	} else if _, err := os.Stat(filepath.Join(appDir, "AIMonitor.exe")); err != nil {
+		return false // 第一次安裝（還沒有裝好的 AIMonitor.exe）：預設開機自動執行
 	}
-	var m map[string]json.RawMessage
-	if json.Unmarshal(b, &m) != nil {
-		return false
-	}
+	// 沒有 settings.json 但已經裝過：舊版只有改了設定才會產生這個檔，從沒改過設定、只關了開機自動執行的人也算升級
 	if v, ok := m["noAutostart"]; ok {
 		return string(v) == "true"
 	}

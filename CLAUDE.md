@@ -274,6 +274,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   踩過：manifest 少 `storage` 權限時 `chrome.storage` 是 undefined（service worker 一直丟錯，什麼都沒送）；
   background.js 的分頁狀態放在記憶體（`tabs`），每次改動都同步完成、不在中間 await，`storage.session` 只當 service worker 重開時的備份（1.0.4）：
   以前「讀整份 → 改一筆 → 寫回」中間有 await，兩個分頁同時回報時後寫的蓋掉先寫的（AIMonitor 把缺席的分頁當成關掉，黃燈會掉）；`send()` 也不再寫回快照，送出前發現有新回報就整份重做。
+  同一個分頁換成別家 AI（ChatGPT → Gemini）時，新網站回報前留著的是舊網站的狀態：網址的 AI 跟回報的 `ai` 不同就丟掉（1.0.5）。
   background.js 每次送出前用 `chrome.tabs.get` 的網址再確認分頁還是 AI 網站（`urlAI`；沒有 tabs 權限時別的網站讀不到網址 = 不是），哪家 AI 也照網址：
   避免分頁從 chatgpt.com 換走時舊頁面最後一次回報晚到、又被加回清單，之後一直算「正在看 ChatGPT」（1.0.3，保險用；當時跳成 GPT 的真正原因是下面主燈規則的 `lastView`）。
   POST JSON 前 Chrome 會先送 OPTIONS 預檢，要回 CORS + `Access-Control-Allow-Private-Network`（只對 `chrome-extension://` Origin），否則請求根本不會送出。
@@ -295,7 +296,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 - 螢幕顯示 Disconnected = 有收到資料但 20 秒沒解析到畫面（寫入不會失敗）：serialLoop 每 15 秒送 hello，
   40 秒沒回應就記錄「screen not answering」並 `resetScreen`（最多每 2 分鐘一次）
 - 開機自動執行：關掉時記在 settings.json `noAutostart`，啟動 / 更新時看到就不再寫登錄的 Run（1.13.33 以前每次啟動都加回去，關了也沒用）。
-  從舊版升上來時沒有這個欄位：settings.json 已存在、Run 裡又沒有 = 上次執行時關掉了，啟動時補記（`autostartOff`，這時 settings 還沒讀，直接看檔案）
+  從舊版升上來時沒有這個欄位：已經裝過（有 settings.json，或沒有 settings.json 但已有裝好的 AIMonitor.exe——舊版沒改過設定就不會產生這個檔）、Run 裡又沒有 = 上次執行時關掉了，啟動時補記（`autostartOff`，這時 settings 還沒讀，直接看檔案）
 - 設定視窗的 `fwupdate:<埠>`（指定螢幕）也要先確認（以前只比對 `fwupdate`，一按就燒），確認框寫出是哪塊螢幕
 - 更新：從專案資料夾啟動新版、取代執行中的舊版時加 `--updated`，安靜換掉不開設定視窗；第一次安裝或舊版沒在跑才 `--welcome` 開視窗
 - 電腦端自動更新（1.12.0 起，appupdate*.go）：啟動 20 秒後、之後每天一次讀 `api.github.com/repos/Eggisgood69/AIMonitor/releases/latest`

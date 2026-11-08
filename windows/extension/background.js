@@ -41,6 +41,9 @@ async function send() {
         // 分頁現在不是 AI 網站（例如從 ChatGPT 換到別的網站時，舊頁面最後一次回報晚到、把它加回清單）：拿掉。
         // 沒有 tabs 權限時，只有這四個網站的分頁讀得到 url，別的網站是 undefined → 一樣拿掉
         if (!ai) { drop(id, s); continue; }
+        // 同一個分頁換成別家 AI（例如 ChatGPT → Gemini）：新網站的 content script 還沒回報前，留著的是舊網站的
+        // 「生成中 / 需審核」，不能算到新的那家頭上 → 丟掉，等新網站回報
+        if (s.ai && s.ai !== ai) { drop(id, s); continue; }
         if (tabs[id] !== s) { again = true; continue; } // 檢查期間又回報了：用新的那筆再送一次
         list.push({ id: Number(id), ai, stop: !!s.stop, review: !!s.review, view: s.view || "", active });
       }
@@ -64,9 +67,10 @@ chrome.tabs.onActivated.addListener(() => send());
 chrome.windows.onFocusChanged.addListener(() => send());
 // 離開 AI 網站（同一個分頁開別的網址）：content script 不會再回報，從清單拿掉
 chrome.tabs.onUpdated.addListener(async (id, info) => {
-  if (!info.url || urlAI(info.url)) return;
+  if (!info.url) return;
   await ready;
-  if (tabs[id]) { drop(String(id)); send(); }
+  const s = tabs[id];
+  if (s && (!urlAI(info.url) || (s.ai && s.ai !== urlAI(info.url)))) { drop(String(id), s); send(); } // 換到別的網站 / 別家 AI
 });
 
 // 剛安裝 / 更新時，已經開著的 AI 分頁不會自動載入 content script：補注入，不用重新整理頁面

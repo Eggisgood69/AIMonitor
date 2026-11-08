@@ -76,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.35、韌體 1.10.42（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.36、韌體 1.10.43（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 

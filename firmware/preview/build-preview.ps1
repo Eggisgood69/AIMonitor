@@ -1,4 +1,4 @@
-# 在 Windows 上重新產生 README 的預覽圖片（docs/images/states-v2.png、ais.png、pages-v4.png、demo-v2.gif）
+# 在 Windows 上重新產生 README 的預覽圖片（docs/images/states-v2.png、ais.png、pages-v5.png、demo-v2.gif）
 # 用與韌體相同的 ui.h 渲染。需要：zig（winget install zig.zig）、Go、Arduino 程式庫 LovyanGFX
 # 用法（專案根目錄）：./firmware/preview/build-preview.ps1
 $ErrorActionPreference = 'Stop'
@@ -46,4 +46,4 @@ $img = Join-Path $root 'docs/images'
 New-Item -ItemType Directory -Force $img | Out-Null
 go run "$PSScriptRoot/compose/main.go" $out $img
 if ($LASTEXITCODE) { throw "合成圖片失敗" }
-Write-Host "已更新：docs/images/states-v2.png、ais.png、pages-v4.png、demo-v2.gif"
+Write-Host "已更新：docs/images/states-v2.png、ais.png、pages-v5.png、demo-v2.gif"

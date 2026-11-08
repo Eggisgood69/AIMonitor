@@ -822,9 +822,6 @@ static void drawClock(uint32_t ms, bool pageMode) {
   uint32_t doe = z - era * 146097, yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
   uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
   uint32_t dd = doy - (153 * mp + 2) / 5 + 1, mon = mp < 10 ? mp + 3 : mp - 9;
-  // 整組（時間、日期、額度、重置）垂直置中；沒有額度資料時只有時間和日期
-  const int dx = 0, dy = (linkAlive() && g_frame.p5 >= 0) ? SI(-26) : SI(-14);
-
   // 細細的 Claude 額度弧（螢幕保護時）
   if (!pageMode && linkAlive() && g_frame.p5 >= 0) {
     const Brand& b = BRANDS[g_frame.brand];
@@ -841,17 +838,27 @@ static void drawClock(uint32_t ms, bool pageMode) {
     if (p > 0) ringArc(r, hw, GAUGE_START, GAUGE_START + GAUGE_SPAN * p / 100, col, col);
   }
 
-  char buf[16];
+  const bool hasQ = linkAlive() && g_frame.p5 >= 0;
+  const uint32_t c2 = pageMode ? C_LABEL2 : 0xA8A8B0;
+  // 整組垂直置中：時間、日期、（額度一行）。日期與額度同一個字級、名字換成官方小 LOGO：
+  // 以前「Claude 68%」「RESETS 2H 10M」用比日期小的字、擠在一起，使用者覺得字大小不一、太擠（2026-11）
+  const int yT = CY + (hasQ ? SI(-24) : SI(-14));
+  char buf[24];
   snprintf(buf, sizeof buf, "%02d:%02d", hh, mm);
-  text(buf, CX + dx, CY + SI(-6) + dy, pageMode ? C_LABEL : 0xE6E6EA, &fClock.font);
-  char db[24];
-  snprintf(db, sizeof db, "%u/%u  %s", (unsigned)mon, (unsigned)dd, WD[days % 7]);
-  text(db, CX + dx, CY + SI(36) + dy, pageMode ? C_LABEL2 : 0xA8A8B0, &fLabel.font);
-  if (linkAlive() && g_frame.p5 >= 0) {
-    snprintf(buf, sizeof buf, "%s %d%%", BRANDS[g_frame.brand].name, (int)(g_frame.p5 + 0.5f));
-    text(buf, CX + dx, CY + SI(58) + dy, C_LABEL2, &fTiny.font);
-    String left = fmtLeft(g_frame.r5);   // 5 小時額度多久後重置
-    if (left.length()) text((String("RESETS ") + left).c_str(), CX + dx, CY + SI(74) + dy, C_LABEL2, &fTiny.font);
+  text(buf, CX, yT, pageMode ? C_LABEL : 0xE6E6EA, &fClock.font);
+  snprintf(buf, sizeof buf, "%u/%u  %s", (unsigned)mon, (unsigned)dd, WD[days % 7]);
+  const int yD = yT + SI(44);
+  text(buf, CX, yD, c2, &fLabel.font);
+  if (hasQ) {
+    const String left = fmtLeft(g_frame.r5);
+    auto logoLine = [&](const char* s, int y) {   // 官方小 LOGO + 字，整組置中
+      const int tw = textW(s, &fLabel.font), g = SI(6), x0 = CX - (LOGO_N + g + tw) / 2;
+      if (g_frame.brand < 3) band.pushImage(x0 + g_shX, y + g_shY - LOGO_N / 2 - OY, LOGO_N, LOGO_N, (const lgfx::rgb565_t*)LOGOS[g_frame.brand]);
+      text(s, x0 + LOGO_N + g, y, c2, &fLabel.font, middle_left);
+    };
+    if (left.length()) snprintf(buf, sizeof buf, "%d%%  ·  %s", (int)(g_frame.p5 + 0.5f), left.c_str());
+    else snprintf(buf, sizeof buf, "%d%%", (int)(g_frame.p5 + 0.5f));
+    logoLine(buf, yD + SI(30));
   }
 }
 

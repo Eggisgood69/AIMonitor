@@ -91,6 +91,7 @@ type State struct {
 	items     map[string]*Item
 	quota     map[string]*Quota
 	quotaPath string // 額度存檔（quotastore.go），空的 = 不存
+	lastView  string // 你最後在看的 AI（切到別的程式後，大家都待命時主畫面還是它）
 	now       func() time.Time
 }
 
@@ -351,6 +352,22 @@ func (s *State) BuildFrame() Frame {
 	if main != nil && main.rank < 50 && !main.it.Focused {
 		for i := range list {
 			if list[i].it.Focused && list[i].it.AI != main.it.AI {
+				main = &list[i]
+				break
+			}
+		}
+	}
+	// 大家都待命、你也沒在看任何 AI（切到別的程式 / 別的網站）：主畫面留在你最後看的那家。
+	// 以前照排序最後一個條件（名稱）選，app:chatgpt 排在 app:claude 前面，點到別的視窗就跳成 GPT
+	for i := range list {
+		if list[i].it.Focused {
+			s.lastView = list[i].it.AI
+			break
+		}
+	}
+	if main != nil && main.rank == 0 && !main.it.Focused && s.lastView != "" && main.it.AI != s.lastView {
+		for i := range list {
+			if list[i].rank == 0 && list[i].it.AI == s.lastView {
 				main = &list[i]
 				break
 			}

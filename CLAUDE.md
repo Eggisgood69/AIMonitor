@@ -76,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.30、韌體 1.10.41（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.32、韌體 1.10.41（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -223,7 +223,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   側邊欄在 Code 模式沒有「等待輸入」之類的標記可看（試過）
 - 主燈規則（state.go `rank`）：「你沒看到的事」優先——背景需審核 > 正在看的需審核 > 背景錯誤 > 背景完成 >
   背景生成中 > 正在看的生成中 > 背景完成（1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機。**不跳 Windows 通知**（使用者不要，已移除）。
-  正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）
+  正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）。
+  大家都待命、你切到別的程式 / 網站時，主畫面留在你最後看的 AI（`State.lastView`）：以前同分時照名稱排，`app:chatgpt` 在 `app:claude` 前面，一點別的視窗就跳成 GPT（1.13.32 修）
 - Claude Code hooks 不知道你在看哪個對話：Stop 與 Claude App 停止鈕消失的時間差 4 秒內 = 同一個對話（`matchClaudeApp`），
   只亮一個綠燈、切回 App 一起熄。Claude App 背景任務的「停止此任務」、預覽伺服器的「停止此伺服器」不算生成中（monitor.ps1 `$STOP_NOT_RE`；
   沒排除的話 App 那項一直是生成中，跟 Claude Code 的完成對不上，多出一顆小圓點）。
@@ -269,6 +270,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   background.js 把所有 AI 分頁 + 是否正在看（分頁 active 且視窗 focused）POST 過來，每 30 秒（alarms）沒分頁也送空清單報平安；
   停止鈕消失 1.5 秒才算完成、換網址不算完成在 ext.go 判斷；3 分鐘沒收到 = 不在了（`extStale`，背景分頁計時器會被 Chrome 放慢）。
   踩過：manifest 少 `storage` 權限時 `chrome.storage` 是 undefined（service worker 一直丟錯，什麼都沒送）；
+  background.js 每次送出前用 `chrome.tabs.get` 的網址再確認分頁還是 AI 網站（`urlAI`；沒有 tabs 權限時別的網站讀不到網址 = 不是），哪家 AI 也照網址：
+  避免分頁從 chatgpt.com 換走時舊頁面最後一次回報晚到、又被加回清單，之後一直算「正在看 ChatGPT」（1.0.3，保險用；當時跳成 GPT 的真正原因是下面主燈規則的 `lastView`）。
   POST JSON 前 Chrome 會先送 OPTIONS 預檢，要回 CORS + `Access-Control-Allow-Private-Network`（只對 `chrome-extension://` Origin），否則請求根本不會送出。
   `/ext` 只收 Origin 是 `chrome-extension://` 的 JSON（`extRequestAllowed`）；設定 `noExtension` = 不用它的資料。Key = `ext:<ai>:<分頁 id>`
 - Gemini 桌面程式（Google 出的 `%LOCALAPPDATA%\Google\Gemini\app-*\Gemini.exe`，行程名稱 `Gemini`）：停止鈕「停止回覆」跟網頁一樣，切到別的程式也讀得到（2026-11 實測）

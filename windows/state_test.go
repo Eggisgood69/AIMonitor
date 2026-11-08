@@ -564,3 +564,22 @@ func TestClaudeAppViewedDoneNoExtraDot(t *testing.T) {
 		s.ApplyScan([]Item{app, cc})
 	}
 }
+
+// 大家都待命、切到別的程式：主畫面留在最後看的 AI，不照名稱跳成 ChatGPT
+func TestIdleKeepsLastViewedAI(t *testing.T) {
+	s, _ := newTestState()
+	s.ApplyScan([]Item{{Key: "app:chatgpt", AI: "chatgpt"}, {Key: "app:claude", AI: "claude", Focused: true}})
+	if f := s.BuildFrame(); f.AI != "claude" {
+		t.Fatalf("看著 Claude 應該是 claude，得到 %s", f.AI)
+	}
+	s.ApplyScan([]Item{{Key: "app:chatgpt", AI: "chatgpt"}, {Key: "app:claude", AI: "claude"}})
+	if f := s.BuildFrame(); f.AI != "claude" {
+		t.Fatalf("切到別的程式應該留在 claude，得到 %s", f.AI)
+	}
+	s.ApplyScan([]Item{{Key: "app:chatgpt", AI: "chatgpt", Focused: true}, {Key: "app:claude", AI: "claude"}})
+	s.BuildFrame()
+	s.ApplyScan([]Item{{Key: "app:chatgpt", AI: "chatgpt"}, {Key: "app:claude", AI: "claude"}})
+	if f := s.BuildFrame(); f.AI != "chatgpt" {
+		t.Fatalf("最後看 ChatGPT 應該留在 chatgpt，得到 %s", f.AI)
+	}
+}

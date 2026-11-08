@@ -2,6 +2,14 @@
 const API = "http://127.0.0.1:47322/ext";
 const MATCH = ["https://claude.ai/*", "https://chatgpt.com/*", "https://chat.openai.com/*", "https://gemini.google.com/*"];
 
+// 網址 → 哪家 AI（不是這四個網站 = null）
+const AI_RE = /^https:\/\/(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com)\//;
+function urlAI(url) {
+  const m = AI_RE.exec(url || "");
+  if (!m) return null;
+  return m[1] === "claude.ai" ? "claude" : m[1] === "gemini.google.com" ? "gemini" : "chatgpt";
+}
+
 async function getTabs() { return (await chrome.storage.session.get("tabs")).tabs || {}; }
 async function setTabs(t) { await chrome.storage.session.set({ tabs: t }); }
 
@@ -16,10 +24,13 @@ async function send() {
       try { const w = await chrome.windows.getLastFocused(); if (w && w.focused) fw = w.id; } catch (e) {}
       const list = [];
       for (const [id, s] of Object.entries(tabs)) {
-        let active = false;
-        try { const t = await chrome.tabs.get(Number(id)); active = t.active && t.windowId === fw; }
+        let active = false, ai = null;
+        try { const t = await chrome.tabs.get(Number(id)); active = t.active && t.windowId === fw; ai = urlAI(t.url); }
         catch (e) { delete tabs[id]; continue; } // 分頁已經關掉
-        list.push({ id: Number(id), ai: s.ai, stop: !!s.stop, review: !!s.review, view: s.view || "", active });
+        // 分頁現在不是 AI 網站（例如從 ChatGPT 換到別的網站時，舊頁面最後一次回報晚到、把它加回清單）：拿掉。
+        // 沒有 tabs 權限時，只有這四個網站的分頁讀得到 url，別的網站是 undefined → 一樣拿掉
+        if (!ai) { delete tabs[id]; continue; }
+        list.push({ id: Number(id), ai,stop: !!s.stop, review: !!s.review, view: s.view || "", active });
       }
       await setTabs(tabs);
       try {
@@ -31,7 +42,8 @@ async function send() {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (!msg || msg.t !== "state" || !sender.tab) return;
+  // 只收 AI 網站主頁面的回報（iframe、已經換到別的網站的頁面不算）
+  if (!msg || msg.t !== "state" || !sender.tab || sender.frameId !== 0 || !urlAI(sender.url)) return;
   (async () => {
     const tabs = await getTabs();
     tabs[sender.tab.id] = msg.s;
@@ -46,7 +58,7 @@ chrome.windows.onFocusChanged.addListener(() => send());
 chrome.tabs.onUpdated.addListener(async (id, info) => {
   if (!info.url) return;
   const t = await getTabs();
-  if (t[id] && !/^https:\/\/(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com)\//.test(info.url)) { delete t[id]; await setTabs(t); send(); }
+  if (t[id] && !urlAI(info.url)) { delete t[id]; await setTabs(t); send(); }
 });
 
 // 剛安裝 / 更新時，已經開著的 AI 分頁不會自動載入 content script：補注入，不用重新整理頁面

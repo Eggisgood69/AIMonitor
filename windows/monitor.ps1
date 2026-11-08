@@ -89,9 +89,15 @@ function Get-ButtonNames([IntPtr]$hwnd) {
     foreach ($e in $els) {
       try {
         $n = $e.Current.Name
-        if ($n -and -not $e.Current.IsOffscreen) { $names.Add($n.Trim()) }
-        # 捲到畫面外的「再試一次」也要算（前面加 ~，不會被當成別的按鈕）：只算畫面上的話，捲動或縮小視窗時數量會變，誤判成出錯
-        elseif ($n -and $n.Trim() -match $RETRY_RE) { $names.Add('~' + $n.Trim()) }
+        if (-not $n) { continue }
+        $n = $n.Trim()
+        if ($n -match $RETRY_RE) {
+          # ChatGPT 圖片回覆下面那排動作圖示的 ↻ 也叫「再試一次」（class 有 button-icon）：每生成一張圖就多一個，不是出錯
+          if ([string]$e.Current.ClassName -match '\bbutton-icon\b') { continue }
+          # 捲到畫面外的「再試一次」也要算（前面加 ~，不會被當成別的按鈕）：只算畫面上的話，捲動或縮小視窗時數量會變，誤判成出錯
+          if ($e.Current.IsOffscreen) { $names.Add('~' + $n); continue }
+        }
+        if (-not $e.Current.IsOffscreen) { $names.Add($n) }
       } catch {}
     }
   } catch {}

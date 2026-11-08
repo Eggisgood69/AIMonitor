@@ -99,7 +99,16 @@ func (st *Stats) Week() []map[string]interface{} {
 		t := now.AddDate(0, 0, -i)
 		m := map[string]interface{}{"day": t.Format("01/02"), "wd": int(t.Weekday())}
 		if d := st.Days[dayKey(t)]; d != nil {
-			m["count"], m["secs"] = d.Count, d.Secs
+			// 複製一份：設定視窗解鎖後才把它編成 JSON，直接給 d.Count / d.Secs 的話，
+			// 同時有 AI 完成（Add 改同一份 map）會並行讀寫 map，整個程式當掉
+			c, s := make(map[string]int, len(d.Count)), make(map[string]int64, len(d.Secs))
+			for k, v := range d.Count {
+				c[k] = v
+			}
+			for k, v := range d.Secs {
+				s[k] = v
+			}
+			m["count"], m["secs"] = c, s
 		}
 		out = append(out, m)
 	}

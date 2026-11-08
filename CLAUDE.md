@@ -39,7 +39,7 @@ windows/                   Go 程式（Windows only，WebView2）
   claudecode*.go           Claude Code hooks（http hook → 127.0.0.1:47322/cc）
   codex.go                 Codex 對話紀錄（~/.codex/sessions 的 rollout-*.jsonl）→ cx:<id> 項目，跟 ChatGPT App 畫面項目配對去重
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
-  stats.go                 今日統計（stats.json，保留 7 天）
+  stats.go                 今日統計（stats.json，保留 7 天）；`Week()` 回傳複製的 map（設定視窗解鎖後才編 JSON，共用會並行讀寫、整個程式當掉）
   tray_windows.go          系統匣圖示
   appupdate.go / appupdate_windows.go   電腦端新版檢查（GitHub releases/latest）與一鍵更新（下載 + SHA256 驗證；可跨平台的部分有 go test）
   flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符）
@@ -66,6 +66,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 - `./build.ps1 -Flash COM5`：另外直接把韌體燒進螢幕，用 esptool chip_id 自動判斷種類（或 `-Board s3a175`）。先在 AIMonitor 系統匣按「結束程式」，否則序列埠被占用。
   AMOLED 開著麥克風時是另一個埠（PID 81A1），會先用 `mic-off.ps1` 讓它重開回 hwcdc
 - S3 的 FQBN：`esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB`（核心一樣 2.0.9）
+- 並行問題用 `go test -race`：要 64 位元 gcc（`winget install BrechtSanders.WinLibs.POSIX.UCRT`；PATH 上的 `C:\MinGW` 是 32 位元，會說 `64-bit mode not compiled in`），
+  跑之前設 `$env:CC` 指到 WinLibs 的 `mingw64\bin\gcc.exe`、`$env:CGO_ENABLED="1"`（`.rsrc merge failure` 警告可以不管）
 - 只改電腦端：`cd windows; go test ./...; go build -trimpath -ldflags "-H windowsgui -s -w" -o AIMonitor.exe .`
 - 雙擊新的 AIMonitor.exe 會自動取代執行中的舊版並安裝到 `%LOCALAPPDATA%\AIMonitor`
 - 發版：使用者同意後 commit + push，再 `./build.ps1 -Release`（`gh release create v<版本>`，上傳 `AIMonitor.exe`、`AIMonitor.exe.sha256`，
@@ -76,7 +78,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.36、韌體 1.10.43（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.37、韌體 1.10.43（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -262,6 +264,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   配對後畫面那項（app:chatgpt / app:chatgpt:bg:<標題>，monitor 送 `view` = 畫面上的對話標題）不送出，cx 項目借它的「正在看」「待核准」。
   新對話生成到一半標題會從第一句話換成自動產生的標題：同一次生成（key@GenSince，只在生成中）也認得（`genPairs`）。
   AIMonitor 重開時配對不見、開始時間也對不上：畫面上沒配對的生成中、紀錄裡沒配對的生成中各只有一個時直接配（兩個以上不猜）。
+  續聊較早建立的對話時紀錄寫回建立那天的資料夾：每 3 秒只看最近三天的資料夾，另外每 15 秒把整個 sessions 列一次、收 10 分鐘內有寫入的（`cxOldEvery` / `cxOldRecent`）。
+  首行 `session_meta` 整行寫完才算讀過（`metaLocked` 回 false = 下次再讀）：以前先標成讀過，剛好掃到空檔 / 半行的對話之後一直沒燈。
   App 更新時會把舊對話搬成新檔（同一天幾十個、好幾 MB、裡面上千個舊 task 事件）：第一次只讀最後 256 KB；生成中 30 分鐘沒寫紀錄當作已結束（`cxStale`）。
   紀錄檔被 Codex 開著，PowerShell 的 `[IO.File]::ReadLines` 會說被占用，Go 的 os.Open / Get-Content 可以讀
 - 正看著 Claude App 裡的 Claude Code 對話時出錯：StopFailure 跟 App 停止鈕消失配對成同一個對話，

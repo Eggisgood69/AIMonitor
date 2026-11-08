@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -80,4 +82,34 @@ func TestStatsFromScans(t *testing.T) {
 	if w := st2.Week(); len(w) != 7 || w[6]["count"] == nil {
 		t.Fatalf("week: %v", w)
 	}
+}
+
+// Week() 回傳的是快照：之後的 Add 不能改到它（設定視窗解鎖後才編 JSON，共用 map 會並行讀寫當掉）
+func TestStatsWeekIsSnapshot(t *testing.T) {
+	st := NewStats("")
+	st.Add("claude", time.Second)
+	old := st.Week()
+	st.Add("claude", time.Second)
+	if c := old[6]["count"].(map[string]int)["claude"]; c != 1 {
+		t.Fatalf("舊快照被改了：%d", c)
+	}
+	if c := st.Week()[6]["count"].(map[string]int)["claude"]; c != 2 {
+		t.Fatalf("新快照應該是 2：%d", c)
+	}
+	// 並行：一邊完成、一邊編 JSON（用 go test -race 才看得出來）
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			st.Add("chatgpt", time.Second)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			json.Marshal(st.Week())
+		}
+	}()
+	wg.Wait()
 }

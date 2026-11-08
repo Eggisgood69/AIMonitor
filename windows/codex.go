@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,10 @@ const (
 	cxTail       = 256 << 10        // 第一次看到的紀錄檔只讀最後這麼多（App 更新時搬進來的舊對話有好幾 MB）
 	cxListEvery  = 3 * time.Second  // 多久重新列一次資料夾（新對話）
 	cxAskGrace   = 1500 * time.Millisecond
+	// 續聊較早的對話：紀錄寫回對話建立那天的資料夾，上面只看最近三天找不到。
+	// 隔一段時間把整個 sessions 列一次（61 個檔約 26 ms），只收最近有寫入的
+	cxOldEvery  = 15 * time.Second
+	cxOldRecent = 10 * time.Minute
 )
 
 type cxThread struct {
@@ -43,8 +48,8 @@ type cxThread struct {
 	FinishedAt int64
 	off        int64 // 讀到檔案的哪裡
 	mod        time.Time
-	started    bool // 已經讀過開頭的 session_meta
-	midLine    bool // 從檔案中間開始讀：第一行不完整，跳過
+	started    bool             // 已經讀過開頭的 session_meta
+	midLine    bool             // 從檔案中間開始讀：第一行不完整，跳過
 	reviewer   string           // 這一輪的 approvals_reviewer：user =「要求核准」、auto_review =「代我核准」
 	asks       map[string]int64 // 要你核准的工具呼叫（call_id → 送出時間），有結果就移除
 }
@@ -59,6 +64,7 @@ type Codex struct {
 	// 只靠標題的話配對就斷了、亮兩個燈（2026-11 實測）
 	genPairs map[string]string
 	listAt   time.Time
+	oldAt    time.Time // 上次整個 sessions 列一次（找續聊的舊對話）
 }
 
 func NewCodex(dir string) *Codex {
@@ -95,6 +101,21 @@ func (c *Codex) refreshLocked() {
 			}
 		}
 	}
+	if now.Sub(c.oldAt) >= cxOldEvery {
+		c.oldAt = now
+		filepath.WalkDir(c.dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || !strings.HasSuffix(d.Name(), ".jsonl") {
+				return nil
+			}
+			if _, ok := c.threads[p]; ok {
+				return nil
+			}
+			if fi, err := d.Info(); err == nil && now.Sub(fi.ModTime()) < cxOldRecent {
+				c.threads[p] = &cxThread{}
+			}
+			return nil
+		})
+	}
 	for path, t := range c.threads {
 		fi, err := os.Stat(path)
 		if err != nil || (now.Sub(fi.ModTime()) > cxKeep && !t.Gen) {
@@ -119,12 +140,14 @@ func (c *Codex) readLocked(path string, t *cxThread, size int64) {
 	}
 	defer f.Close()
 	if !t.started {
-		t.started = true
-		// 第一行是 session_meta（對話 id、資料夾、是不是子代理）；很長（含整份系統提示），只讀到換行
+		// 第一行是 session_meta（對話 id、資料夾、是不是子代理）；很長（含整份系統提示），只讀到換行。
+		// 整行寫完才算讀過：剛建立的空檔、只寫了半行時下次再讀（以前先標成讀過，剛好掃到空檔的對話之後一直沒燈）
 		r := bufio.NewReaderSize(f, 64<<10)
-		if line, err := r.ReadSlice('\n'); err == nil || err == bufio.ErrBufferFull {
-			c.metaLocked(t, line, r)
+		line, err := r.ReadSlice('\n')
+		if (err != nil && err != bufio.ErrBufferFull) || !c.metaLocked(t, line, r) {
+			return
 		}
+		t.started = true
 		if size > cxTail {
 			t.off, t.midLine = size-cxTail, true // 舊對話只看最後一段：只需要知道最後的狀態
 		}
@@ -153,7 +176,8 @@ func (c *Codex) readLocked(path string, t *cxThread, size int64) {
 	t.midLine = false
 }
 
-func (c *Codex) metaLocked(t *cxThread, first []byte, r *bufio.Reader) {
+// 回傳 false = 這一行還沒寫完（下次再讀）；寫完但不是 session_meta 也回傳 true（不再重試）
+func (c *Codex) metaLocked(t *cxThread, first []byte, r *bufio.Reader) bool {
 	// session_meta 那行可能超過緩衝區：把剩下的接起來（最多 4 MB）
 	line := append([]byte(nil), first...)
 	for len(line) < 4<<20 && !bytes.HasSuffix(line, []byte{'\n'}) {
@@ -162,6 +186,9 @@ func (c *Codex) metaLocked(t *cxThread, first []byte, r *bufio.Reader) {
 		if err != nil && err != bufio.ErrBufferFull {
 			break
 		}
+	}
+	if !bytes.HasSuffix(line, []byte{'\n'}) && len(line) < 4<<20 {
+		return false
 	}
 	var m struct {
 		Type    string `json:"type"`
@@ -173,12 +200,13 @@ func (c *Codex) metaLocked(t *cxThread, first []byte, r *bufio.Reader) {
 		} `json:"payload"`
 	}
 	if json.Unmarshal(line, &m) != nil || m.Type != "session_meta" {
-		return
+		return true
 	}
 	t.ID, t.Cwd = m.Payload.ID, m.Payload.Cwd
 	// 舊對話是「Codex Desktop」，2026-11 新開的對話是「codex_work_desktop」
 	t.Desktop = strings.Contains(strings.ToLower(m.Payload.Originator), "desktop")
 	t.Sub = bytes.Contains(m.Payload.Source, []byte(`"subagent"`))
+	return true
 }
 
 // 要你核准的工具呼叫：要求權限（例如連網路、寫外部資料夾），或要在沙箱外執行指令（2026-11 實測的寫法）

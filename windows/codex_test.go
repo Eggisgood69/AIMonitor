@@ -332,3 +332,69 @@ func TestCodexWithState(t *testing.T) {
 		t.Fatalf("看過 8 秒後要熄：%+v", fr)
 	}
 }
+
+// 第一次掃描剛好碰到空檔 / 首行只寫了半行：補齊後同一個偵測器要認得（以前先標成讀過，之後一直沒燈）
+func TestCodexMetaNotReadyYet(t *testing.T) {
+	for _, cut := range []string{"empty", "half"} {
+		f := newCxFixture(t, cxID, "codex_cli_rs", `"cli"`)
+		full, _ := os.ReadFile(f.path)
+		part := []byte{}
+		if cut == "half" {
+			part = full[:len(full)/2]
+		}
+		os.WriteFile(f.path, part, 0o644)
+		os.Chtimes(f.path, *f.now, *f.now)
+		if it := findKey(f.merge(), "cx:"); it != nil {
+			t.Fatalf("%s：首行還沒寫完不該有項目：%+v", cut, it)
+		}
+		f.step(time.Second)
+		os.WriteFile(f.path, full, 0o644)
+		f.event("task_started")
+		it := findKey(f.merge(), "cx:")
+		if it == nil || !it.Gen {
+			t.Fatalf("%s：補齊後應該是生成中：%+v", cut, it)
+		}
+		f.step(time.Second)
+		f.event("task_complete")
+		if it := findKey(f.merge(), "cx:"); it == nil || it.Gen || it.FinishedAt == 0 {
+			t.Fatalf("%s：應該完成：%+v", cut, it)
+		}
+	}
+}
+
+// 續聊四天前建立的對話（紀錄寫回建立那天的資料夾）：也要亮燈，完成時正常完成
+func TestCodexResumeOldThread(t *testing.T) {
+	f := newCxFixture(t, cxID, "codex_cli_rs", `"cli"`)
+	old := filepath.Join(filepath.Dir(filepath.Dir(f.path)), "03") // 2026/11/03
+	os.MkdirAll(old, 0o755)
+	np := filepath.Join(old, filepath.Base(f.path))
+	if err := os.Rename(f.path, np); err != nil {
+		t.Fatal(err)
+	}
+	f.path = np
+	f.c = NewCodex(filepath.Dir(filepath.Dir(filepath.Dir(old))))
+	f.c.now = func() time.Time { return *f.now }
+	f.event("task_started")
+	it := findKey(f.merge(), "cx:")
+	if it == nil || !it.Gen {
+		t.Fatalf("續聊的舊對話應該是生成中：%+v", it)
+	}
+	f.step(time.Second)
+	f.event("task_complete")
+	if it := findKey(f.merge(), "cx:"); it == nil || it.Gen || it.FinishedAt == 0 {
+		t.Fatalf("應該完成：%+v", it)
+	}
+	// 很久沒寫入的舊對話不收
+	g := newCxFixture(t, "02b2c5f2-0000-0000-0000-000000000000", "codex_cli_rs", `"cli"`)
+	gold := filepath.Join(filepath.Dir(filepath.Dir(g.path)), "01")
+	os.MkdirAll(gold, 0o755)
+	gp := filepath.Join(gold, filepath.Base(g.path))
+	os.Rename(g.path, gp)
+	ago := g.now.Add(-time.Hour)
+	os.Chtimes(gp, ago, ago)
+	g.c = NewCodex(filepath.Dir(filepath.Dir(filepath.Dir(gold))))
+	g.c.now = func() time.Time { return *g.now }
+	if it := findKey(g.merge(), "cx:"); it != nil {
+		t.Fatalf("一小時沒動靜的舊對話不該收：%+v", it)
+	}
+}

@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.44"
+#define FW_VERSION "1.10.45"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -197,16 +197,18 @@ static bool g_frameReady = false;       // 外環、轉向都做好了，只等 
 // 加法混色：黑底變成光的顏色，白字加一點還是白，反鋸齒的字邊也不會出現黑邊。光的顏色是主燈那家 AI 的品牌色。
 // 螢幕保護時不亮（Clawd 亂跑用的是另一張底圖，整張送出會留下殘影）
 #define VG_BINS 48                        // 圓心到光的邊緣分幾格
-#define VG_STEPS 32                       // 光的強度分幾階（0 = 沒有光）
+#define VG_STEPS 128                      // 光的強度分幾階（0 = 沒有光）；32 階時慢慢淡掉看得到一階一階跳（使用者說太卡）
 static const float VG_MAX = 0.65f;        // 最大聲時圓心的亮度：品牌色的 65%（22%、45% 時使用者都覺得太暗）
 static uint8_t g_vgQ = 0;                 // 畫面上現在的光強度（0-VG_STEPS）
 static uint8_t g_vgAdd[VG_BINS + 1][3];   // 每格距離要加的 R / G / B（0-255）；最後一格 = 0
+static uint16_t g_vgBlk[VG_BINS + 1][16]; // 黑底的像素加上光後的顏色（位元組對調的 RGB565），依 Bayer 位置；背景大多是黑的，直接查表
 static uint8_t g_vgPalQ = 0xFF, g_vgPalBrand = 0xFF;
 static uint8_t* g_vgBin = nullptr;        // 距離平方 / 64 → 第幾格
 static int g_vgR2Max = 0;                 // 光最大的範圍（距離平方）
 static int g_vgR2Act = 0;                 // 現在這張光照得到的範圍（距離平方），外面不加
 static float g_vgLevel = 0;               // 平滑後的音量 0-1
 static uint32_t g_vgMs = 0, g_vgPushMs = 0;
+static uint32_t g_vgN = 0, g_vgGap = 0, g_vgLastPush = 0, g_vgMaxMs = 0;   // 量測：光暈整張送了幾次、連續變化時兩次最長間隔 ms
 
 static void vgInit() {
   if (g_vgBin) return;
@@ -233,6 +235,13 @@ static void vgPalette(int q) {
     g_vgAdd[b][2] = (uint8_t)((col & 255) * k + 0.5f);
   }
   g_vgAdd[VG_BINS][0] = g_vgAdd[VG_BINS][1] = g_vgAdd[VG_BINS][2] = 0;
+  static const uint8_t BAYER[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+  for (int b = 0; b <= VG_BINS; b++)
+    for (int i = 0; i < 16; i++) {
+      const int d = BAYER[i], r = min(31, (g_vgAdd[b][0] + (d >> 1)) >> 3), g = min(63, (g_vgAdd[b][1] + (d >> 2)) >> 2), bl = min(31, (g_vgAdd[b][2] + (d >> 1)) >> 3);
+      const uint16_t o = (uint16_t)((r << 11) | (g << 5) | bl);
+      g_vgBlk[b][i] = (uint16_t)((o >> 8) | (o << 8));
+    }
   // 這次光照得到的範圍（最後一格有加東西的距離）：外面整段直接複製，小聲時少算一大半
   int last = -1;
   for (int b = 0; b < VG_BINS; b++) if (g_vgAdd[b][0] | g_vgAdd[b][1] | g_vgAdd[b][2]) last = b;
@@ -246,6 +255,7 @@ static void vgPalette(int q) {
 static inline uint16_t vgAddPx(uint16_t p, int x, int y) {
   const int dx = x - CX, dy = y - CY, r2 = dx * dx + dy * dy;
   if (r2 >= g_vgR2Act) return p;
+  if (!p) return g_vgBlk[g_vgBin[r2 >> 6]][((y & 3) << 2) | (x & 3)];   // 黑底：查表
   const uint8_t* a = g_vgAdd[g_vgBin[r2 >> 6]];
   if (!(a[0] | a[1] | a[2])) return p;
   static const uint8_t BAYER[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
@@ -259,13 +269,23 @@ static inline uint16_t vgAddPx(uint16_t p, int x, int y) {
   return (uint16_t)((o >> 8) | (o << 8));
 }
 
-// 音量平滑：變亮快（約 60 ms）、變暗慢（約 350 ms），看起來像呼吸，不會一閃一閃
+// 音量平滑：變亮快（時間常數 VG_RISE_S）；聲音變小時先停留 VG_HOLD_MS 不變暗（字與字之間的停頓不會一直掉），
+// 之後淡掉（時間常數 VG_FALL_S，約 1.5 秒完全消失）。原本 350 ms 就暗掉，使用者覺得消失太快；
+// 改成停 0.4 秒、1.2 秒淡掉（約 3 秒）又覺得反應慢
+static const float VG_RISE_S = 0.03f;
+static const uint32_t VG_HOLD_MS = 200;
+static const float VG_FALL_S = 0.6f;
+static uint32_t g_vgHoldMs = 0;
 static void vgSmooth(uint32_t now) {
   const float t = micLevel();
   const float dt = min<uint32_t>(100, now - g_vgMs) / 1000.0f;
   g_vgMs = now;
-  const float k = t > g_vgLevel ? min(1.0f, dt / 0.06f) : min(1.0f, dt / 0.35f);
-  g_vgLevel += (t - g_vgLevel) * k;
+  if (t >= g_vgLevel) {
+    g_vgLevel += (t - g_vgLevel) * min(1.0f, dt / VG_RISE_S);
+    g_vgHoldMs = now;
+  } else if (now - g_vgHoldMs >= VG_HOLD_MS) {
+    g_vgLevel += (t - g_vgLevel) * min(1.0f, dt / VG_FALL_S);
+  }
   if (t == 0 && g_vgLevel < 0.02f) g_vgLevel = 0;
 }
 
@@ -290,7 +310,16 @@ static void composeFrame() {
       if (rem <= 0) { memcpy(dr, sr, W * 2); continue; }
       const int hw = (int)sqrtf((float)rem) + 1, x0 = max(0, CX - hw), x1 = min(W, CX + hw);
       memcpy(dr, sr, x0 * 2);
-      for (int x = x0; x < x1; x++) dr[x] = vgAddPx(sr[x], x, y);
+      // 距離平方逐點遞增；黑底直接查表，有東西的像素才算加法混色（以前每點都算，準備一張 60-107 ms，光暈每秒只更新 6-10 次，看起來很卡）
+      const uint16_t* blk = nullptr;
+      const int brow = (y & 3) << 2;
+      int dx = x0 - CX, r2 = dx * dx + dy * dy;
+      for (int x = x0; x < x1; x++, r2 += 2 * dx + 1, dx++) {
+        const uint16_t p = sr[x];
+        if (r2 >= g_vgR2Act) dr[x] = p;
+        else if (p) dr[x] = vgAddPx(p, x, y);
+        else { blk = g_vgBlk[g_vgBin[r2 >> 6]]; dr[x] = blk[brow | (x & 3)]; }
+      }
       memcpy(dr + x1, sr + x1, (W - x1) * 2);
     }
     return;
@@ -487,7 +516,7 @@ static uint32_t g_maxGenGap = 0;    // 「Generating」的光兩次更新之間�
 static uint32_t g_fullN = 0;        // 上次回報之後整張重畫了幾次
 
 static void sendHello(Stream* src) {
-  char b[448];
+  char b[512];
   // id：晶片 MAC，電腦端用它分辨每塊螢幕（各自的方向、亮度；換 USB 孔也認得）
   const uint64_t mac = ESP.getEfuseMac();
   snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"id\":\"%04x%08lx\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu,\"gen\":%lu,\"full\":%lu}",
@@ -498,10 +527,11 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
-           g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain);
+           g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs);
+  g_vgN = g_vgGap = g_vgMaxMs = 0;
   g_uacPkts = 0;
   g_uacMiss = 0;
   g_uacMaxGap = 0;
@@ -718,6 +748,61 @@ static void pushRect(const uint16_t* src, int stride, int x, int y, int w, int h
 }
 
 static void pushFbRect(int x, int y, int w, int h) { pushRect(g_fb + y * W + x, W, x, y, w, h); }
+
+// vgPushGlow 的一段：跟 pushRect 一樣加光、轉向、送出，但距離平方逐點遞增、轉向用指標步距（不在每個像素判斷），黑底查表
+static void vgPushBand(int x, int y, int w, int h) {
+  uint16_t* d = g_rotBuf;
+  const int act = g_vgR2Act;
+  for (int r = 0; r < h; r++) {
+    const int yy = y + r, dy = yy - CY, brow = (yy & 3) << 2;
+    const uint16_t* sr = g_fb + yy * W + x;
+    uint16_t* o;
+    int step;
+    if (g_rot == 0) { o = d + r * w; step = 1; }
+    else if (g_rot == 2) { o = d + (h - 1 - r) * w + (w - 1); step = -1; }
+    else if (g_rot == 1) { o = d + (h - 1 - r); step = h; }              // 90°：(x, y) → (W-1-y, x)
+    else { o = d + (w - 1) * h + r; step = -h; }                       // 270°：(x, y) → (y, H-1-x)
+    int dx = x - CX, r2 = dx * dx + dy * dy;
+    for (int c = 0; c < w; c++, o += step, r2 += 2 * dx + 1, dx++) {
+      const uint16_t p = sr[c];
+      if (r2 >= act || !g_vgQ) *o = p;
+      else if (p) *o = vgAddPx(p, x + c, yy);
+      else *o = g_vgBlk[g_vgBin[r2 >> 6]][brow | ((x + c) & 3)];
+    }
+  }
+  int px = x, py = y, pw = w, ph = h;
+  if (g_rot == 2) { px = W - x - w; py = H - y - h; }
+  else if (g_rot == 1) { px = W - y - h; py = x; pw = h; ph = w; }
+  else if (g_rot == 3) { px = y; py = H - x - w; pw = h; ph = w; }
+  lcd.startWrite();
+  lcd.pushImage(px, py, pw, ph, (const lgfx::swap565_t*)d);
+  lcd.endWrite();
+}
+
+// 說話光暈只變了亮度：只重送中間光照得到的圓（舊的範圍 ∪ 新的範圍，小聲時光會縮小，舊的那圈要蓋回原樣），
+// 一段一段（每段不超過 g_rotBuf）用 pushRect 加光、轉向、送出。外環、其他地方不動，也不用整張準備：
+// 以前每次整張送，準備一張 50-107 ms，光暈每秒只更新 6-12 次，慢慢淡掉時看起來很卡
+static void vgPushGlow() {
+  const int prev = g_vgR2Act;
+  vgSet();
+  const int r2 = max(prev, g_vgQ ? g_vgR2Act : 0);
+  if (!g_vgQ) g_vgR2Act = 0;
+  if (r2 <= 0) return;
+  const int r = (int)sqrtf((float)r2) + 2;
+  const int y0 = max(0, (CY - r) & ~1), y1 = min(H, (CY + r + 2) & ~1);
+  // 每段 8 列，寬度看這段裡離圓心最近的那列。段太高的話上下兩端的方塊角會碰到外環（半徑 214.5，呼吸中的亮度跟 g_fb 裡的不同）
+  for (int y = y0; y < y1; y += 8) {
+    const int h = min(8, y1 - y);
+    const int near = (y <= CY && CY < y + h) ? 0 : min(abs(y - CY), abs(y + h - 1 - CY));
+    const int rem = r2 - near * near;
+    if (rem <= 0) continue;
+    const int hw = (int)sqrtf((float)rem) + 2;
+    const int x0 = max(0, (CX - hw) & ~1), x1 = min(W, (CX + hw + 2) & ~1);
+    const int w = max(34, x1 - x0);       // 太窄（64 位元組以下）會畫壞
+    const int xs = min(x0, W - w);
+    vgPushBand(xs, y, w, h);
+  }
+}
 
 // 螢幕保護的 Clawd：在整個圓裡亂跑（走到隨機的點、停一下再走，擋到時鐘也沒關係）。
 // 整張畫好時把沒有 Clawd 的畫面存成底圖（g_fbBg），之後每一步在小暫存區（g_roamTmp）組好「底圖 + 新位置的 Clawd」，
@@ -1163,12 +1248,15 @@ void loop() {
     return;
   }
   fadeTick(now);
-  // 說話光暈：音量變了就整張送一次（不用重畫，只在送出前加光），最多每 60 ms 一次。
+  // 說話光暈：音量變了就整張送一次（不用重畫，只在送出前加光），最多每 33 ms 一次。
   // 整張重畫中、轉場中先不送（重畫到一半的那張不能送，送完那張時自然會帶上光）
   vgSmooth(now);
-  if (g_fb && g_fbRot && !g_framePending && strip < 0 && g_fadeDir == 0 && vgTarget() != g_vgQ && now - g_vgPushMs >= 60) {
-    g_framePending = true;
-    g_frameReady = false;
+  if (g_fb && g_fbRot && !g_framePending && strip < 0 && g_fadeDir == 0 && vgTarget() != g_vgQ && now - g_vgPushMs >= 33) {
+    if (g_saver) { g_framePending = true; g_frameReady = false; }   // 螢幕保護（光要關掉）：整張送，Clawd 亂跑另有底圖
+    else { const uint32_t t0 = millis(); vgPushGlow(); if (millis() - t0 > g_vgMaxMs) g_vgMaxMs = millis() - t0; }
+    if (now - g_vgLastPush < 500 && now - g_vgLastPush > g_vgGap) g_vgGap = now - g_vgLastPush;
+    g_vgLastPush = now;
+    g_vgN++;
     g_vgPushMs = now;
   }
   // 整張畫好了：先準備好（外環、轉向），在 TE 之後送出（外環也在裡面，這一格外環就不另外畫）。沒有 TE 訊號就直接送。

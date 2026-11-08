@@ -76,7 +76,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.34、韌體 1.10.41（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.35、韌體 1.10.42（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -115,7 +115,9 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
     只有小數變（44.6 → 44.7）時不要重新計時；目標有小數時里程表停在四捨五入的整數（`pctDraw` 的 `disp`）
   - Arduino 的 `F()` 巨集會吃掉叫 `F` 的樣板參數，自動產生的函式原型也會弄壞樣板函式 → `redrawRect` 用函式指標
 - 主畫面沒有額度（剛重開、額度還沒讀到）時跟有額度同一個版面，數字顯示 `--`、讀到後從 0 捲上去（aimon.ino 設 `g_p5Shown = 0`）。
-  以前改顯示經過時間（0:15 ELAPSED），使用者不要（2026-11 拿掉 `numTick` / `numDraw`）。電腦端額度存在 `quota.json`（quotastore.go，只存數字與時間），啟動時讀回 15 分鐘內的
+  以前改顯示經過時間（0:15 ELAPSED），使用者不要（2026-11 拿掉 `numTick` / `numDraw`）。電腦端額度存在 `quota.json`（quotastore.go，只存數字、時間與設定視窗的週期標籤 `SLabel` / `WLabel`），啟動時讀回 15 分鐘內的。
+  沒存標籤的舊快取設定視窗寫「上次用量」（不知道是 Gemini 的「今天」還是 ChatGPT 的 30 天）。
+  沒有額度時 `gaugeTick` 的動畫目標 `to` 也要清掉（1.10.42）：以前 40% → 沒資料 → 40% 讀回來第一格就跳到 40，沒有從 0 捲
 - AMOLED 切換 AI 時淡出淡入（跟換頁同一套 `fadeTick`），以前直接整張送看得到撕裂；換 AI 時額度照樣捲（使用者喜歡從上一家捲到這一家）
 - 額度變紅的門檻 = 設定視窗「額度重置提醒」的門檻（frame 的 `red`，`redThreshold()`；提醒關閉時送 0 = 不變紅，韌體 `g_redAt` 預設 90 給舊版電腦端）。
   顏色看目標值 `f.p5`、**不看捲動中的 `p5View()`**：以前捲過 90 才在 gaugeTick 設 dirty 整張重畫成紅色，切換 AI（例如 GPT 白 → 紅）時看得到跳色、撕裂

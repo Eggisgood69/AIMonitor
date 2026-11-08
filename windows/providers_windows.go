@@ -265,8 +265,9 @@ func onProviderUsage(ai, raw string) {
 		if d.Quota.LenW >= 20*86400 {
 			st.WLabel = "本月（30 天）"
 		}
+		sl, wl := st.SLabel, st.WLabel
 		provMu.Unlock()
-		nq := Quota{P5: d.Quota.P5, PW: d.Quota.PW, R5: int64(d.Quota.R5), RW: int64(d.Quota.RW)}
+		nq := Quota{P5: d.Quota.P5, PW: d.Quota.PW, R5: int64(d.Quota.R5), RW: int64(d.Quota.RW), SLabel: sl, WLabel: wl}
 		diag := d.Diag
 		if ai == "chatgpt" {
 			diag = redactIDs(diag) // ChatGPT 的 diag 是 API 原始回應：遮掉 email、帳號 ID 才寫進紀錄
@@ -304,6 +305,10 @@ func providersStatus() map[string]interface{} {
 		m := map[string]interface{}{"login": st.Login, "err": st.Err, "diag": st.Diag, "note": st.Note, "wlabel": st.WLabel, "slabel": st.SLabel, "available": provs[ai] != nil}
 		if q := state.GetQuota(ai); q != nil {
 			m["quota"] = map[string]interface{}{"p5": q.P5, "pw": q.PW, "r5": q.R5, "rw": q.RW, "age": int(time.Since(q.T).Seconds())}
+			if st.WLabel == "" { // 重開後還沒讀到：用快取存的標籤；舊版快取沒有標籤 → 設定視窗寫「上次用量」
+				m["slabel"], m["wlabel"] = q.SLabel, q.WLabel
+				m["cached"] = q.WLabel == ""
+			}
 		}
 		out[ai] = m
 	}

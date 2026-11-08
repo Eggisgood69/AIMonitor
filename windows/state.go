@@ -45,6 +45,10 @@ type Quota struct {
 	P5, PW float64 // -1 = 沒資料
 	R5, RW int64   // 重置時間 epoch 秒
 	T      time.Time
+	// 設定視窗顯示的週期標籤（Gemini 的「今天」、ChatGPT 的「本月（30 天）」等），跟數字一起存進 quota.json：
+	// 重開後背景網頁還沒讀到之前，快取的額度才不會被標成預設的「5 小時 / 本週」
+	SLabel string `json:",omitempty"`
+	WLabel string `json:",omitempty"`
 }
 
 type Frame struct {

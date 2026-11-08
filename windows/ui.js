@@ -314,12 +314,13 @@
       const q = p.quota;
       if (!p.available) { el.innerHTML = `<span class="muted">無法使用（內建瀏覽器未啟動）</span>`; continue; }
       if (q && (q.p5 >= 0 || q.pw >= 0)) {
+        // cached = 重開後還沒讀到、快取又沒存週期（1.13.35 以前存的）：不知道是哪個週期，寫「上次用量」、不顯示第二個額度
         const wl = p.wlabel || "本週";
-        const main = q.p5 >= 0 ? q.p5 : q.pw, label = q.p5 >= 0 ? (p.slabel || "5 小時") : wl;
+        const main = q.p5 >= 0 ? q.p5 : q.pw, label = p.cached ? "上次用量" : q.p5 >= 0 ? (p.slabel || "5 小時") : wl;
         const left = fmtLeft(q.p5 >= 0 ? q.r5 : q.rw);
         el.innerHTML = `${label} <b>${Math.round(main)}%</b>${left ? `<span class="muted"> · ${left}後重置</span>` : ""}
           <div class="bar"><i style="width:${Math.min(100, main)}%"></i></div>
-          ${q.p5 >= 0 && q.pw >= 0 ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}
+          ${q.p5 >= 0 && q.pw >= 0 && !p.cached ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}
           ${ai === "chatgpt" ? `<div class="hint">Codex 的用量（ChatGPT 聊天的上限不公開）</div>` : ""}`;
       } else if (p.login === "out") {
         el.innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入

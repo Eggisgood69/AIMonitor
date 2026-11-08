@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.41"
+#define FW_VERSION "1.10.42"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -886,17 +886,19 @@ static void gaugeTick(uint32_t now) {
   static uint32_t last = 0;
   if (now - last < 33) return;
   last = now;
+  // 途中目標變了才從現在的位置重新開始；只有小數變（44.6 → 44.7，顯示的整數一樣）就不重新計時
+  static float from = -1, to = -1;
+  static uint32_t t0 = 0;
   const float target = g_frame.p5;
-  if (target < 0) { g_p5Shown = -1; return; }
+  // 沒有額度：動畫的目標也要清掉。以前只清 g_p5Shown，40% → 沒資料 → 40% 時目標還是 40、時間早就跑完，
+  // 讀回來第一格就直接跳到 40（應該從 0 捲上去）
+  if (target < 0) { g_p5Shown = -1; to = -1; return; }
   const float old = g_p5Shown;
-  if (old < 0 || g_saver || g_page != 0 || !linkAlive()) { g_p5Shown = target; return; }   // 看不到：直接跳過去
+  if (old < 0 || g_saver || g_page != 0 || !linkAlive()) { g_p5Shown = to = target; return; }   // 看不到：直接跳過去（目標也記下，之後變回原值才會重新計時）
   if (old == target) return;                                // 已經停在目標上
   // （以前差不到 0.05 就直接設成目標、卻沒重畫，數字停在捲了 95% 的地方，要等下次整張重畫才合上去）
   // 固定 GAUGE_ANIM_MS 跑完，差多少都一樣慢。曲線兩頭稍慢、中間均速（ease-in-out sine）：
   // 原本用 ease-out cubic，最後 30% 的時間只走 3%，數字捲到快到的地方看起來卡住。
-  // 途中目標變了才從現在的位置重新開始；只有小數變（44.6 → 44.7，顯示的整數一樣）就不重新計時
-  static float from = -1, to = -1;
-  static uint32_t t0 = 0;
   if (target != to) {
     if (to < 0 || (int)floorf(target + 0.5f) != (int)floorf(to + 0.5f)) { from = old; t0 = now; }
     else if (now - t0 >= GAUGE_ANIM_MS) from = old;             // 已經停了：小數直接補上

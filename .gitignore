@@ -14,3 +14,7 @@ windows/AIMonitor.exe
 # 只用 Claude Code 開發：Codex App 匯入 Claude 設定時會自動產生這兩個（CLAUDE.md、.claude/skills 的複本），不要
 AGENTS.md
 .agents/
+
+# Claude Code 的本機設定：按「Yes, and don't ask again」會把整行指令存進來，指令裡有 token 時會變成明文，不能推上公開 repo
+.claude/settings.local.json
+.claude/worktrees/

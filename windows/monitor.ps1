@@ -172,8 +172,9 @@ function Update-Item([string]$key, [string]$ai, [bool]$focused, $names, [long]$n
       # 畫面已經換成別的對話：是你切走了（那個對話還在跑），不算完成
       if (-not ($s.genView -and $view -and $view -ne $s.genView)) {
         $s.finishedAt = $now
-        # 只有 ChatGPT 用「再試一次」判斷出錯：Claude 對話模式每則回答下面本來就有「重試」，回答完才出現，會被誤判成出錯
-        if ($ai -eq 'chatgpt' -and $retries -gt $s.retries) { $s.failed = $true; $s.msg = 'FAILED' }
+        # 「再試一次 / Try again」變多 = 出錯（ChatGPT、Gemini）。Claude 不用：對話模式每則回答下面本來就有「重試」，回答完才出現，會被誤判成出錯
+        # （1.13.39 曾改成只給 ChatGPT 用，Gemini 桌面版出錯時的「Try again」就不亮紅燈了）
+        if ($ai -ne 'claude' -and $retries -gt $s.retries) { $s.failed = $true; $s.msg = 'FAILED' }
       }
     }
   }

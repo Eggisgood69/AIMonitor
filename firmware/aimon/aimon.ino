@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.45"
+#define FW_VERSION "1.10.46"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -198,7 +198,7 @@ static bool g_frameReady = false;       // 外環、轉向都做好了，只等 
 // 螢幕保護時不亮（Clawd 亂跑用的是另一張底圖，整張送出會留下殘影）
 #define VG_BINS 48                        // 圓心到光的邊緣分幾格
 #define VG_STEPS 128                      // 光的強度分幾階（0 = 沒有光）；32 階時慢慢淡掉看得到一階一階跳（使用者說太卡）
-static const float VG_MAX = 0.65f;        // 最大聲時圓心的亮度：品牌色的 65%（22%、45% 時使用者都覺得太暗）
+static const float VG_MAX = 0.85f;        // 最大聲時圓心的亮度：品牌色的 85%（22%、45%、65% 時使用者都覺得太暗）
 static uint8_t g_vgQ = 0;                 // 畫面上現在的光強度（0-VG_STEPS）
 static uint8_t g_vgAdd[VG_BINS + 1][3];   // 每格距離要加的 R / G / B（0-255）；最後一格 = 0
 static uint16_t g_vgBlk[VG_BINS + 1][16]; // 黑底的像素加上光後的顏色（位元組對調的 RGB565），依 Bayer 位置；背景大多是黑的，直接查表
@@ -269,24 +269,29 @@ static inline uint16_t vgAddPx(uint16_t p, int x, int y) {
   return (uint16_t)((o >> 8) | (o << 8));
 }
 
-// 音量平滑：變亮快（時間常數 VG_RISE_S）；聲音變小時先停留 VG_HOLD_MS 不變暗（字與字之間的停頓不會一直掉），
-// 之後淡掉（時間常數 VG_FALL_S，約 1.5 秒完全消失）。原本 350 ms 就暗掉，使用者覺得消失太快；
-// 改成停 0.4 秒、1.2 秒淡掉（約 3 秒）又覺得反應慢
-static const float VG_RISE_S = 0.03f;
-static const uint32_t VG_HOLD_MS = 200;
-static const float VG_FALL_S = 0.6f;
+// 音量平滑，兩條包絡取大的：
+//  - 快的（變亮 VG_RISE_S、變暗 VG_FAST_FALL_S）跟著每個字的音量起伏，看起來才「跟嘴」
+//  - 慢的記住剛才講話的音量，停 VG_HOLD_MS 後以 VG_FALL_S 淡掉，只用它的 VG_TAIL 倍當底：講完不會一下子全暗
+// 調過的：原本只有一條、350 ms 就暗 → 使用者覺得消失太快；停 0.4 秒 + 1.2 秒淡掉 → 反應慢；
+// 停 0.2 秒 + 0.6 秒 → 字與字之間不會變暗，「沒有很跟嘴」；改成兩條、底 45%、停 0.2 秒 + 0.6 秒 → 講完消失太快；
+// 快的那條 20 ms 亮 / 80 ms 暗 → 講話時光一直閃；停 0.4 秒 + 1 秒 → 消失還是太快
+static const float VG_RISE_S = 0.05f;
+static const float VG_FAST_FALL_S = 0.25f;
+static const uint32_t VG_HOLD_MS = 600;
+static const float VG_FALL_S = 1.6f;
+static const float VG_TAIL = 0.6f;
 static uint32_t g_vgHoldMs = 0;
+static float g_vgFast = 0, g_vgSlow = 0;
 static void vgSmooth(uint32_t now) {
   const float t = micLevel();
   const float dt = min<uint32_t>(100, now - g_vgMs) / 1000.0f;
   g_vgMs = now;
-  if (t >= g_vgLevel) {
-    g_vgLevel += (t - g_vgLevel) * min(1.0f, dt / VG_RISE_S);
-    g_vgHoldMs = now;
-  } else if (now - g_vgHoldMs >= VG_HOLD_MS) {
-    g_vgLevel += (t - g_vgLevel) * min(1.0f, dt / VG_FALL_S);
-  }
-  if (t == 0 && g_vgLevel < 0.02f) g_vgLevel = 0;
+  g_vgFast += (t - g_vgFast) * min(1.0f, dt / (t >= g_vgFast ? VG_RISE_S : VG_FAST_FALL_S));
+  if (g_vgFast >= g_vgSlow) { g_vgSlow = g_vgFast; g_vgHoldMs = now; }
+  else if (now - g_vgHoldMs >= VG_HOLD_MS) g_vgSlow -= g_vgSlow * min(1.0f, dt / VG_FALL_S);
+  if (t == 0 && g_vgFast < 0.01f) g_vgFast = 0;
+  if (g_vgSlow < 0.02f) g_vgSlow = 0;
+  g_vgLevel = max(g_vgFast, g_vgSlow * VG_TAIL);
 }
 
 static int vgTarget() { return g_saver || !g_vgBin ? 0 : (int)(g_vgLevel * VG_STEPS + 0.5f); }
@@ -449,6 +454,9 @@ struct LineReader {
 
 static void sendLine(Stream* s, const char* line) {
   if (!s) return;
+#if BOARD_AMOLED
+  if (g_micOn && s == micStream()) { micWriteLine(line); return; }
+#endif
   s->println(line);
 }
 
@@ -506,7 +514,8 @@ static uint32_t g_longLines = 0;    // 開機以來超過長度上限、整行�
 // 不然面板掃到一半時寫入，會半圈新、半圈舊（外圈出現一段錯開的缺口）
 static volatile uint32_t g_teUs = 0;
 static volatile uint32_t g_teN = 0;       // 上次回報之後的脈衝數（回報給電腦端，確認 TE 有訊號）
-static void IRAM_ATTR onTE() { g_teUs = micros(); g_teN++; }
+static uint32_t g_tePerUs = 0;
+static void IRAM_ATTR onTE() { const uint32_t t = micros(); g_tePerUs = t - g_teUs; g_teUs = t; g_teN++; }
 #endif
 
 static uint32_t g_maxPushMs = 0;    // 上次回報之後，最長的一次整張送出（AMOLED，只算 SPI 寫入）
@@ -516,7 +525,7 @@ static uint32_t g_maxGenGap = 0;    // 「Generating」的光兩次更新之間�
 static uint32_t g_fullN = 0;        // 上次回報之後整張重畫了幾次
 
 static void sendHello(Stream* src) {
-  char b[512];
+  char b[640];
   // id：晶片 MAC，電腦端用它分辨每塊螢幕（各自的方向、亮度；換 USB 孔也認得）
   const uint64_t mac = ESP.getEfuseMac();
   snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"id\":\"%04x%08lx\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu,\"gen\":%lu,\"full\":%lu}",
@@ -527,10 +536,11 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
-           g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs);
+           g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs,
+           (unsigned long)g_maskFixN);
   g_vgN = g_vgGap = g_vgMaxMs = 0;
   g_uacPkts = 0;
   g_uacMiss = 0;
@@ -749,59 +759,89 @@ static void pushRect(const uint16_t* src, int stride, int x, int y, int w, int h
 
 static void pushFbRect(int x, int y, int w, int h) { pushRect(g_fb + y * W + x, W, x, y, w, h); }
 
-// vgPushGlow 的一段：跟 pushRect 一樣加光、轉向、送出，但距離平方逐點遞增、轉向用指標步距（不在每個像素判斷），黑底查表
-static void vgPushBand(int x, int y, int w, int h) {
-  uint16_t* d = g_rotBuf;
-  const int act = g_vgR2Act;
-  for (int r = 0; r < h; r++) {
-    const int yy = y + r, dy = yy - CY, brow = (yy & 3) << 2;
-    const uint16_t* sr = g_fb + yy * W + x;
+// 說話光暈只變了亮度：只重送中間光照得到的圓（舊的範圍 ∪ 新的範圍，小聲時光會縮小，舊的那圈要蓋回原樣）。
+// 以前一段算一段送（22-35 ms，沒對準 TE），送的途中面板掃過去，上面新、下面舊的亮度 → 講話時看得到撕裂（使用者回報）。
+// 現在分兩步：先把整塊加光、轉向後寫進 g_fbRot（面板座標，不送），再照掃描線的位置一口氣送出（時機見 vgPushGlow）。
+// 外環、其他地方不動，也不用整張準備
+static void vgComposeGlow(int r) {        // 看到的畫面上半徑 r 的圓 → g_fbRot（面板座標）
+  const int act = g_vgR2Act, r2 = r * r;
+  for (int yy = max(0, CY - r); yy < min(H, CY + r + 1); yy++) {
+    const int dy = yy - CY, rem = r2 - dy * dy;
+    if (rem < 0) continue;
+    const int hw = (int)sqrtf((float)rem) + 1, x0 = max(0, CX - hw), x1 = min(W, CX + hw + 1);
+    const uint16_t* sr = g_fb + yy * W;
     uint16_t* o;
     int step;
-    if (g_rot == 0) { o = d + r * w; step = 1; }
-    else if (g_rot == 2) { o = d + (h - 1 - r) * w + (w - 1); step = -1; }
-    else if (g_rot == 1) { o = d + (h - 1 - r); step = h; }              // 90°：(x, y) → (W-1-y, x)
-    else { o = d + (w - 1) * h + r; step = -h; }                       // 270°：(x, y) → (y, H-1-x)
-    int dx = x - CX, r2 = dx * dx + dy * dy;
-    for (int c = 0; c < w; c++, o += step, r2 += 2 * dx + 1, dx++) {
-      const uint16_t p = sr[c];
-      if (r2 >= act || !g_vgQ) *o = p;
-      else if (p) *o = vgAddPx(p, x + c, yy);
-      else *o = g_vgBlk[g_vgBin[r2 >> 6]][brow | ((x + c) & 3)];
+    if (g_rot == 0) { o = g_fbRot + yy * W + x0; step = 1; }
+    else if (g_rot == 2) { o = g_fbRot + (H - 1 - yy) * W + (W - 1 - x0); step = -1; }
+    else if (g_rot == 1) { o = g_fbRot + x0 * W + (W - 1 - yy); step = W; }   // 90°：(x, y) → (W-1-y, x)
+    else { o = g_fbRot + (H - 1 - x0) * W + yy; step = -W; }                  // 270°：(x, y) → (y, H-1-x)
+    const int brow = (yy & 3) << 2;
+    int dx = x0 - CX, d2 = dx * dx + dy * dy;
+    for (int x = x0; x < x1; x++, o += step, d2 += 2 * dx + 1, dx++) {
+      const uint16_t p = sr[x];
+      if (d2 >= act || !g_vgQ) *o = p;
+      else if (p) *o = vgAddPx(p, x, yy);
+      else *o = g_vgBlk[g_vgBin[d2 >> 6]][brow | (x & 3)];
     }
   }
-  int px = x, py = y, pw = w, ph = h;
-  if (g_rot == 2) { px = W - x - w; py = H - y - h; }
-  else if (g_rot == 1) { px = W - y - h; py = x; pw = h; ph = w; }
-  else if (g_rot == 3) { px = y; py = H - x - w; pw = h; ph = w; }
-  lcd.startWrite();
-  lcd.pushImage(px, py, pw, ph, (const lgfx::swap565_t*)d);
-  lcd.endWrite();
 }
 
-// 說話光暈只變了亮度：只重送中間光照得到的圓（舊的範圍 ∪ 新的範圍，小聲時光會縮小，舊的那圈要蓋回原樣），
-// 一段一段（每段不超過 g_rotBuf）用 pushRect 加光、轉向、送出。外環、其他地方不動，也不用整張準備：
-// 以前每次整張送，準備一張 50-107 ms，光暈每秒只更新 6-12 次，慢慢淡掉時看起來很卡
+
+// 面板座標一小塊（g_fbRot 裡的 x, y, w, h）搬到 g_rotBuf 送出
+static void vgPushPanelRect(int x, int y, int w, int h) {
+  for (int i = 0; i < h; i++) memcpy(g_rotBuf + i * w, g_fbRot + (y + i) * W + x, w * 2);
+  lcd.pushImage(x, y, w, h, (const lgfx::swap565_t*)g_rotBuf);
+}
+
 static void vgPushGlow() {
   const int prev = g_vgR2Act;
   vgSet();
-  const int r2 = max(prev, g_vgQ ? g_vgR2Act : 0);
-  if (!g_vgQ) g_vgR2Act = 0;
+  // 熄滅：範圍歸零，調色盤的快取也要作廢。以前只清範圍，之後聲音回到熄滅前同一階時 vgSet 以為算過、不重算，
+  // 範圍一直是 0，光就亮不起來（要等音量換到別階；字與字之間淡到 0 時看起來時有時無）
+  if (!g_vgQ) { g_vgR2Act = 0; g_vgPalQ = 0xFF; }
+  const int r2 = max(prev, g_vgR2Act);
   if (r2 <= 0) return;
   const int r = (int)sqrtf((float)r2) + 2;
-  const int y0 = max(0, (CY - r) & ~1), y1 = min(H, (CY + r + 2) & ~1);
-  // 每段 8 列，寬度看這段裡離圓心最近的那列。段太高的話上下兩端的方塊角會碰到外環（半徑 214.5，呼吸中的亮度跟 g_fb 裡的不同）
-  for (int y = y0; y < y1; y += 8) {
-    const int h = min(8, y1 - y);
-    const int near = (y <= CY && CY < y + h) ? 0 : min(abs(y - CY), abs(y + h - 1 - CY));
+  // 算的範圍比送的大一圈：送的是面板座標上一段段的方塊（角會超出圓一點），那些點也要是算過的
+  vgComposeGlow(r + 10);
+  const int a0 = max(0, (CY - r) & ~1), a1 = min(H, (CY + r + 2) & ~1), n = (a1 - a0 + 7) / 8;
+  // 什麼時候開始送（2026-11-10 量到：半徑 98 送 4.6 ms，大約跟面積成正比，最大的圓要 20 ms 左右，比面板掃過這一塊的 15 ms 還慢）。
+  // 以前一律從 TE 開始送（搶在掃描線前面）：圓大的時候送到一半被掃描線追過，上面新、下面舊 → 一條切線。
+  // 現在跟在掃描線後面送：等掃描線過了這塊的頂端才開始；送得比掃描快的話（圓小）再多等一下，免得追過掃描線。
+  // 這樣只要在下一次掃描追上來之前送完就好（一格 16.7 ms + 這塊的掃描時間，夠用）
+  static uint32_t rate = 160;                       // 送一個像素幾 µs（× 1024），每次量了更新
+  const uint32_t per = (g_tePerUs > 12000 && g_tePerUs < 25000) ? g_tePerUs : 16700;
+  const uint32_t rowUs = per / (H + 14);            // 掃一列的時間
+  const uint32_t scanUs = (uint32_t)(a1 - a0) * rowUs;
+  const uint32_t estUs = (uint32_t)(3.14159f * r * r) * rate >> 10;
+  uint32_t start = (uint32_t)a0 * rowUs + (estUs < scanUs ? scanUs - estUs : 0) + 1500;
+  if (start > per - 2000) start = per - 2000;
+  const uint32_t t0 = millis();
+  if (g_teUs) {
+    while (millis() - t0 < 40) {
+      const uint32_t te = micros() - g_teUs;
+      if (te >= 100000 || (te >= start && te < start + 1500)) break;
+    }
+  }
+  const uint32_t tp = micros();
+  uint32_t px = 0;
+  lcd.startWrite();
+  // 每段 8 列，寬度看這段裡離圓心最近的那列。段太高的話兩端的方塊角會碰到外環（半徑 214.5，呼吸中的亮度跟 g_fbRot 裡的不同）
+  for (int k = 0; k < n; k++) {
+    const int a = a0 + k * 8, h = min(8, a1 - a);
+    const int near = (a <= CY && CY < a + h) ? 0 : min(abs(a - CY), abs(a + h - 1 - CY));
     const int rem = r2 - near * near;
     if (rem <= 0) continue;
     const int hw = (int)sqrtf((float)rem) + 2;
-    const int x0 = max(0, (CX - hw) & ~1), x1 = min(W, (CX + hw + 2) & ~1);
-    const int w = max(34, x1 - x0);       // 太窄（64 位元組以下）會畫壞
-    const int xs = min(x0, W - w);
-    vgPushBand(xs, y, w, h);
+    const int b0 = max(0, (CX - hw) & ~1), b1 = min(W, (CX + hw + 2) & ~1);
+    const int len = max(34, b1 - b0);     // 太窄（64 位元組以下）會畫壞
+    const int bs = min(b0, W - len);
+    px += len * h;
+    vgPushPanelRect(bs, a, len, h);
   }
+  lcd.endWrite();
+  if (px > 2000) rate = (rate * 3 + (uint32_t)((uint64_t)(micros() - tp) * 1024 / px)) / 4;
 }
 
 // 螢幕保護的 Clawd：在整個圓裡亂跑（走到隨機的點、停一下再走，擋到時鐘也沒關係）。
@@ -1124,6 +1164,9 @@ void setup() {
 #endif
   // 一行畫面資料約 400-600 位元組，預設接收緩衝只有 256：畫一條畫面的期間沒人讀，滿了後面就被丟掉 → 那行解析失敗
   Serial.setRxBufferSize(2048);
+#if BOARD_AMOLED
+  Serial.setTxBufferSize(1536);   // hello 一行 400 多位元組，快超過預設的緩衝（超過的後半截會被丟掉）
+#endif
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0
   Serial0.setRxBufferSize(1024);

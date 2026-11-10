@@ -78,12 +78,12 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.41、韌體 1.10.45（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.42、韌體 1.10.46（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
 電腦 → 螢幕：`{ai, st, msg, p5, pw, red, r5, rw, age, now, tz, saver, bri, rot, arot, led, mic, mg, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`note` 只送目前主畫面那家 AI 的重置提醒（別家的不顯示：以前字前面加名字，太長被截成「CHATGPT 5H RESETS ...」，試過放小 LOGO 使用者覺得太複雜）；`red` = 額度幾 % 以上變紅，0 = 不變紅，沒送 = 90；`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`；`mic` 只送給 s3a175：1 = 切成 USB 麥克風、0 = 重開回 hwcdc，也可以單獨一行 `{"mic":0}`；`mg` = 麥克風增益 0-14，ES7210 的暫存器值，10 = 30 dB）
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"mfx"` 補回幾次 USB 中斷遮罩（見下面麥克風那段）、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -184,15 +184,36 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   - 那個 dcd 也**沒有 `dcd_edpt_close`**（`usbd_edpt_close` 什麼都不做），每次 `usbd_edpt_open` 又多配置一塊 TX FIFO：
     每次開始錄音（SET_INTERFACE alt 1）就重開端點的話，第一次正常、第二次起一半封包錯過、電腦收不到任何資料，序列埠也會卡住（使用者用 Win+H 時遇到）。
     → ISO 端點只開一次（bus reset 前不再開），停止錄音（alt 0）時用 `uacAbort` 停掉掛著的那包；看門狗、切 alt、排封包共用 `g_uacLock`
+  - **TinyUSB 0.15 dcd_esp32sx 的 TX FIFO 配置錯誤**（2026-11-09 找到，麥克風模式整塊不穩的根本原因）：dcd_edpt_open 給 IN 端點的 TXFNUM 是「第幾個開的」，
+    大小 / 起點卻寫進 `dieptxf[端點號碼 - 1]` → 序列埠資料端點（EP4，FIFO 1）、麥克風（EP3，FIFO 2）的 FIFO 停在預設值（起點 512 / 768 字，這顆晶片 FIFO 只有 200 字，GHWCFG3）疊在一起，
+    兩邊同時傳輸時序列埠送出壞資料 → Windows 序列埠驅動要求重置裝置（USB 追蹤：bulk URB 0xC0000001 → USBHUB3「Client Initiated Recovery Action」）→ 聲音斷、重新列舉失敗、裝置消失要拔插。
+    通知端點（EP5）還拿到不存在的 FIFO 5。→ `usbFixFifos`：列舉完成、開麥克風端點後照實際 TXFNUM 重排（RX 0-51、EP0 52-67、序列埠 16、麥克風 100、通知 16，共 200）。
+    修正後錄音 3 分鐘都不再重置
+  - **同一個 dcd 的「TX FIFO 空了」中斷遮罩（DIEPEMPMSK，`USB0.dtknqr4_fifoemptymsk`）沒有鎖**（2026-11-10）：`dcd_edpt_xfer` 在呼叫它的工作裡 `|=`（序列埠是 core 1 的 loop、usbd 工作沒綁 core），
+    中斷（core 0，麥克風每毫秒一次）`&= ~`。撞在一起時新設的位元被蓋掉 → 那筆資料永遠不會放進 FIFO、端點一直「傳送中」：序列埠的話螢幕 → 電腦整個方向停掉
+    （螢幕還收得到、麥克風正常、關開 COM 埠沒用；光暈 + AIMonitor + 錄音時約 1-2 分鐘一次）。→ `usbMaskRepair`（micUsbWatch 每 1 ms）：端點啟用中、還有資料沒進 FIFO、遮罩卻是關的，連續兩次看到就補回去。
+    實測 5 分鐘補了序列埠 1 次、麥克風 1 次，沒有再停（hello 的 `mfx` = 開機以來補了幾次）
+  - Arduino 的 `(bool)USBCDC` 要 DTR **和 RTS** 都開才是 true，AIMonitor 開埠時 RTS 是關的 → 判斷「電腦開著 COM 埠」要用 `tud_cdc_n_connected(0)`（只看 DTR）。2026-11-09 加過三個靠它把關的保護（送不出去 / TX 卡住 / 收不到資料就重開），其實從沒生效，原因找到後拿掉了
+  - `periph_module_enable / disable` 有計數（uint8）：`micBootCheck` 以前沒 enable 過就 disable，計數 0 → 255，之後 TinyUSB 的 enable 看到不是 0 就**不開時脈** →
+    USB.begin() 一碰 USB 暫存器整顆卡死、中斷看門狗重開、麥克風被擋住（`micx`）。所以「mic:0 或自動重開之後再開麥克風」必當（關了再開、看門狗重開後 AIMonitor 再開都是）。→ 先 enable 再 reset、disable。
+    這種當機沒有 core dump（硬體看門狗重置）；找法：兩個 core 各一個工作每 20 ms 把狀態寫進 RTC_NOINIT，重開後開機時搬進 NVS、hello 印出來看停在哪（查完已拿掉）。
+    時脈沒開時讀 USB0 暫存器也會卡死（診斷程式自己踩過）→ 先看 `SYSTEM_PERIP_CLK_EN0_REG` bit 23
+  - 軟體重開（esp_restart、當機）只重置 CPU，I2S 與 DMA 照舊在跑、繼續寫上一輪的緩衝 → 開機時 `periph_module_reset` I2S0 / GDMA，重開前先停 I2S 接收（`micRestart`）。預防性質，沒有證實出過事
+  - 留下的保護（都是重開回 hwcdc，電腦端會照設定再開麥克風，`micRestart`）：15 秒沒被電腦認到、列舉完成後又收到 bus reset（這個 dcd 重新列舉會失敗）、錄音中 3 秒沒有任何一包送到。
+    USB 層的查法：`logman` 開 Microsoft-Windows-USB-USBHUB3 / UCX / USBXHCI 追蹤（要系統管理員），`Get-WinEvent -Path x.etl -Oldest` 看出事那幾毫秒
   - 麥克風模式下序列埠偶爾掉一行（約每分鐘 1 行，紀錄 `screen dropped data`，原因沒查清楚），下一張畫面就補上
   - Arduino 的函式原型產生器會弄壞 `extern "C" usbd_class_driver_t const* f()`，要寫成 `extern "C" { const usbd_class_driver_t* f() … }`
   - 一鍵更新：目標在麥克風模式時先強制送 `mic:0`（`fwMicOff`），等同一個 id 從 hwcdc 的埠回應再燒（`micOffForUpdate`）
   - 切過去後 Windows 要約 10 秒才把麥克風放進 waveIn 清單；安靜時錄到 -90 dB（板上量到 -63），應該是 Windows 的麥克風增強
   - 說話光暈（aimon.ino `vg*`，使用者要「整個背景、淡淡的、看得到就好」）：有程式在錄音（`micListening` = alt 1）時背景隨音量亮起，
-    -56 dBFS 以下 = 0、-36 dBFS = 最亮（品牌色 65%，`VG_MAX`；一開始 -58 ~ -30、22%，之後 45% 使用者都覺得太暗），越大聲半徑越大（45% → 100%，只到額度環內側 S(104)）；強度分 128 階（`VG_STEPS`，32 階時慢慢淡掉看得到一階一階跳，使用者說太卡）；變亮 30 ms，變小聲時先停留 0.2 秒、再以 0.6 秒的時間常數淡掉，約 1.5 秒消失（`vgSmooth`；原本 350 ms 就暗，使用者覺得消失太快；停 0.4 秒 + 1.2 秒又覺得反應慢）。
+    -56 dBFS 以下 = 0、-36 dBFS = 最亮（品牌色 85%，`VG_MAX`；一開始 -58 ~ -30、22%，之後 45%、65% 使用者都覺得太暗），越大聲半徑越大（45% → 100%，只到額度環內側 S(104)）；強度分 128 階（`VG_STEPS`，32 階時慢慢淡掉看得到一階一階跳，使用者說太卡）；兩條包絡取大的（`vgSmooth`）：快的跟著每個字起伏（變亮 50 ms、變暗 250 ms；20 ms / 80 ms 時講話中光一直閃），慢的記住剛才的音量、停 0.6 秒後以 1.6 秒的時間常數淡掉，只用 60% 當底（講完約 4 秒消失；底 45%、停 0.2 秒 + 0.6 秒，以及停 0.4 秒 + 1 秒時使用者都覺得消失太快）。調過的：只有一條、350 ms 就暗 → 消失太快；停 0.4 秒 + 1.2 秒 → 反應慢；停 0.2 秒 + 0.6 秒 → 字與字之間不變暗，「沒有很跟嘴」。
     **不重畫畫面**（整張重畫 150 ms 以上，也會搶 CPU 讓麥克風掉封包）：g_fb 保持原樣，送出前才用加法混色加上去——整張送出時跟轉向一起搬到 g_fbRot（`composeFrame`，0° 時也用 g_fbRot，`g_fbOut` 記住送的是哪張），
-    小範圍更新在 `pushRect` 裡加同一張的光（不然 Clawd、Generating 的光那一塊會變黑底）。RGB565 太暗會一圈一圈 → 4×4 Bayer 抖動。
-    音量變了最多每 33 ms 只重送中間光照得到的圓（`vgPushGlow`：舊範圍 ∪ 新範圍、每段 8 列，段太高方塊角會碰到外環；`vgPushBand` 距離平方逐點遞增、黑底查表 `g_vgBlk`），一次 22-35 ms、每秒約 25-30 次。
+    熄滅時要連調色盤快取 `g_vgPalQ` 一起作廢，否則聲音回到熄滅前同一階時範圍一直是 0、光亮不起來（GPT 審查抓到，1.13.41 也有）。小範圍更新在 `pushRect` 裡加同一張的光（不然 Clawd、Generating 的光那一塊會變黑底）。RGB565 太暗會一圈一圈 → 4×4 Bayer 抖動。
+    音量變了最多每 33 ms 只重送中間光照得到的圓（`vgPushGlow`：舊範圍 ∪ 新範圍；先用 `vgComposeGlow` 加光、轉向寫進 g_fbRot（距離平方逐點遞增、黑底查表 `g_vgBlk`），每段 8 列，段太高方塊角會碰到外環）。
+    **送出時機：跟在掃描線後面**（2026-11-10 使用者確認沒有切線了）：半徑 98 送 4.6 ms，大約跟面積成正比，最大的圓約 20 ms，比面板掃過那塊的 15 ms 慢。
+    從 TE 開始送（搶在掃描線前面）圓大時會被追過 → 一條切線，四種送出方向都一樣。現在等掃描線過了這塊頂端（TE 後 `a0 × 一列時間` + 1.5 ms）才由上往下送；
+    送得比掃描快時（圓小）再多等「掃描時間 - 預估送出時間」，免得追過掃描線；送出速度每次量了更新（`rate`）。只要在下一次掃描追上來前送完就不撕裂。
+    整張換頁「20 ms 從 TE 送還是撕裂」應該是同一個道理（沒改，現在用轉場）
     以前每次整張送（外環 + 整張加光 + 送出），每秒只更新 6-12 次，改成慢慢淡掉後使用者說「很卡」（量法：hello 的 `vgn` 次數、`vgi` 最長間隔、`vgt` 最長一次 ms）。整張重畫中、轉場中不送；螢幕保護時照舊整張送（關掉光）。
     螢幕保護時不亮：Clawd 亂跑用另一張底圖，整張送 g_fb 會留下殘影
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
@@ -254,7 +275,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
   專案那一列的 ListItem 名稱是底下所有對話接起來，要比對這一列自己的 Button 才不會誤認。同名對話會併成一個（沒處理）；英文介面、雲端 / 已排程任務都還沒實測
   - 出錯（紅燈）：聊天模式生成失敗時停止鈕消失、出現「再試一次」（有時還有「重試」、圖片「任務失敗」）。舊訊息上的會一直留著 →
     生成結束時「再試一次」**比開始時多**才算出錯（`$RETRY_RE`）；捲到畫面外的也要算（`Get-ButtonNames` 加 `~` 前綴），只算畫面上的話縮小 / 捲動時數量會變，曾經誤亮紅燈。
-    **只用在 ChatGPT**（Update-Item 看 `$ai`）：Claude 對話模式每則回答下面本來就有「重試」圖示、回答完才出現，以前套到 Claude App 時正常回答完也閃一下紅燈（1.13.39 修）。
+    **Claude 不用**（Update-Item 看 `$ai`）：Claude 對話模式每則回答下面本來就有「重試」圖示、回答完才出現，以前套到 Claude App 時正常回答完也閃一下紅燈（1.13.39 修）。1.13.39 一度改成只給 ChatGPT 用，Gemini 桌面版出錯時的「Try again」就不亮紅燈了（1.13.42 改回 Gemini 也算）。
     ChatGPT 圖片回覆下面那排動作圖示的 ↻ 也叫「再試一次」（文字回覆的叫「重新產生回覆」），每生成一張圖多一個 → class 含 `button-icon` 的不算（`Get-ButtonNames`，1.13.40 修）
     Codex 模式斷網只顯示「正在重新連線 n /5」「Reconnecting... waiting for network」，停止鈕還在，網路回來自己接著做完，不是錯誤
   - 縮小到工作列照樣讀得到；按 X 是**隱藏**視窗（縮到系統匣）：MainWindowHandle 變 0，但用原本的 handle 還讀得到（monitor.ps1 `$appWins` 記住看過的視窗，Claude App 也適用）。

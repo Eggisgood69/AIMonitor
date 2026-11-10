@@ -78,11 +78,11 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.42、韌體 1.10.46（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.13.43、韌體 1.10.47（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
-電腦 → 螢幕：`{ai, st, msg, p5, pw, red, r5, rw, age, now, tz, saver, bri, rot, arot, led, mic, mg, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`note` 只送目前主畫面那家 AI 的重置提醒（別家的不顯示：以前字前面加名字，太長被截成「CHATGPT 5H RESETS ...」，試過放小 LOGO 使用者覺得太複雜）；`red` = 額度幾 % 以上變紅，0 = 不變紅，沒送 = 90；`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`；`mic` 只送給 s3a175：1 = 切成 USB 麥克風、0 = 重開回 hwcdc，也可以單獨一行 `{"mic":0}`；`mg` = 麥克風增益 0-14，ES7210 的暫存器值，10 = 30 dB）
+電腦 → 螢幕：`{ai, st, msg, p5, pw, red, r5, rw, age, now, tz, saver, ss, bri, rot, arot, led, mic, mg, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`note` 只送目前主畫面那家 AI 的重置提醒（別家的不顯示：以前字前面加名字，太長被截成「CHATGPT 5H RESETS ...」，試過放小 LOGO 使用者覺得太複雜）；`saver` = 螢幕保護分鐘數，`ss` = 秒數（設定視窗的「30 秒」：送 `saver:1, ss:30`，韌體 1.10.47 起有 ss 就用它，舊韌體當 1 分鐘）；`red` = 額度幾 % 以上變紅，0 = 不變紅，沒送 = 90；`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`；`mic` 只送給 s3a175：1 = 切成 USB 麥克風、0 = 重開回 hwcdc，也可以單獨一行 `{"mic":0}`；`mg` = 麥克風增益 0-14，ES7210 的暫存器值，10 = 30 dB）
 螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"mfx"` 補回幾次 USB 中斷遮罩（見下面麥克風那段）、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
@@ -215,7 +215,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
     送得比掃描快時（圓小）再多等「掃描時間 - 預估送出時間」，免得追過掃描線；送出速度每次量了更新（`rate`）。只要在下一次掃描追上來前送完就不撕裂。
     整張換頁「20 ms 從 TE 送還是撕裂」應該是同一個道理（沒改，現在用轉場）
     以前每次整張送（外環 + 整張加光 + 送出），每秒只更新 6-12 次，改成慢慢淡掉後使用者說「很卡」（量法：hello 的 `vgn` 次數、`vgi` 最長間隔、`vgt` 最長一次 ms）。整張重畫中、轉場中不送；螢幕保護時照舊整張送（關掉光）。
-    螢幕保護時不亮：Clawd 亂跑用另一張底圖，整張送 g_fb 會留下殘影
+    螢幕保護時不亮：Clawd 亂跑用另一張底圖，整張送 g_fb 會留下殘影。所以講話時直接離開螢幕保護（1.10.47，使用者選的）：慢的那條包絡超過 `VG_WAKE`（0.25 ≈ -51 dBFS）就當作有動靜（`g_lastActiveMs`），
+    走原本的淡出淡入回主畫面、光暈照常；安靜後照設定的分鐘數再進螢幕保護
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）

@@ -52,28 +52,29 @@ type Quota struct {
 }
 
 type Frame struct {
-	AI    string          `json:"ai"`
-	St    string          `json:"st"`
-	Msg   string          `json:"msg"`
-	Age   int64           `json:"age"`
-	Now   int64           `json:"now"`
-	O     [][]string      `json:"o"`
-	P5    *float64        `json:"p5,omitempty"`
-	PW    *float64        `json:"pw,omitempty"`
-	Red   int             `json:"red"` // 額度幾 % 以上螢幕顯示紅色（跟著額度重置提醒的門檻），0 = 不變紅
-	R5    int64           `json:"r5,omitempty"`
-	RW    int64           `json:"rw,omitempty"`
-	TZ    int             `json:"tz"`             // 時區（秒），螢幕保護的時鐘用
-	Saver int             `json:"saver"`          // 螢幕保護分鐘數（0 = 關閉）
-	Bri   int             `json:"bri,omitempty"`  // 背光亮度 5-255
-	Rot   int             `json:"rot"`            // 螢幕方向 0-3（×90°）
-	ARot  int             `json:"arot"`           // 1 = 有陀螺儀的螢幕（AMOLED）自動轉向，不理 rot
-	Led   int             `json:"led"`            // 外接 WS2812 亮度 0-100（0 = 關閉）
-	Mic   *int            `json:"mic,omitempty"`  // AMOLED 的 USB 麥克風：1 = 開、0 = 關（螢幕重開回一般 USB）；其他螢幕不送
-	MG    *int            `json:"mg,omitempty"`   // 麥克風增益 0-14（ES7210，10 = 30 dB），只送給 AMOLED
-	D     [][]interface{} `json:"d,omitempty"`    // 今日統計 [[ai, 次數, 秒數], ...]
-	Note  string          `json:"note,omitempty"` // 額度重置提醒（螢幕上的短字）
-	NK    string          `json:"nk,omitempty"`   // soon / reset
+	AI       string          `json:"ai"`
+	St       string          `json:"st"`
+	Msg      string          `json:"msg"`
+	Age      int64           `json:"age"`
+	Now      int64           `json:"now"`
+	O        [][]string      `json:"o"`
+	P5       *float64        `json:"p5,omitempty"`
+	PW       *float64        `json:"pw,omitempty"`
+	Red      int             `json:"red"` // 額度幾 % 以上螢幕顯示紅色（跟著額度重置提醒的門檻），0 = 不變紅
+	R5       int64           `json:"r5,omitempty"`
+	RW       int64           `json:"rw,omitempty"`
+	TZ       int             `json:"tz"`             // 時區（秒），螢幕保護的時鐘用
+	Saver    int             `json:"saver"`          // 螢幕保護分鐘數（0 = 關閉）
+	SaverSec int             `json:"ss,omitempty"`   // 螢幕保護秒數（> 0 時韌體 1.10.47 起用這個、不看分鐘數；現在只有 30）
+	Bri      int             `json:"bri,omitempty"`  // 背光亮度 5-255
+	Rot      int             `json:"rot"`            // 螢幕方向 0-3（×90°）
+	ARot     int             `json:"arot"`           // 1 = 有陀螺儀的螢幕（AMOLED）自動轉向，不理 rot
+	Led      int             `json:"led"`            // 外接 WS2812 亮度 0-100（0 = 關閉）
+	Mic      *int            `json:"mic,omitempty"`  // AMOLED 的 USB 麥克風：1 = 開、0 = 關（螢幕重開回一般 USB）；其他螢幕不送
+	MG       *int            `json:"mg,omitempty"`   // 麥克風增益 0-14（ES7210，10 = 30 dB），只送給 AMOLED
+	D        [][]interface{} `json:"d,omitempty"`    // 今日統計 [[ai, 次數, 秒數], ...]
+	Note     string          `json:"note,omitempty"` // 額度重置提醒（螢幕上的短字）
+	NK       string          `json:"nk,omitempty"`   // soon / reset
 }
 
 type Finish struct {

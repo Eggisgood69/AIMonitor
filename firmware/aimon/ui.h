@@ -111,6 +111,7 @@ static int32_t g_tz = 8 * 3600;        // 時區（秒），由電腦端提供�
 static uint32_t g_lastActiveMs = 0;    // 最後一次「有事」的時間（螢幕保護用）
 static bool g_saver = false;
 static int g_saverMin = SAVER_MIN;     // 0 = 關閉；可由電腦端設定
+static int g_saverSec = 0;             // > 0：用秒數（電腦端的 30 秒選項），不看分鐘數
 static int g_page = 0;                 // 0 狀態、1 額度詳細、2 今日統計、3 時鐘（短按 BOOT 切換）
 static const int N_PAGES = 4;
 
@@ -806,7 +807,7 @@ static void clawdDraw(uint32_t ms) {
 #endif
 static bool saverWanted() {
   if (g_saverMin <= 0) return false;
-  if (millis() - g_lastActiveMs < (uint32_t)g_saverMin * 60000UL) return false;
+  if (millis() - g_lastActiveMs < (g_saverSec > 0 ? (uint32_t)g_saverSec * 1000UL : (uint32_t)g_saverMin * 60000UL)) return false;
   if (!linkAlive()) return true;
   return g_frame.st == S_IDLE;            // 生成中 / 需審核 / 錯誤 / 完成 都不進入
 }

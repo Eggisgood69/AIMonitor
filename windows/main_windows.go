@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.13.42"
+const version = "1.13.43"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -57,8 +57,9 @@ const (
 
 // ---------------- 設定（%LOCALAPPDATA%\AIMonitor\settings.json）----------------
 type Settings struct {
-	SaverMin   int  `json:"saverMin"`   // 螢幕保護：待命幾分鐘後進入，0 = 關閉
-	Brightness int  `json:"brightness"` // 背光亮度 5-255
+	SaverMin   int  `json:"saverMin"`           // 螢幕保護：待命幾分鐘後進入，0 = 關閉
+	SaverSec   int  `json:"saverSec,omitempty"` // 不到一分鐘的選項（30 秒）：> 0 時用這個，SaverMin 留 1 給舊韌體
+	Brightness int  `json:"brightness"`         // 背光亮度 5-255
 	RemindAt   *int `json:"remindAt"`
 	Rotation   int  `json:"rotation"`  // 螢幕方向 0-3（×90°）   // 額度重置提醒：用量達到幾 % 才提醒，0 = 關閉（預設 90）
 	Led        int  `json:"led"`       // 外接 WS2812 亮度 0-100，0 = 關閉
@@ -108,6 +109,13 @@ func saverMin() int {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 	return settings.SaverMin
+}
+
+// 螢幕保護的秒數選項（0 = 用 saverMin 的分鐘數）
+func saverSec() int {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	return settings.SaverSec
 }
 
 var (
@@ -857,6 +865,7 @@ func pushFrame(force bool) {
 	}
 	lastFrameMu.Unlock()
 	f.Saver = saverMin()
+	f.SaverSec = saverSec()
 	f.Red = redThreshold()
 	f.Bri = brightness()
 	settingsMu.Lock()
@@ -1114,9 +1123,16 @@ func onCmd(cmd string) string {
 			showToast("額度重置提醒測試", "通知功能正常。額度重置前 5 分鐘和重置時會像這樣提醒你。")
 		}
 		if strings.HasPrefix(cmd, "saver:") {
-			if n, err := strconv.Atoi(strings.TrimPrefix(cmd, "saver:")); err == nil && n >= 0 && n <= 240 {
+			v := strings.TrimPrefix(cmd, "saver:")
+			if v == "30s" { // 30 秒：新韌體看 ss，舊韌體只看得懂分鐘 → 當 1 分鐘
 				settingsMu.Lock()
-				settings.SaverMin = n
+				settings.SaverMin, settings.SaverSec = 1, 30
+				settingsMu.Unlock()
+				saveSettings()
+				sendFrameNow()
+			} else if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 240 {
+				settingsMu.Lock()
+				settings.SaverMin, settings.SaverSec = n, 0
 				settingsMu.Unlock()
 				saveSettings()
 				sendFrameNow()
@@ -1181,7 +1197,7 @@ func uiStatusJSON() string {
 	b, _ := json.Marshal(map[string]interface{}{
 		"version": version, "releaseYear": releaseYear, "author": author, "serial": ss, "screens": screenViews(scs), "login": ls, "quota": qj,
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
-		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
+		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "saverSec": saverSec(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(), "appUpdate": appUpdateStatus(), "extension": extensionStatus(),
 	})
 	return string(b)

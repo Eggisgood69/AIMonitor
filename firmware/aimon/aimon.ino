@@ -22,7 +22,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.46"
+#define FW_VERSION "1.10.47"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -282,6 +282,7 @@ static const float VG_FALL_S = 1.6f;
 static const float VG_TAIL = 0.6f;
 static uint32_t g_vgHoldMs = 0;
 static float g_vgFast = 0, g_vgSlow = 0;
+static const float VG_WAKE = 0.25f;       // 音量到這裡就叫醒螢幕保護（0 = -56 dBFS、1 = -36 dBFS，正常講話約 0.4）
 static void vgSmooth(uint32_t now) {
   const float t = micLevel();
   const float dt = min<uint32_t>(100, now - g_vgMs) / 1000.0f;
@@ -603,7 +604,7 @@ static void handleLine(Stream* src, const String& line) {
     if (f.noteKind != g_frame.noteKind || !g_frame.note.length()) { g_lastActiveMs = millis(); g_page = 0; }
   }
   if (doc["tz"].is<int>()) g_tz = doc["tz"].as<int>();
-  if (doc["saver"].is<int>()) g_saverMin = doc["saver"].as<int>();   // 螢幕保護分鐘數（0 = 關閉）
+  if (doc["saver"].is<int>()) { g_saverMin = doc["saver"].as<int>(); g_saverSec = doc["ss"] | 0; }   // 螢幕保護分鐘數（0 = 關閉）；ss = 秒數（有送就用它，30 秒的選項）
   if (doc["arot"].is<int>()) {                                          // 自動轉向（有陀螺儀的螢幕）
     bool a = doc["arot"].as<int>() != 0;
     if (a != g_autoRot) { g_autoRot = a; Preferences pf; pf.begin("aimon", false); pf.putBool("arot", a); pf.end(); }
@@ -1294,6 +1295,9 @@ void loop() {
   // 說話光暈：音量變了就整張送一次（不用重畫，只在送出前加光），最多每 33 ms 一次。
   // 整張重畫中、轉場中先不送（重畫到一半的那張不能送，送完那張時自然會帶上光）
   vgSmooth(now);
+  // 對著麥克風講話也算「有動靜」：螢幕保護中一講話就離開（跟碰螢幕一樣走淡出淡入），講話期間不會進螢幕保護；
+  // 安靜了照設定的分鐘數再回去。看慢的那條包絡（記住剛才的音量，約 -51 dBFS 以上），環境噪音、很短的雜音不會觸發
+  if (g_vgSlow > VG_WAKE) g_lastActiveMs = now;
   if (g_fb && g_fbRot && !g_framePending && strip < 0 && g_fadeDir == 0 && vgTarget() != g_vgQ && now - g_vgPushMs >= 33) {
     if (g_saver) { g_framePending = true; g_frameReady = false; }   // 螢幕保護（光要關掉）：整張送，Clawd 亂跑另有底圖
     else { const uint32_t t0 = millis(); vgPushGlow(); if (millis() - t0 > g_vgMaxMs) g_vgMaxMs = millis() - t0; }

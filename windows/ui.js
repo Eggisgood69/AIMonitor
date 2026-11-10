@@ -155,7 +155,7 @@
   <div class="card">
     <div class="row sw"><div>螢幕保護<div class="hint">待命後顯示時鐘並調暗</div></div>
       <select id="saver">
-        <option value="0">關閉</option><option value="1">1 分鐘</option><option value="3">3 分鐘</option>
+        <option value="0">關閉</option><option value="30s">30 秒</option><option value="1">1 分鐘</option><option value="3">3 分鐘</option>
         <option value="5">5 分鐘</option><option value="10">10 分鐘</option><option value="15">15 分鐘</option>
         <option value="30">30 分鐘</option><option value="60">1 小時</option>
       </select></div>
@@ -393,7 +393,7 @@
     renderAppUpdate(s.appUpdate || {}, s.version);
     const sv = $("saver");
     if (document.activeElement !== sv) {
-      const v = String(s.saverMin ?? 5);
+      const v = s.saverSec ? s.saverSec + "s" : String(s.saverMin ?? 5);
       if (![...sv.options].some((o) => o.value === v)) sv.add(new Option(v + " 分鐘", v));
       sv.value = v;
     }

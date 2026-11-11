@@ -100,7 +100,8 @@
            background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
   input[type=range] { width: 160px; accent-color: #0a84ff; }
   .srow { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
-  .srow .nm { width: 64px; flex: none; }
+  .srow .nm { width: 20px; height: 20px; flex: none; display: grid; place-items: center; }
+  .srow .nm svg { width: 20px; height: 20px; }
   .srow .bar { flex: 1; margin-top: 0; }
   .srow .val { width: 112px; flex: none; text-align: right; color: #c7c7cc; font-size: 13px; }
   .week { display: flex; align-items: flex-end; gap: 8px; height: 74px; padding: 6px 0 0; }
@@ -159,28 +160,27 @@
 
   <section data-pane="wifi">
   <div id="wifibox"></div>
-  <div class="hint" style="padding:0 4px 12px">設定好 WiFi 之後，螢幕接一般 USB 充電器就能顯示，不用一直插著電腦（電腦和螢幕要在同一個網路）。
-    插著 USB 時優先用 USB。只支援 2.4 GHz WiFi；只有 1.75 吋 AMOLED 有 WiFi。<b>經 WiFi 連線時麥克風不能用</b>，更新螢幕韌體也要插 USB。</div>
+  <div class="hint" style="padding:0 4px 12px">連上後螢幕接充電器也能顯示（跟電腦同一個網路）。只支援 2.4 GHz；麥克風、更新韌體要插 USB。</div>
   </section>
 
   <section data-pane="settings">
   <div class="card">
-    <div class="row sw"><div>螢幕保護<div class="hint">待命後顯示時鐘並調暗</div></div>
+    <div class="row sw"><div>螢幕保護<div class="hint">待命後顯示時鐘</div></div>
       <select id="saver">
         <option value="0">關閉</option><option value="30s">30 秒</option><option value="1">1 分鐘</option><option value="3">3 分鐘</option>
         <option value="5">5 分鐘</option><option value="10">10 分鐘</option><option value="15">15 分鐘</option>
         <option value="30">30 分鐘</option><option value="60">1 小時</option>
       </select></div>
-    <div class="row sw"><div>額度重置提醒<div class="hint">重置前 5 分鐘與重置時通知 · <a href="#" data-cmd="toast-test" style="color:#0a84ff;text-decoration:none">測試</a></div></div>
+    <div class="row sw"><div>額度重置提醒<div class="hint"><a href="#" data-cmd="toast-test" style="color:#0a84ff;text-decoration:none">測試</a></div></div>
       <select id="remind">
         <option value="0">關閉</option><option value="50">用量 ≥ 50%</option><option value="80">用量 ≥ 80%</option>
         <option value="90">用量 ≥ 90%</option><option value="100">用完時</option>
       </select></div>
     <div id="scrset"></div>
-    <div class="row sw"><div>連接 Claude Code<div class="hint">Agent 也會亮燈；修改 Claude Code 設定檔前會先備份</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
-    <div class="row sw"><div>網頁版（瀏覽器擴充功能）<div class="hint">桌面 App 不用裝就偵測得到。Gemini、claude.ai、chatgpt.com 網頁要另外在 Chrome / Edge 裝擴充功能，裝了切到別的分頁也偵測得到；只看停止 / 允許按鈕，不讀對話內容</div><div class="hint" id="extst"></div></div><div class="toggle" id="ext"></div></div>
+    <div class="row sw"><div>連接 Claude Code</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
+    <div class="row sw"><div>網頁版<div class="hint">要裝瀏覽器擴充功能</div><div class="hint" id="extst"></div></div><div class="toggle" id="ext"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
-    <div class="row sw"><div>檢查更新<div class="hint">啟動時與每天一次查 GitHub 有沒有新版，只提示、按了才更新；關掉就完全不連 GitHub</div><div class="hint" id="updst"></div></div><div class="toggle" id="updchk"></div></div>
+    <div class="row sw"><div>檢查更新<div class="hint" id="updst"></div></div><div class="toggle" id="updchk"></div></div>
   </div>
 
   <div class="btns">
@@ -424,12 +424,11 @@
     document.getElementById("ext").classList.toggle("on", !!x.enabled);
     const link = (cmd, t) => `<a href="#" data-cmd="${cmd}" style="color:#0a84ff;text-decoration:none">${t}</a>`;
     let h = "";
-    if (!x.enabled) h = "已關閉：擴充功能送來的資料不用，網頁版不會亮燈";
+    if (!x.enabled) h = "";
     else if (x.connected) h = `<span class="ok">● 擴充功能已連線</span>${x.tabs ? ` · ${x.tabs} 個 AI 分頁` : " · 目前沒有開著 AI 網頁"}`;
-    else h = `<span style="color:#ffd60a">● 還沒偵測到擴充功能</span>　安裝方式（只要一次）：<br>
-      1. Chrome 打開 <b>chrome://extensions</b>（Edge 是 edge://extensions），打開「開發人員模式」<br>
-      2. 按「載入未封裝項目」，選這個資料夾：${link("ext-folder", "開啟資料夾")}<br>
-      3. 裝好後這裡會顯示「已連線」；已經開著的 AI 網頁不用重新整理`;
+    else h = `<span style="color:#ffd60a">● 還沒裝</span><br>
+      1. 打開 <b>chrome://extensions</b>，開「開發人員模式」<br>
+      2. 「載入未封裝項目」→ 選 ${link("ext-folder", "這個資料夾")}`;
     document.getElementById("extst").innerHTML = h;
   }
 
@@ -456,7 +455,7 @@
     else if (u.checkErr) st = `<span class="bad">上次檢查失敗：${esc(u.checkErr)}</span> · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">再檢查</a>`;
     else if (u.checked) {
       const t = new Date(u.checked * 1000);
-      st = `${u.latest ? `有新版 ${esc(u.latest)}` : "已是最新版"} · ${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")} 檢查 · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">立即檢查</a>`;
+      st = `${u.latest ? `有新版 ${esc(u.latest)}` : "已是最新版"} · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">檢查</a>`;
     } else st = `<a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">立即檢查</a>`;
     document.getElementById("updst").innerHTML = st;
   }
@@ -472,29 +471,28 @@
     if (sig !== scrSig) {
       scrSig = sig;
       const pick = scr.length > 1
-        ? `<div class="row sw"><div>調整哪塊螢幕<div class="hint">每塊螢幕的方向、亮度、外接 LED、麥克風各自記住</div></div>
+        ? `<div class="row sw"><div>螢幕</div>
             <select id="scrpick">${scr.map((x) => `<option value="${H(x.key)}">${H(BOARD[x.hw || "c3"] || x.hw)}（${H(x.port)}）</option>`).join("")}</select></div>`
         : "";
       box.innerHTML = scr.length ? pick + scr.map((x) => {
         const hw = x.hw || "c3", k = H(x.key), amoled = hw === "s3a175";
-        const rot = (amoled ? `<option value="auto">自動（依擺放方向）</option>` : "") +
+        const rot = (amoled ? `<option value="auto">自動</option>` : "") +
           [0, 1, 2, 3].map((r) => `<option value="${r}">${r * 90}°</option>`).join("");
-        const pin = amoled ? "DIN 接排座的 GPIO16" : "DIN 接背面排座的 RX 腳";
+        const pin = amoled ? "接 GPIO16" : "接 RX 腳";
         return `<div data-blk="${k}">
-          <div class="row sw"><div>螢幕方向<div class="hint">${amoled ? "自動：依擺放方向轉正，平放時不轉" : "選到畫面是正的為止"}</div></div>
+          <div class="row sw"><div>螢幕方向</div>
             <select data-scr="${k}" data-k="rot">${rot}</select></div>
           <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
-          <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，${pin}，跟外圈燈號同步</div></div>
+          <div class="row sw"><div>外接 LED<div class="hint">WS2812，${pin}</div></div>
             <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
               <option value="50">亮</option><option value="100">最亮</option></select></div>
-          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint">開啟後電腦多一支 USB 麥克風「AIMonitor Mic」（板上兩顆），可以用 Win+H 語音輸入、Claude App 語音模式。開啟、關閉時螢幕會重新連線（關閉要重新開機）</div>
-              ${x.net ? `<div class="hint" style="color:#ffd60a">現在經 WiFi 連線，麥克風不能用（要插著電腦的 USB 才是麥克風）。設定會記住，插上 USB 就照這裡的設定</div>` : ""}
-              <div class="hint bad" data-micx="${k}" style="display:none">上次開著麥克風時螢幕當機重開，這次先不開；拔掉 USB 再插上後會再試</div></div>
+          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint" ${x.net ? 'style="color:#ffd60a">WiFi 連線時不能用，要插 USB' : ">Win+H 語音輸入"}</div>
+              <div class="hint bad" data-micx="${k}" style="display:none">上次當機，這次先不開（重插 USB 再試）</div></div>
             <select data-scr="${k}" data-k="mic"><option value="0">關閉</option><option value="1">開啟</option></select></div>
-          <div class="row sw"><div>麥克風增益<div class="hint">收音太小聲就調高，有雜音或爆音就調低；馬上生效</div></div>
+          <div class="row sw"><div>麥克風增益</div>
             <select data-scr="${k}" data-k="mg"><option value="8">24 dB</option><option value="9">27 dB</option><option value="10">30 dB（預設）</option>
               <option value="11">33 dB</option><option value="13">36 dB</option><option value="14">37.5 dB</option></select></div>` : ""}</div>`;
-      }).join("") : `<div class="row"><div class="muted">插上螢幕後，可以在這裡設定螢幕的方向、亮度、外接 LED</div></div>`;
+      }).join("") : `<div class="row"><div class="muted">插上螢幕後可以設定</div></div>`;
       const pk = document.getElementById("scrpick");
       if (pk) pk.onchange = (e) => { scrSel = e.target.value; renderScreenSettings(scr, BOARD); };
     }
@@ -536,24 +534,23 @@
       let st = "";
       if (w && w.st === 2) st = `<span class="ok">● 已連線</span> ${H(w.ssid)}<div class="hint">${H(w.ip)} · ${sigTxt(w.rssi)}（${w.rssi} dBm）</div>`;
       else if (w && w.st === 1) st = `<span style="color:#ffd60a">● 連線中…</span> ${H(w.ssid)}`;
-      else if (w && w.st === 3) st = `<span class="bad">● 連不上 ${H(w.ssid)}</span><div class="hint">密碼可能不對，點下面的 WiFi 重新輸入</div>`;
-      else if (w && w.st === 4) st = `<span class="bad">● 找不到 ${H(w.ssid)}</span><div class="hint">確認 WiFi 有開、是 2.4 GHz（5 GHz 螢幕看不到）</div>`;
+      else if (w && w.st === 3) st = `<span class="bad">● 連不上 ${H(w.ssid)}</span><div class="hint">密碼可能不對</div>`;
+      else if (w && w.st === 4) st = `<span class="bad">● 找不到 ${H(w.ssid)}</span><div class="hint">只支援 2.4 GHz</div>`;
       else if (conf) st = `${H(conf.ssid)}${conf.err ? `<div class="hint bad">${H(conf.err)}</div>` : `<div class="hint">等待螢幕連線…</div>`}`;
       else st = `<span class="muted">未設定</span>`;
       const micOn = x && x.set && x.set.mic;
-      if (x && !x.net && w && w.st === 2) st += `<div class="hint">現在可以拔掉電腦的 USB，改接充電器${micOn ? "（拔掉後麥克風不能用）" : ""}</div>`;
-      if (x && x.net && micOn) st += `<div class="hint" style="color:#ffd60a">經 WiFi 連線時麥克風不能用，要用麥克風請插電腦的 USB</div>`;
+      if (x && x.net && micOn) st += `<div class="hint" style="color:#ffd60a">麥克風要插 USB 才能用</div>`;
       const oldFw = x && !x.wf;
       let body = "";
       if (oldFw) {
-        body = `<div class="row"><div class="hint">螢幕韌體太舊，沒有 WiFi 功能。先到「狀態」分頁更新螢幕韌體。</div></div>`;
+        body = `<div class="row"><div class="hint">韌體太舊，先到「狀態」更新</div></div>`;
       } else if (x) {
         const sc = x.scan;
         body = `<div class="row"><div class="btns">
             <button class="primary" data-cmd="wscan:${k}">${sc && sc.aps && sc.aps.length ? "重新搜尋" : "搜尋 WiFi"}</button>
             <button data-wman="${k}">手動輸入</button>
             ${conf || (w && w.st) ? `<button data-wforget="${k}">忘記 WiFi</button>` : ""}</div></div>`;
-        if (sc && sc.running && now - sc.t < 20) body += `<div class="row"><div class="muted">搜尋中…（約 5 秒）</div></div>`;
+        if (sc && sc.running && now - sc.t < 20) body += `<div class="row"><div class="muted">搜尋中…</div></div>`;
         else if (sc && sc.running) body += `<div class="row"><div class="bad">螢幕沒有回應，請再搜尋一次</div></div>`;
         else if (sc && sc.err) body += `<div class="row"><div class="bad">搜尋失敗，請再試一次</div></div>`;
         else if (sc && !sc.aps.length) body += `<div class="row"><div class="muted">沒有找到 WiFi（只支援 2.4 GHz）</div></div>`;
@@ -564,7 +561,7 @@
             <div class="nm">${cur ? `<span class="ok">✓</span> ` : ""}${H(a.ssid)}</div><div class="sig">${sec} · ${sigTxt(a.rssi)}</div></div>`;
         }).join("");
       } else {
-        body = `<div class="row"><div class="hint">插上 USB 才能搜尋、修改 WiFi</div>${conf ? `<button data-wforget="${k}" style="flex:none">忘記</button>` : ""}</div>`;
+        body = `<div class="row"><div class="hint">插 USB 才能修改</div>${conf ? `<button data-wforget="${k}" style="flex:none">忘記</button>` : ""}</div>`;
       }
       h += `<div class="card">
         <div class="row"><div class="k">螢幕</div><div class="v">1.75 吋 AMOLED（${where}）</div></div>
@@ -572,7 +569,7 @@
     }
     if (!keys.length) {
       const lcd = (s.screens || []).some((x) => x.verified && (x.hw || "c3") === "c3");
-      h = `<div class="card"><div class="row"><div class="muted">${lcd ? "1.28 吋 LCD 沒有 WiFi 功能。" : ""}用 USB 插上 1.75 吋 AMOLED 螢幕後，可以在這裡設定 WiFi。</div></div></div>`;
+      h = `<div class="card"><div class="row"><div class="muted">${lcd ? "1.28 吋 LCD 沒有 WiFi。" : ""}插上 1.75 吋 AMOLED 後可以設定</div></div></div>`;
     }
     if (h !== wifiSig) { wifiSig = h; document.getElementById("wifibox").innerHTML = h; }
   }
@@ -585,7 +582,6 @@
         <input class="txt" data-f="ssid" placeholder="WiFi 名稱" maxlength="32" spellcheck="false" autocomplete="off">
         <input class="txt" data-f="pass" type="password" placeholder="密碼" maxlength="64" spellcheck="false" autocomplete="off">
         <label class="hint" style="display:flex;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" data-f="show">顯示密碼</label>
-        <div class="hint">密碼只存在螢幕上，電腦不會保存</div>
         <div class="hint bad" data-f="err"></div></div>
       <div class="btns"><button data-a="0">取消</button><button class="primary" data-a="1">連線</button></div></div>`;
     const f = (n) => d.querySelector(`[data-f="${n}"]`);
@@ -647,7 +643,7 @@
       let tc = 0, ts = 0;
       for (const [ai, c, sec] of today) {
         tc += c; ts += sec;
-        h += `<div class="srow"><div class="nm">${NAMES[ai] || ai}</div><div class="bar"><i style="width:${Math.max(3, (sec / max) * 100)}%;background:${BRAND[ai] || "#8e8e93"}"></i></div><div class="val">${c} 次 · ${fmtDur(sec)}</div></div>`;
+        h += `<div class="srow"><div class="nm" title="${NAMES[ai] || H(ai)}" aria-label="${NAMES[ai] || H(ai)}">${LOGOS[ai] || H(NAMES[ai] || ai)}</div><div class="bar"><i style="width:${Math.max(3, (sec / max) * 100)}%;background:${BRAND[ai] || "#8e8e93"}"></i></div><div class="val">${c} 次 · ${fmtDur(sec)}</div></div>`;
       }
       h += `<div class="hint" style="padding:2px 0 8px">合計 ${tc} 次 · ${fmtDur(ts)}</div>`;
     }

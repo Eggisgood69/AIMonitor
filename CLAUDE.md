@@ -41,6 +41,7 @@ windows/                   Go 程式（Windows only，WebView2）
   wifi.go / wifiscreen_windows.go   螢幕的 WiFi：設定指令（wscan / wifi / wforget）、沒插 USB 時用 TCP 連到螢幕（跟 USB 共用 serveScreen）
   codex.go                 Codex 對話紀錄（~/.codex/sessions 的 rollout-*.jsonl）→ cx:<id> 項目，跟 ChatGPT App 畫面項目配對去重
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
+  （設定視窗的顏色：額度長條、今日統計、7 天圖、額度曲線都用各家品牌色 `BRAND`（跟韌體 BRANDS 同色），每週 / 長週期同色調淡、到 `remindAt` 門檻變紅；額度卡片的提示框叫 `.rtip`，`.qtip` 是額度曲線的，撞名過）
   quotahist.go             額度歷史（quotahist.json，7 天；數字變了才記、沒變每 10 分鐘一點），統計分頁的額度曲線（`aimonQuotaHist`，只在那頁開著時每分鐘讀一次）
   stats.go                 今日統計（stats.json，保留 7 天）；`Week()` 回傳複製的 map（設定視窗解鎖後才編 JSON，共用會並行讀寫、整個程式當掉）
   tray_windows.go          系統匣圖示
@@ -81,7 +82,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.14.0、韌體 1.11.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.14.2、韌體 1.11.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 

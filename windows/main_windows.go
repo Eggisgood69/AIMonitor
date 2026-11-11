@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.14.0"
+const version = "1.14.2"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -1232,7 +1232,7 @@ func uiStatusJSON() string {
 	q := state.GetQuota("claude")
 	var qj interface{}
 	if q != nil {
-		qj = map[string]interface{}{"p5": q.P5, "pw": q.PW, "r5": q.R5, "age": int(time.Since(q.T).Seconds())}
+		qj = map[string]interface{}{"p5": q.P5, "pw": q.PW, "r5": q.R5, "rw": q.RW, "age": int(time.Since(q.T).Seconds())}
 	}
 	diagMu.Lock()
 	md, ue := monitorDiag, usageErr

@@ -81,7 +81,7 @@
   .v { flex: 1; min-width: 0; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: #636366; }
   .hint { color: #8e8e93; font-size: 12.5px; margin-top: 2px; }
-  .bar { height: 6px; border-radius: 3px; background: #3a2a24; overflow: hidden; margin-top: 6px; }
+  .bar { height: 6px; border-radius: 3px; background: #2c2c2e; overflow: hidden; margin-top: 6px; }
   .bar i { display: block; height: 100%; background: #f0855a; border-radius: 3px; }
   button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; background: #2c2c2e; color: #f5f5f7; }
   button.primary { background: #0a84ff; color: #fff; }
@@ -108,11 +108,37 @@
   .srow .nm svg { width: 20px; height: 20px; }
   .srow .bar { flex: 1; margin-top: 0; }
   .srow .val { width: 112px; flex: none; text-align: right; color: #c7c7cc; font-size: 13px; }
-  .week { display: flex; align-items: flex-end; gap: 8px; height: 74px; padding: 6px 0 0; }
-  .week .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
-  .week .stack { width: 100%; max-width: 26px; display: flex; flex-direction: column-reverse; border-radius: 4px; overflow: hidden; background: #2c2c2e; }
-  .week .lbl { font-size: 11px; color: #8e8e93; }
-  .week .col.today .lbl { color: #f5f5f7; font-weight: 600; }
+  /* 最近 7 天：圖拉高、長條細一點、上面寫總時間；滑鼠指著的那天放大、其他天變暗、跳出三家各多久（使用者覺得原本太擠） */
+  .whead { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+  .leg { display: flex; gap: 10px; font-size: 11.5px; color: #8e8e93; }
+  .leg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+  .week { position: relative; display: flex; align-items: flex-end; gap: 14px; height: 150px; padding: 10px 6px 0; margin-top: 6px; }
+  .week .base { position: absolute; left: 0; right: 0; bottom: 22px; border-top: 1px solid rgba(255,255,255,.08); pointer-events: none; }
+  .week .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 5px; transition: opacity .15s; cursor: default; }
+  .week .stack { width: 18px; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 1px 1px; overflow: hidden; transition: width .15s, box-shadow .15s; }
+  .week .val { font-size: 10.5px; color: #8e8e93; white-space: nowrap; }
+  .week .lbl { font-size: 11px; color: #8e8e93; height: 16px; }
+  .week .col.today .lbl, .week .col.today .val { color: #f5f5f7; }
+  .week .col.today .lbl { font-weight: 600; }
+  .week:hover .col { opacity: .35; }
+  .week .col:hover { opacity: 1; }
+  .week .col:hover .stack { width: 28px; box-shadow: 0 0 0 2px rgba(255,255,255,.2); }
+  .week .col:hover .val { color: #f5f5f7; font-weight: 600; font-size: 12px; }
+  .wtip { position: absolute; top: 4px; z-index: 3; display: none; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.18); border-radius: 10px;
+          padding: 8px 12px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5); white-space: nowrap; pointer-events: none; }
+  .wtip .d { color: #8e8e93; margin-bottom: 4px; }
+  .wtip .r { display: flex; justify-content: space-between; gap: 18px; }
+  .wtip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  /* 額度卡片：週額度也一條細長條（淡一點）＋重置倒數；滑鼠指著顯示精確的重置日期時間 */
+  .bar.wk { height: 3px; margin-top: 4px; background: #242426; }
+  .bar.wk i { opacity: .55; }
+  .wline { margin-top: 8px; font-size: 12.5px; color: #c7c7cc; }
+  .wline b { color: #f5f5f7; font-weight: 600; }
+  .qbox { position: relative; }
+  .rtip { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 3; display: none; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.18);
+          border-radius: 10px; padding: 8px 12px; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.5); white-space: nowrap; pointer-events: none; }
+  .qbox:hover .rtip { display: block; }
+  .rtip .tk { color: #8e8e93; display: inline-block; min-width: 44px; margin-right: 6px; }
   .ok { color: #30d158; } .bad { color: #ff453a; }
   footer { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 8px; }
   .ask { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.6); }
@@ -297,10 +323,37 @@
     const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
     return d ? `${d} 天 ${h} 小時` : h ? `${h} 小時 ${m} 分` : `${m} 分`;
   }
+  // 精確的重置時間：今天 / 明天 15:30，再遠寫 11/14（五）17:00
+  function fmtAt(epoch) {
+    if (!epoch) return "";
+    const t = new Date(epoch * 1000), n = new Date();
+    const hm = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0");
+    const d0 = new Date(n.getFullYear(), n.getMonth(), n.getDate()), d1 = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+    const dd = Math.round((d1 - d0) / 86400000);
+    if (dd === 0) return "今天 " + hm;
+    if (dd === 1) return "明天 " + hm;
+    return `${t.getMonth() + 1}/${t.getDate()}（${"日一二三四五六"[t.getDay()]}）${hm}`;
+  }
+  // 額度卡片：短週期一條長條、長週期（本週 / 30 天）一條細的淡長條，各有重置倒數；滑鼠指著顯示精確重置時間
+  let qRed = 90;   // 額度變紅的門檻（設定的「額度重置提醒」，0 = 不變紅），render 時更新
+  function quotaBlock(ai, sl, p5, r5, wl, pw, rw) {
+    const line = (lb, p, r, thin) => {
+      const left = fmtLeft(r), tail = left ? `<span class="muted"> · ${left}後重置</span>` : "";
+      const c = qRed > 0 && p >= qRed ? "#ff453a" : BRAND[ai] || "#8e8e93";
+      return thin
+        ? `<div class="wline">${lb} <b>${Math.round(p)}%</b>${tail}</div><div class="bar wk"><i style="width:${Math.min(100, p)}%;background:${c}"></i></div>`
+        : `${lb} <b>${Math.round(p)}%</b>${tail}<div class="bar"><i style="width:${Math.min(100, p)}%;background:${c}"></i></div>`;
+    };
+    let h = "", tip = "";
+    if (p5 >= 0) { h += line(sl, p5, r5, false); if (r5) tip += `<div><span class="tk">${sl}</span>${Math.round(p5)}% · ${fmtAt(r5)} 重置</div>`; }
+    if (pw >= 0) { h += line(wl, pw, rw, p5 >= 0); if (rw) tip += `<div><span class="tk">${wl}</span>${Math.round(pw)}% · ${fmtAt(rw)} 重置</div>`; }
+    return `<div class="qbox">${h}${tip ? `<div class="rtip">${tip}</div>` : ""}</div>`;
+  }
 
   async function render() {
     let s;
     try { s = JSON.parse(await window.aimonStatus()); } catch (e) { return; }
+    qRed = s.remindAt ?? 90;
     const $ = (id) => document.getElementById(id);
     $("ver").textContent = "版本 " + s.version;
     $("copy").textContent = "© " + s.releaseYear + " " + s.author;
@@ -327,10 +380,7 @@
         <div class="btns" style="margin-top:10px"><button class="primary" id="login">登入 Claude</button></div>`;
       $("login").onclick = () => window.aimonCmd("login");
     } else if (q && q.p5 >= 0) {
-      const left = fmtLeft(q.r5);
-      $("quota").innerHTML = `5 小時 <b>${Math.round(q.p5)}%</b>${left ? `<span class="muted"> · ${left}後重置</span>` : ""}
-        <div class="bar"><i style="width:${Math.min(100, q.p5)}%"></i></div>
-        ${q.pw >= 0 ? `<div class="hint">本週 ${Math.round(q.pw)}%</div>` : ""}`;
+      $("quota").innerHTML = quotaBlock("claude", "5 小時", q.p5, q.r5, "本週", q.pw, q.rw);
     } else if (s.usageErr) {
       $("quota").innerHTML = `<span class="dot" style="background:#ff453a"></span>讀取失敗
         <div class="hint">已登入，但讀不到用量。請把這段截圖給開發者：</div>
@@ -351,11 +401,11 @@
       if (q && (q.p5 >= 0 || q.pw >= 0)) {
         // cached = 重開後還沒讀到、快取又沒存週期（1.13.35 以前存的）：不知道是哪個週期，寫「上次用量」、不顯示第二個額度
         const wl = p.wlabel || "本週";
-        const main = q.p5 >= 0 ? q.p5 : q.pw, label = p.cached ? "上次用量" : q.p5 >= 0 ? (p.slabel || "5 小時") : wl;
-        const left = fmtLeft(q.p5 >= 0 ? q.r5 : q.rw);
-        el.innerHTML = `${label} <b>${Math.round(main)}%</b>${left ? `<span class="muted"> · ${left}後重置</span>` : ""}
-          <div class="bar"><i style="width:${Math.min(100, main)}%"></i></div>
-          ${q.p5 >= 0 && q.pw >= 0 && !p.cached ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}`;
+        if (p.cached) {   // 不知道是哪個週期（舊快取）：寫「上次用量」、只顯示一條
+          const main = q.p5 >= 0 ? q.p5 : q.pw;
+          el.innerHTML = quotaBlock(ai, "上次用量", main, q.p5 >= 0 ? q.r5 : q.rw, "", -1, 0);
+        } else if (q.p5 >= 0) el.innerHTML = quotaBlock(ai, p.slabel || "5 小時", q.p5, q.r5, wl, q.pw, q.rw);
+        else el.innerHTML = quotaBlock(ai, wl, q.pw, q.rw, "", -1, 0);
       } else if (p.login === "out") {
         el.innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入
           <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="login:${ai}">登入 ${name}</button></div>`;
@@ -669,8 +719,8 @@
     if (!seg.childElementCount) seg.innerHTML = ["claude", "chatgpt", "gemini"].map((ai) => `<button data-qai="${ai}" title="${NAMES[ai]}" aria-label="${NAMES[ai]}">${logo(ai)}</button>`).join("");
     for (const b of document.querySelectorAll("[data-qai]")) b.classList.toggle("on", b.dataset.qai === qAI);
     for (const b of document.querySelectorAll("[data-qd]")) b.classList.toggle("on", +b.dataset.qd === qDays);
-    const [l5, lw] = qLabels(qAI), col = BRAND[qAI] || "#8e8e93", grey = "#8e8e93";
-    document.getElementById("qleg").innerHTML = `<span><i style="border-color:${col}"></i>${l5}</span><span><i style="border-color:${grey};border-top-style:dashed"></i>${lw}</span>`;
+    const [l5, lw] = qLabels(qAI), col = BRAND[qAI] || "#8e8e93", grey = col;   // 每週：同色調淡的虛線
+    document.getElementById("qleg").innerHTML = `<span><i style="border-color:${col}"></i>${l5}</span><span style="opacity:.6"><i style="border-color:${grey};border-top-style:dashed"></i>${lw}</span>`;
     const plot = document.getElementById("qplot");
     const sm = (qData && qData.samples) || [];
     if (!sm.length) { plot.innerHTML = `<div class="hint" style="padding:18px 0">還沒有資料（讀到額度後會開始記錄）</div>`; return; }
@@ -698,7 +748,7 @@
       const d = new Date(t * 1000), lab = qDays === 1 ? `${String(d.getHours()).padStart(2, "0")}:00` : `${d.getMonth() + 1}/${d.getDate()}`;
       g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" stroke="#1c1c1e"/><text x="${x(t)}" y="${H - 5}" text-anchor="middle">${lab}</text>`;
     }
-    g += `<path d="${path("w")}" fill="none" stroke="${grey}" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    g += `<path d="${path("w")}" fill="none" stroke="${grey}" stroke-opacity=".55" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"/>`;
     g += `<path d="${path("p")}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
     // 線尾直接標數字（兩個太近就錯開）
     const last = (k) => { for (let i = sm.length - 1; i >= 0; i--) if (sm[i][k] >= 0) return sm[i]; return null; };
@@ -707,7 +757,7 @@
     if (a && b && Math.abs(ya - yb) < 12) { if (ya <= yb) { ya -= 6; yb += 6; } else { ya += 6; yb -= 6; } }
     if (a) g += `<text x="${x(a.t) + 6}" y="${ya}" style="fill:#f5f5f7">${Math.round(a.p)}%</text>`;
     if (b) g += `<text x="${x(b.t) + 6}" y="${yb}">${Math.round(b.w)}%</text>`;
-    g += `<g id="qx" style="display:none"><line y1="${T}" y2="${H - B}" stroke="#636366"/><circle r="4" fill="${col}" stroke="#000" stroke-width="2"/><circle r="4" fill="${grey}" stroke="#000" stroke-width="2"/></g>`;
+    g += `<g id="qx" style="display:none"><line y1="${T}" y2="${H - B}" stroke="#636366"/><circle r="4" fill="${col}" stroke="#000" stroke-width="2"/><circle r="4" fill="${grey}" fill-opacity=".6" stroke="#000" stroke-width="2"/></g>`;
     g += `<rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="qhit"/>`;
     plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">${g}</svg><div class="qtip" style="display:none"></div>`;
     const hit = plot.querySelector("#qhit"), cross = plot.querySelector("#qx"), tip = plot.querySelector(".qtip");
@@ -750,7 +800,7 @@
     if (key === lastStats) return;
     lastStats = key;
     const today = s.today || [];
-    let h = `<div class="row" style="border:0;padding-bottom:2px"><div class="k">今日統計</div><div class="v hint" style="margin:0">生成次數與生成時間（不含等你按允許的時間）</div></div>`;
+    let h = `<div class="row" style="border:0;padding-bottom:2px"><div class="k">今日統計</div></div>`;
     if (!today.length) {
       h += `<div class="hint" style="padding:4px 0 12px">今天還沒有偵測到生成。</div>`;
     } else {
@@ -767,15 +817,36 @@
       const tot = (d) => Object.values(d.secs || {}).reduce((a, b) => a + b, 0);
       const wmax = Math.max(1, ...week.map(tot));
       const WD = "日一二三四五六";
-      h += `<div class="hint" style="margin-top:4px">最近 7 天（生成時間）</div><div class="week">` + week.map((d, i) => {
+      const leg = ["claude", "chatgpt", "gemini"].map((ai) => `<span><i style="background:${BRAND[ai]}"></i>${NAMES[ai]}</span>`).join("");
+      const short = (sec) => (sec >= 3600 ? `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m` : sec >= 60 ? `${Math.round(sec / 60)}m` : sec ? `${sec}s` : "");
+      h += `<div class="whead"><span class="hint" style="margin:0">最近 7 天（生成時間）</span><span class="leg">${leg}</span></div><div class="week" id="week"><div class="base"></div><div class="wtip" id="wtip"></div>` + week.map((d, i) => {
         const segs = ["gemini", "chatgpt", "claude"].map((ai) => {
           const v = (d.secs || {})[ai] || 0;
-          return v ? `<div style="height:${(v / wmax) * 52}px;background:${BRAND[ai]}" title="${NAMES[ai]} ${fmtDur(v)}"></div>` : "";
+          return v ? `<div style="height:${Math.max(2, (v / wmax) * 96)}px;background:${BRAND[ai]}"></div>` : "";
         }).join("");
-        return `<div class="col${i === week.length - 1 ? " today" : ""}" title="${d.day} · ${fmtDur(tot(d))}"><div class="stack">${segs}</div><div class="lbl">${i === week.length - 1 ? "今天" : WD[d.wd]}</div></div>`;
+        return `<div class="col${i === week.length - 1 ? " today" : ""}" data-i="${i}"><div class="val">${short(tot(d))}</div><div class="stack">${segs}</div><div class="lbl">${i === week.length - 1 ? "今天" : WD[d.wd]}</div></div>`;
       }).join("") + `</div><div style="height:10px"></div>`;
     }
     document.getElementById("stats").innerHTML = h;
+    // 滑鼠指著哪一天：跳出那天三家各多久、幾次（放在長條旁邊；右半邊的天放在左側，免得超出卡片）
+    const wk = document.getElementById("week"), tip = document.getElementById("wtip");
+    if (wk && tip) wk.querySelectorAll(".col").forEach((c) => {
+      c.onmouseenter = () => {
+        const d = week[+c.dataset.i] || {}, secs = d.secs || {}, cnt = d.count || {};
+        const all = Object.values(secs).reduce((a, b) => a + b, 0), allC = Object.values(cnt).reduce((a, b) => a + b, 0);
+        if (!all) { tip.style.display = "none"; return; }
+        const [mm, dd] = (d.day || "").split("/").map(Number);
+        let t = `<div class="d">${mm}/${dd}（${"日一二三四五六"[d.wd]}）· ${fmtDur(all)} · ${allC} 次</div>`;
+        for (const ai of ["claude", "chatgpt", "gemini"]) if (secs[ai]) t += `<div class="r"><span><i style="background:${BRAND[ai]}"></i>${NAMES[ai]}</span><span>${fmtDur(secs[ai])} · ${cnt[ai] || 0} 次</span></div>`;
+        tip.innerHTML = t;
+        tip.style.display = "block";
+        const cr = c.getBoundingClientRect(), wr = wk.getBoundingClientRect();
+        const right = cr.left + cr.width / 2 - wr.left > wr.width / 2;
+        tip.style.left = right ? "" : (cr.right - wr.left + 4) + "px";
+        tip.style.right = right ? (wr.right - cr.left + 4) + "px" : "";
+      };
+      c.onmouseleave = () => { tip.style.display = "none"; };
+    });
   }
 
   function start() {

@@ -204,6 +204,10 @@ func runWifiScreen(key, wkey, ip string, c net.Conn) (bool, string) {
 		if v && id != key {
 			return "a different screen answered at this address"
 		}
+		// 忘記 WiFi 了：等「忘記」那行送出去（佇列清空）就關掉，不用等 30 秒逾時（以前設定視窗那段時間還顯示已連線）
+		if !wifiConfigured(key) && len(sc.out) == 0 {
+			return "wifi forgotten"
+		}
 		return ""
 	})
 	serMu.Lock()
@@ -214,6 +218,13 @@ func runWifiScreen(key, wkey, ip string, c net.Conn) (bool, string) {
 	serMu.Unlock()
 	logf("disconnected %s after %s (%s)", port, time.Since(openedAt).Round(time.Second), why)
 	return verified, why
+}
+
+func wifiConfigured(key string) bool {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	s := settings.Screens[key]
+	return s != nil && s.WKey != ""
 }
 
 // 螢幕回報 WiFi 狀態（{"wst":...}）：記在連線狀態上；連上了就記下 IP（之後沒插 USB 時連這個 IP）
@@ -319,6 +330,9 @@ func wifiCmd(cmd string) (string, bool) {
 		key := strings.TrimPrefix(cmd, "wforget:")
 		if sc := screenFor(key); sc != nil {
 			enqueue(sc, wsetLine("", "", ""))
+			serMu.Lock()
+			sc.stat.WiFi, sc.stat.Scan = &wifiState{}, nil // 馬上顯示「未設定」，不等螢幕回報
+			serMu.Unlock()
 		}
 		settingsMu.Lock()
 		if s := settings.Screens[key]; s != nil {

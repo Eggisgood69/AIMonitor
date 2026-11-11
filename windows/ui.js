@@ -90,6 +90,7 @@
   details { margin-top: 6px; color: #8e8e93; font-size: 12px; }
   details code { color: #c7c7cc; word-break: break-all; }
   .sw { display: flex; align-items: center; justify-content: space-between; }
+  .sw > div:first-child { flex: 1; min-width: 0; }
   .toggle { width: 44px; height: 26px; border-radius: 13px; background: #39393d; position: relative; cursor: pointer; flex: none; }
   .toggle.on { background: #30d158; }
   .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: left .15s; }
@@ -165,6 +166,11 @@
 
   <section data-pane="settings">
   <div class="card">
+    <div class="row sw"><div>連接 Claude Code<div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
+    <div class="row sw"><div>網頁版<div class="hint">要裝瀏覽器擴充功能</div><div class="hint" id="extst"></div></div><div class="toggle" id="ext"></div></div>
+  </div>
+  <div class="card" id="scrset"></div>
+  <div class="card">
     <div class="row sw"><div>螢幕保護<div class="hint">待命後顯示時鐘</div></div>
       <select id="saver">
         <option value="0">關閉</option><option value="30s">30 秒</option><option value="1">1 分鐘</option><option value="3">3 分鐘</option>
@@ -176,9 +182,6 @@
         <option value="0">關閉</option><option value="50">用量 ≥ 50%</option><option value="80">用量 ≥ 80%</option>
         <option value="90">用量 ≥ 90%</option><option value="100">用完時</option>
       </select></div>
-    <div id="scrset"></div>
-    <div class="row sw"><div>連接 Claude Code</div><div class="hint" id="ccst"></div></div><div class="toggle" id="cc"></div></div>
-    <div class="row sw"><div>網頁版<div class="hint">要裝瀏覽器擴充功能</div><div class="hint" id="extst"></div></div><div class="toggle" id="ext"></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
     <div class="row sw"><div>檢查更新<div class="hint" id="updst"></div></div><div class="toggle" id="updchk"></div></div>
   </div>
@@ -480,18 +483,18 @@
           [0, 1, 2, 3].map((r) => `<option value="${r}">${r * 90}°</option>`).join("");
         const pin = amoled ? "接 GPIO16" : "接 RX 腳";
         return `<div data-blk="${k}">
+          <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
           <div class="row sw"><div>螢幕方向</div>
             <select data-scr="${k}" data-k="rot">${rot}</select></div>
-          <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
-          <div class="row sw"><div>外接 LED<div class="hint">WS2812，${pin}</div></div>
-            <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
-              <option value="50">亮</option><option value="100">最亮</option></select></div>
           ${amoled ? `<div class="row sw"><div>麥克風<div class="hint" ${x.net ? 'style="color:#ffd60a">WiFi 連線時不能用，要插 USB' : ">Win+H 語音輸入"}</div>
               <div class="hint bad" data-micx="${k}" style="display:none">上次當機，這次先不開（重插 USB 再試）</div></div>
             <select data-scr="${k}" data-k="mic"><option value="0">關閉</option><option value="1">開啟</option></select></div>
           <div class="row sw"><div>麥克風增益</div>
             <select data-scr="${k}" data-k="mg"><option value="8">24 dB</option><option value="9">27 dB</option><option value="10">30 dB（預設）</option>
-              <option value="11">33 dB</option><option value="13">36 dB</option><option value="14">37.5 dB</option></select></div>` : ""}</div>`;
+              <option value="11">33 dB</option><option value="13">36 dB</option><option value="14">37.5 dB</option></select></div>` : ""}
+          <div class="row sw"><div>外接 LED<div class="hint">WS2812，${pin}</div></div>
+            <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
+              <option value="50">亮</option><option value="100">最亮</option></select></div></div>`;
       }).join("") : `<div class="row"><div class="muted">插上螢幕後可以設定</div></div>`;
       const pk = document.getElementById("scrpick");
       if (pk) pk.onchange = (e) => { scrSel = e.target.value; renderScreenSettings(scr, BOARD); };

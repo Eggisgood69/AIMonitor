@@ -3,7 +3,7 @@
 //   Waveshare ESP32-S3-Touch-AMOLED-1.75（ESP32-S3 + CO5300 1.75" 466×466 AMOLED）
 //   兩種板子共用這份程式，腳位與差異在 config.h（依編譯目標自動選）
 //
-// 插上 USB 就能用：不需要 Wi-Fi，也不需要任何設定。
+// 插上 USB 就能用，不需要任何設定。AMOLED 另外可以設定 WiFi（wifi.h），之後不插電腦也收得到畫面。
 // 電腦端的 Chrome 擴充功能透過 USB 序列埠（115200）每次送一行 JSON（完整畫面狀態）：
 //   {"ai":"claude","st":"working","msg":"","p5":42,"pw":63,"r5":1792226358,"rw":1792477758,
 //    "now":1792218000,"o":[["chatgpt","done"],["gemini","review"]]}
@@ -17,12 +17,14 @@
 // Arduino IDE 設定：Board = ESP32C3 Dev Module、USB CDC On Boot = Enabled、
 
 #include <Wire.h>   // AMOLED 的觸控、陀螺儀（sensors.h）；要放在最前面，arduino-cli 才會把它加進來
+#include <WiFi.h>   // AMOLED 的 WiFi（wifi.h）；一樣要放在這裡。1.28 吋沒呼叫，不會連結進去
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.10.47"
+#define FW_VERSION "1.11.0"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -537,7 +539,7 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
            g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs,
@@ -553,14 +555,30 @@ static void sendHello(Stream* src) {
   g_maxLoopMs = g_maxStripMs = g_maxRingMs = g_maxPushMs = g_maxPrepMs = g_maxGenGap = g_fullN = 0;
 }
 
+#if BOARD_AMOLED
+// wifi.h（要用到下面的 pollReader、rdUsb，放在後面才 include）
+static bool wifiGate(Stream* src, JsonDocument& doc);
+static bool wifiCommand(Stream* src, JsonDocument& doc);
+static void wifiSendStatus(Stream* s);
+#endif
+
 static void handleLine(Stream* src, const String& line) {
   JsonDocument doc;
   if (deserializeJson(doc, line)) { g_badLines++; return; }
+#if BOARD_AMOLED
+  if (!wifiGate(src, doc)) return;      // WiFi 連線：先送對配對金鑰才收
+#endif
   lastSource = src;
   if (doc["hello"].is<int>()) {
     sendHello(src);
+#if BOARD_AMOLED
+    wifiSendStatus(src);                 // 設定視窗的 WiFi 分頁用
+#endif
     return;
   }
+#if BOARD_AMOLED
+  if (wifiCommand(src, doc)) return;
+#endif
   if (doc["bright"].is<int>()) brightness = doc["bright"].as<int>();
 #if BOARD_AMOLED
   // 麥克風（電腦端的開關，跟畫面一起送；也可以單獨一行 {"mic":0}）：1 = 切成 USB 麥克風、0 = 重開回 hwcdc
@@ -662,6 +680,9 @@ static void pollReader(LineReader& r) {
 static LineReader rdUsb(&Serial);
 #if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0
 static LineReader rdUart(&Serial0);
+#endif
+#if BOARD_AMOLED
+#include "wifi.h"
 #endif
 
 #if BOARD_AMOLED
@@ -1215,6 +1236,9 @@ void setup() {
     if (!band.createSprite(W, BAND_H)) { band.setColorDepth(8); band.createSprite(W, BAND_H); }
   }
   render();
+#if BOARD_AMOLED
+  wifiInit();       // 畫面先出來再開 WiFi（開 WiFi 要 100-300 ms）
+#endif
 }
 
 void loop() {
@@ -1222,6 +1246,8 @@ void loop() {
 #if BOARD_AMOLED
   if (g_micOn && rdUsb.s != micStream()) rdUsb.s = micStream();
   micTick(loopStart);
+  if (rdUsb.s->available()) g_usbRxMs = loopStart;   // USB 有電腦在（接充電器時不要寫 Serial）
+  wifiTick(loopStart);
 #endif
   pollReader(rdUsb);
 #if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0

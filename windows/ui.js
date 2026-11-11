@@ -125,11 +125,17 @@
   details.list summary { padding: 11px 0; cursor: pointer; color: #c7c7cc; }
   details.list[open] summary { border-bottom: 1px solid rgba(255,255,255,.08); }
   [data-pane].on { display: block; }
+  input.txt { font: inherit; width: 100%; color: #f5f5f7; background: #2c2c2e; border: 0; border-radius: 8px; padding: 9px 12px; margin-top: 8px; -webkit-user-select: text; user-select: text; }
+  input.txt:focus { outline: 2px solid #0a84ff; }
+  .wap { cursor: pointer; }
+  .wap:hover { background: rgba(255,255,255,.04); }
+  .wap .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wap .sig { flex: none; color: #8e8e93; font-size: 12.5px; }
 </style></head>
 <body><main>
   <header><div class="logo"></div><div><h1>AI 狀態指示燈</h1><div class="ver" id="ver"></div></div></header>
   <div id="upd"></div>
-  <nav class="tabs"><button data-tab="status">狀態</button><button data-tab="stats">統計</button><button data-tab="settings">設定</button></nav>
+  <nav class="tabs"><button data-tab="status">狀態</button><button data-tab="stats">統計</button><button data-tab="wifi">WiFi</button><button data-tab="settings">設定</button></nav>
 
   <section data-pane="status">
   <div class="card">
@@ -149,6 +155,12 @@
 
   <section data-pane="stats">
   <div class="card" id="stats"></div>
+  </section>
+
+  <section data-pane="wifi">
+  <div id="wifibox"></div>
+  <div class="hint" style="padding:0 4px 12px">設定好 WiFi 之後，螢幕接一般 USB 充電器就能顯示，不用一直插著電腦（電腦和螢幕要在同一個網路）。
+    插著 USB 時優先用 USB。只支援 2.4 GHz WiFi；只有 1.75 吋 AMOLED 有 WiFi。更新螢幕韌體還是要插 USB。</div>
   </section>
 
   <section data-pane="settings">
@@ -349,6 +361,7 @@
     } else {
       $("fw").innerHTML = scr.map((x) => {
         const who = scr.length > 1 ? `<span class="muted">${H(x.port)}：</span>` : "", dev = H(x.fw || "");
+        if (x.net) return `<div>${who}${dev}${less(dev, fw.bundled) ? ` <span class="muted">→ 可更新到 ${fw.bundled}</span>` : ""} <span class="muted">· 經 WiFi 連線，更新韌體要插 USB</span></div>`;
         return !dev || less(dev, fw.bundled)
           ? `<div>${who}${dev ? dev : "舊版"} <span class="muted">→ 可更新到 ${fw.bundled}</span>
               <div class="btns" style="margin:6px 0 4px"><button class="primary" data-cmd="fwupdate:${H(x.port)}">更新${scr.length > 1 ? " " + H(x.port) : "螢幕韌體"}</button></div></div>`
@@ -356,6 +369,7 @@
       }).join("");
     }
     renderScreenSettings(scr, BOARD);
+    renderWifi(s, BOARD);
 
     const items = s.items || [];
     const esc = (t) => String(t).replace(/[<&]/g, "");
@@ -454,7 +468,7 @@
   function renderScreenSettings(scr, BOARD) {
     const box = document.getElementById("scrset");
     if (!scr.some((x) => x.key === scrSel)) scrSel = scr.length ? scr[0].key : "";
-    const sig = scr.map((x) => `${x.key}|${x.hw}|${x.port}`).join(",");
+    const sig = scr.map((x) => `${x.key}|${x.hw}|${x.port}|${x.net}`).join(",");
     if (sig !== scrSig) {
       scrSig = sig;
       const pick = scr.length > 1
@@ -473,7 +487,7 @@
           <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，${pin}，跟外圈燈號同步</div></div>
             <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
               <option value="50">亮</option><option value="100">最亮</option></select></div>
-          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint">開啟後電腦多一支 USB 麥克風「AIMonitor Mic」（板上兩顆），可以用 Win+H 語音輸入、Claude App 語音模式。開啟、關閉時螢幕會重新連線（關閉要重新開機）</div>
+          ${amoled && !x.net ? `<div class="row sw"><div>麥克風<div class="hint">開啟後電腦多一支 USB 麥克風「AIMonitor Mic」（板上兩顆），可以用 Win+H 語音輸入、Claude App 語音模式。開啟、關閉時螢幕會重新連線（關閉要重新開機）</div>
               <div class="hint bad" data-micx="${k}" style="display:none">上次開著麥克風時螢幕當機重開，這次先不開；拔掉 USB 再插上後會再試</div></div>
             <select data-scr="${k}" data-k="mic"><option value="0">關閉</option><option value="1">開啟</option></select></div>
           <div class="row sw"><div>麥克風增益<div class="hint">收音太小聲就調高，有雜音或爆音就調低；馬上生效</div></div>
@@ -501,6 +515,113 @@
       }
     }
   }
+
+  // ---------------- WiFi 分頁（只有 AMOLED）----------------
+  // 每塊 AMOLED 一張卡片：WiFi 狀態、搜尋、掃描到的 WiFi（點了輸入密碼）、忘記 WiFi。
+  // 設定過 WiFi、現在沒連線的螢幕也列出來（看得到連不上的原因）。SSID 是附近任何人都能取的名字，一律 H() 跳脫
+  let wifiSig = "";
+  function renderWifi(s, BOARD) {
+    const conns = (s.screens || []).filter((x) => x.verified && x.hw === "s3a175");
+    const confs = s.wifi || [];
+    const keys = [...new Set([...conns.map((x) => x.key), ...confs.map((c) => c.key)])].sort();
+    const now = Math.floor(Date.now() / 1000);
+    const sigTxt = (r) => (r >= -60 ? "訊號強" : r >= -72 ? "訊號中" : "訊號弱");
+    let h = "";
+    for (const key of keys) {
+      const x = conns.find((c) => c.key === key && !c.net) || conns.find((c) => c.key === key);
+      const conf = confs.find((c) => c.key === key);
+      const k = H(key), w = x && x.wifi;
+      const where = x ? (x.net ? H(x.port) : `USB ${H(x.port)}`) : `<span class="muted">沒有連線</span>`;
+      let st = "";
+      if (w && w.st === 2) st = `<span class="ok">● 已連線</span> ${H(w.ssid)}<div class="hint">${H(w.ip)} · ${sigTxt(w.rssi)}（${w.rssi} dBm）</div>`;
+      else if (w && w.st === 1) st = `<span style="color:#ffd60a">● 連線中…</span> ${H(w.ssid)}`;
+      else if (w && w.st === 3) st = `<span class="bad">● 連不上 ${H(w.ssid)}</span><div class="hint">密碼可能不對，點下面的 WiFi 重新輸入</div>`;
+      else if (w && w.st === 4) st = `<span class="bad">● 找不到 ${H(w.ssid)}</span><div class="hint">確認 WiFi 有開、是 2.4 GHz（5 GHz 螢幕看不到）</div>`;
+      else if (conf) st = `${H(conf.ssid)}${conf.err ? `<div class="hint bad">${H(conf.err)}</div>` : `<div class="hint">等待螢幕連線…</div>`}`;
+      else st = `<span class="muted">未設定</span>`;
+      if (x && !x.net && w && w.st === 2) st += `<div class="hint">現在可以拔掉電腦的 USB，改接充電器</div>`;
+      const oldFw = x && !x.wf;
+      let body = "";
+      if (oldFw) {
+        body = `<div class="row"><div class="hint">螢幕韌體太舊，沒有 WiFi 功能。先到「狀態」分頁更新螢幕韌體。</div></div>`;
+      } else if (x) {
+        const sc = x.scan;
+        body = `<div class="row"><div class="btns">
+            <button class="primary" data-cmd="wscan:${k}">${sc && sc.aps && sc.aps.length ? "重新搜尋" : "搜尋 WiFi"}</button>
+            <button data-wman="${k}">手動輸入</button>
+            ${conf || (w && w.st) ? `<button data-wforget="${k}">忘記 WiFi</button>` : ""}</div></div>`;
+        if (sc && sc.running && now - sc.t < 20) body += `<div class="row"><div class="muted">搜尋中…（約 5 秒）</div></div>`;
+        else if (sc && sc.running) body += `<div class="row"><div class="bad">螢幕沒有回應，請再搜尋一次</div></div>`;
+        else if (sc && sc.err) body += `<div class="row"><div class="bad">搜尋失敗，請再試一次</div></div>`;
+        else if (sc && !sc.aps.length) body += `<div class="row"><div class="muted">沒有找到 WiFi（只支援 2.4 GHz）</div></div>`;
+        else if (sc) body += sc.aps.map((a) => {
+          const cur = w && w.ssid === a.ssid && w.st === 2;
+          const sec = a.sec === 2 ? "企業版（不支援）" : a.sec ? "需要密碼" : "開放";
+          return `<div class="row wap" data-wkey="${k}" data-ssid="${H(a.ssid)}" data-sec="${a.sec}">
+            <div class="nm">${cur ? `<span class="ok">✓</span> ` : ""}${H(a.ssid)}</div><div class="sig">${sec} · ${sigTxt(a.rssi)}</div></div>`;
+        }).join("");
+      } else {
+        body = `<div class="row"><div class="hint">插上 USB 才能搜尋、修改 WiFi</div>${conf ? `<button data-wforget="${k}" style="flex:none">忘記</button>` : ""}</div>`;
+      }
+      h += `<div class="card">
+        <div class="row"><div class="k">螢幕</div><div class="v">1.75 吋 AMOLED（${where}）</div></div>
+        <div class="row"><div class="k">WiFi</div><div class="v">${st}</div></div>${body}</div>`;
+    }
+    if (!keys.length) {
+      const lcd = (s.screens || []).some((x) => x.verified && (x.hw || "c3") === "c3");
+      h = `<div class="card"><div class="row"><div class="muted">${lcd ? "1.28 吋 LCD 沒有 WiFi 功能。" : ""}用 USB 插上 1.75 吋 AMOLED 螢幕後，可以在這裡設定 WiFi。</div></div></div>`;
+    }
+    if (h !== wifiSig) { wifiSig = h; document.getElementById("wifibox").innerHTML = h; }
+  }
+
+  // 輸入 WiFi 密碼（manual = 連 WiFi 名稱也自己打，隱藏的 WiFi 用）。跟 ask() 一樣是頁面內的對話框，不會被每秒重畫蓋掉
+  function wifiAsk(key, ssid, sec, manual) {
+    const d = document.createElement("div");
+    d.className = "ask";
+    d.innerHTML = `<div class="box"><div class="msg"><b class="t"></b>
+        <input class="txt" data-f="ssid" placeholder="WiFi 名稱" maxlength="32" spellcheck="false" autocomplete="off">
+        <input class="txt" data-f="pass" type="password" placeholder="密碼" maxlength="64" spellcheck="false" autocomplete="off">
+        <label class="hint" style="display:flex;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" data-f="show">顯示密碼</label>
+        <div class="hint">密碼只存在螢幕上，電腦不會保存</div>
+        <div class="hint bad" data-f="err"></div></div>
+      <div class="btns"><button data-a="0">取消</button><button class="primary" data-a="1">連線</button></div></div>`;
+    const f = (n) => d.querySelector(`[data-f="${n}"]`);
+    d.querySelector(".t").textContent = manual ? "手動輸入 WiFi" : `連線到「${ssid}」`;
+    f("ssid").value = ssid || "";
+    if (!manual) f("ssid").style.display = "none";
+    if (!manual && !sec) { f("pass").style.display = "none"; f("show").parentNode.style.display = "none"; }
+    f("show").onchange = () => { f("pass").type = f("show").checked ? "text" : "password"; };
+    const close = () => { d.remove(); document.removeEventListener("keydown", key2, true); };
+    const go = async () => {
+      const name = manual ? f("ssid").value.trim() : ssid;
+      const r = await window.aimonCmd("wifi:" + JSON.stringify({ key, ssid: name, pass: f("pass").value }));
+      if (String(r).startsWith("err:")) { f("err").textContent = String(r).slice(4); return; }
+      close(); render();
+    };
+    const key2 = (e) => { if (e.key === "Escape") close(); else if (e.key === "Enter") { e.preventDefault(); go(); } };
+    d.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const a = e.target.closest("[data-a]");
+      if (a) { if (a.dataset.a === "1") go(); else close(); }
+      else if (e.target === d) close();
+    });
+    document.addEventListener("keydown", key2, true);
+    document.body.appendChild(d);
+    (manual ? f("ssid") : sec ? f("pass") : d.querySelector('[data-a="1"]')).focus();
+  }
+
+  document.addEventListener("click", async (e) => {
+    const ap = e.target.closest(".wap");
+    if (ap) {
+      if (ap.dataset.sec === "2") { await ask("這是企業版 WiFi（要帳號密碼登入），螢幕不支援。請選別的 WiFi。", "知道了"); return; }
+      wifiAsk(ap.dataset.wkey, ap.dataset.ssid, ap.dataset.sec !== "0", false);
+      return;
+    }
+    const man = e.target.closest("[data-wman]");
+    if (man) { wifiAsk(man.dataset.wman, "", true, true); return; }
+    const fg = e.target.closest("[data-wforget]");
+    if (fg && (await ask("要讓螢幕忘記 WiFi 嗎？之後要插著 USB 才會顯示。", "忘記"))) window.aimonCmd("wforget:" + fg.dataset.wforget).then(render);
+  });
 
   const BRAND = { claude: "#f0855a", chatgpt: "#e5e5ea", gemini: "#64a8ff" };
   function fmtDur(sec) {

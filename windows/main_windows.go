@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.13.43"
+const version = "1.14.0"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -379,6 +379,12 @@ type serialStatus struct {
 	Mic       bool   `json:"mic"`  // AMOLED 正在當 USB 麥克風（這時的埠是麥克風模式的 COM 埠，跟平常不同）
 	MicX      bool   `json:"micx"` // 上次在麥克風模式下當機重開：這次開機螢幕不肯再進麥克風模式
 	RX        int    `json:"rx"`   // 從螢幕收到的位元組數（除錯用）
+	// WiFi（只有 AMOLED，wifi.go）
+	Net  bool       `json:"net"`            // 這條連線走 WiFi（不是 USB）；Port 是「WiFi <IP>」
+	IP   string     `json:"ip,omitempty"`   // WiFi 連線的對方 IP
+	WF   bool       `json:"wf"`             // 韌體支援 WiFi（hello 的 wf，1.11.0 起）
+	WiFi *wifiState `json:"wifi,omitempty"` // 螢幕回報的 WiFi 狀態
+	Scan *wifiScan  `json:"scan,omitempty"` // 最近一次掃描
 }
 
 // 板子型號：舊韌體不回報，當作原本的 C3 螢幕
@@ -526,19 +532,41 @@ func runScreen(port string, multi bool) {
 	serMu.Unlock()
 	sp.Write([]byte("{\"hello\":1}\n"))
 	sendFrameNow()
+	why, openedAt := serveScreen(sc, sp, port, multi, nil)
+	sp.Close()
+	serMu.Lock()
+	delete(screens, port)
+	serMu.Unlock()
+	logf("disconnected %s after %s (%s)", port, time.Since(openedAt).Round(time.Second), why)
+	recoverSerial(port, why, openedAt)
+}
+
+// 一塊螢幕的連線（USB 序列埠或 WiFi 的 TCP）
+type screenLink interface {
+	Write([]byte) error
+	Read([]byte) (int, error) // 沒資料時最多等約 60 ms，回傳 0, nil
+}
+
+// 收送一塊螢幕的資料（USB 與 WiFi 共用）：打招呼、送畫面、收回應，斷線就回傳原因與開始的時間。
+// multi：有好幾個序列埠時，12 秒沒回應的跳過（可能不是螢幕）；stop：回傳非空字串就結束（WiFi：同一塊螢幕插上 USB 了）
+func serveScreen(sc *screenConn, sp screenLink, port string, multi bool, stop func() string) (why string, openedAt time.Time) {
 	lastAnswer := time.Now() // 螢幕最後一次回應 hello 的時間
 	sent := 0                // 上次回應之後送了幾個畫面（沒回應時記在紀錄裡）
 
 	buf := make([]byte, 512)
 	line := []byte{}
 	ok := true
-	why := "" // 斷線原因（記在紀錄裡）
 	lastHello := time.Now()
-	openedAt := time.Now()
+	openedAt = time.Now()
 	for ok {
 		if fwPausedPort() == port {
 			why = "paused for firmware update"
 			break
+		}
+		if stop != nil {
+			if why = stop(); why != "" {
+				break
+			}
 		}
 		serMu.Lock()
 		ver := sc.stat.Verified
@@ -599,16 +627,16 @@ func runScreen(port string, multi bool) {
 					lastAnswer, sent = time.Now(), 0
 				}
 				line = line[:0]
-			} else if len(line) < 1024 {
+			} else if len(line) < 8192 { // WiFi 掃描結果一行可能 1-2 KB
 				line = append(line, c)
 			}
 		}
 	}
-	sp.Close()
-	serMu.Lock()
-	delete(screens, port)
-	serMu.Unlock()
-	logf("disconnected %s after %s (%s)", port, time.Since(openedAt).Round(time.Second), why)
+	return why, openedAt
+}
+
+// USB 連線斷了之後：螢幕卡住、沒在解析資料就重開它
+func recoverSerial(port, why string, openedAt time.Time) {
 	// 一連上就寫入逾時 = 螢幕上沒有程式在讀（卡在燒錄模式或當機，畫面全黑）：連續 3 次就自動重置
 	portMu.Lock()
 	if strings.HasPrefix(why, "write:") && time.Since(openedAt) < 5*time.Second {
@@ -729,6 +757,7 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		if id, ok := m["id"].(string); ok {
 			sc.stat.ID = devID(id)
 		}
+		sc.stat.WF = m["wf"] == 1.0
 		mic, micx := m["mic"] == 1.0, m["micx"] == 1.0
 		if mic != sc.stat.Mic || micx != sc.stat.MicX {
 			if mic || micx || sc.stat.Mic {
@@ -741,6 +770,15 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		if _, ok := m["up"]; ok { // 韌體 1.7.2 起才有
 			noteScreenStats(port, m)
 		}
+	}
+	if v, ok := m["wst"]; ok {
+		noteWifiState(sc, v)
+	}
+	if v, ok := m["wscan"]; ok {
+		scan := parseWifiScan(v, m["err"] == 1.0, time.Now().Unix())
+		serMu.Lock()
+		sc.stat.Scan = &scan
+		serMu.Unlock()
 	}
 	if m["ev"] == "btn" {
 		answered = true           // 按鍵事件也代表螢幕活著
@@ -795,11 +833,12 @@ func queueFrameEach(f Frame) {
 	type target struct {
 		sc         *screenConn
 		key, board string
+		net        bool
 	}
 	serMu.Lock()
 	ts := make([]target, 0, len(screens))
 	for _, sc := range screens {
-		ts = append(ts, target{sc, sc.stat.Key(), sc.stat.Board()})
+		ts = append(ts, target{sc, sc.stat.Key(), sc.stat.Board(), sc.stat.Net})
 	}
 	serMu.Unlock()
 	for _, t := range ts {
@@ -809,8 +848,9 @@ func queueFrameEach(f Frame) {
 		if e.ARot {
 			g.ARot = 1
 		}
-		// 麥克風只有 AMOLED 有；一鍵更新前先關掉（螢幕重開回一般 USB 才能燒錄）
-		if t.board == "s3a175" {
+		// 麥克風只有 AMOLED 有；一鍵更新前先關掉（螢幕重開回一般 USB 才能燒錄）。
+		// WiFi 連線不送：USB 麥克風要插著電腦才有用，接充電器時切過去沒意義
+		if t.board == "s3a175" && !t.net {
 			mic := 0
 			if e.Mic && !micHeldOff(t.key) {
 				mic = 1
@@ -1107,6 +1147,9 @@ func onCmd(cmd string) string {
 				sendFrameNow()
 			}
 		}
+		if r, ok := wifiCmd(cmd); ok { // WiFi 分頁（wifiscreen_windows.go）
+			return r
+		}
 		if strings.HasPrefix(cmd, "fwupdate:") { // 更新指定的螢幕（埠名稱）
 			startFirmwareUpdate(strings.TrimPrefix(cmd, "fwupdate:"))
 		}
@@ -1199,6 +1242,7 @@ func uiStatusJSON() string {
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "saverSec": saverSec(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(), "appUpdate": appUpdateStatus(), "extension": extensionStatus(),
+		"wifi": wifiStatusList(),
 	})
 	return string(b)
 }
@@ -1222,6 +1266,7 @@ func main() {
 	state.LoadQuotas(filepath.Join(appDir, "quota.json")) // 重開前最後讀到的額度（15 分鐘內），重開後第一分鐘也有額度
 	startClaudeCodeServer()
 	go serialLoop()
+	go wifiLoop()
 	go runMonitor(func(items []Item) {
 		afterScan(state.ApplyScan(mergedScan(items)), false)
 	})

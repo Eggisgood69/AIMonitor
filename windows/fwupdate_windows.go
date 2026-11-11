@@ -64,7 +64,7 @@ func micOffForUpdate(target serialStatus) (serialStatus, error) {
 	for i := 0; i < 60; i++ {
 		time.Sleep(500 * time.Millisecond)
 		for _, s := range screenList() {
-			if s.Key() == key && s.Verified && !s.Mic {
+			if s.Key() == key && s.Verified && !s.Mic && !s.Net {
 				return s, nil
 			}
 		}
@@ -124,7 +124,7 @@ func setFw(p int, msg string) {
 func pickFirmwareTarget(port string, scs []serialStatus) (serialStatus, error) {
 	var cand []serialStatus
 	for _, s := range scs {
-		if s.Verified && (port == "" || s.Port == port) {
+		if s.Verified && !s.Net && (port == "" || s.Port == port) { // WiFi 連線不能燒錄
 			cand = append(cand, s)
 		}
 	}

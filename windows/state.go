@@ -354,9 +354,18 @@ func (s *State) BuildFrame() Frame {
 	}
 	// 你切到另一個 AI（例如從 Claude App 切到 Gemini 網頁）：主燈跟著你看的那個 AI（連額度一起），
 	// 其他 AI 的完成 / 生成中放在小圓點。需審核、錯誤例外：工作停了，不管看哪裡都顯示
+	// 換成你看的那家 AI 裡最需要注意的一項（list 已排好），不一定是畫面上那一項：
+	// 你在 Claude App 看著待機的對話、另一個 Claude Code 對話在跑時，要顯示在跑的那個（以前換成待機的那項，呼吸燈不亮）
 	if main != nil && main.rank < 50 && !main.it.Focused {
+		viewed := ""
 		for i := range list {
 			if list[i].it.Focused && list[i].it.AI != main.it.AI {
+				viewed = list[i].it.AI
+				break
+			}
+		}
+		for i := range list {
+			if viewed != "" && list[i].it.AI == viewed {
 				main = &list[i]
 				break
 			}

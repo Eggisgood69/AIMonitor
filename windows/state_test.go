@@ -15,6 +15,27 @@ func newTestState() (*State, *time.Time) {
 
 func ms(t time.Time) int64 { return t.UnixMilli() }
 
+// 2026-11-11 實測：Codex 剛在背景完成（排第一），你在 Claude App 看著另一個（待機的）對話，Claude Code 另一個對話在跑。
+// 「主燈跟著你看的 AI」以前直接換成你看的那一項（待機），在跑的對話變成小圓點、呼吸燈不亮
+func TestViewedAIShowsItsBusiestItem(t *testing.T) {
+	s, now := newTestState()
+	s.ApplyScan([]Item{
+		{Key: "cx:7ed1e00f", AI: "chatgpt", Gen: true, GenSince: ms(*now)},
+		{Key: "app:claude", AI: "claude", Focused: true},
+		{Key: "cc:12bd32fd", AI: "claude", Gen: true, GenSince: ms(*now)},
+	})
+	*now = now.Add(time.Second)
+	s.ApplyScan([]Item{
+		{Key: "cx:7ed1e00f", AI: "chatgpt", FinishedAt: ms(*now)},
+		{Key: "app:claude", AI: "claude", Focused: true},
+		{Key: "cc:12bd32fd", AI: "claude", Gen: true, GenSince: ms(*now)},
+	})
+	f := s.BuildFrame()
+	if f.AI != "claude" || f.St != "working" || len(f.O) != 1 || f.O[0][0] != "chatgpt" || f.O[0][1] != "done" {
+		t.Fatalf("viewed AI should show its working conversation: %+v", f)
+	}
+}
+
 func TestFocusedGeneratingThenDone(t *testing.T) {
 	s, now := newTestState()
 	s.ApplyScan([]Item{{Key: "app:claude", AI: "claude", Focused: true}})

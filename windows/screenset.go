@@ -11,6 +11,10 @@ type ScreenSet struct {
 	ARot *bool `json:"arot,omitempty"`
 	Mic  *bool `json:"mic,omitempty"` // USB 麥克風（只有 AMOLED 有），沒有共用值：沒設過 = 關閉
 	MG   *int  `json:"mg,omitempty"`  // 麥克風增益（ES7210 的 0-14，見 micGainDefault），沒設過 = 預設
+	// WiFi（只有 AMOLED，wifi.go）：配對金鑰（空白 = 沒設定 WiFi）、螢幕最後回報的 IP、WiFi 名稱（顯示用）。密碼只存在螢幕上
+	WKey  string `json:"wkey,omitempty"`
+	WIP   string `json:"wip,omitempty"`
+	WSSID string `json:"wssid,omitempty"`
 }
 
 // 麥克風增益預設 10 = 30 dB（0-10 每階 3 dB，11 = 33、12 = 34.5、13 = 36、14 = 37.5 dB）

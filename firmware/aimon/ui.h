@@ -102,6 +102,7 @@ static Frame g_frame;
 static float g_redAt = 90;             // 額度幾 % 以上變紅：跟著電腦端「額度重置提醒」的門檻（frame 的 red，提醒關閉時電腦送 0 = 不變紅）
 static uint32_t g_lastFrameMs = 0;
 static bool g_everConnected = false;
+static const char* g_netHint = nullptr;   // 沒連上電腦時最下面那行（AMOLED 的 WiFi 狀態，wifi.h）；nullptr = PLUG IN USB
 static int32_t g_epochOffset = 0;
 static const uint32_t LINK_TIMEOUT_MS = 20000;
 static uint32_t g_stateSinceMs = 0;
@@ -999,7 +1000,7 @@ static void drawScene(uint32_t ms) {
     text("AI Monitor", CX, SI(76), C_LABEL2, &fName.font);
     bigValue("--", false, SI(113));
     text(g_everConnected ? "Disconnected" : "Not Connected", CX, SI(150), C_LABEL2, &fLabel.font);
-    text("PLUG IN USB", CX, SI(172), C_LABEL3, &fTiny.font);
+    text(g_netHint ? g_netHint : "PLUG IN USB", CX, SI(172), C_LABEL3, &fTiny.font);
     return;
   }
 

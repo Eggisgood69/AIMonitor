@@ -1,5 +1,5 @@
 #pragma once
-// USB 版不需要 Wi-Fi 設定，一般不用改這個檔。
+// 一般不用改這個檔（AMOLED 的 WiFi 由設定視窗設定，存在螢幕的 NVS）。
 // 支援兩種板子，依編譯目標自動選（build.ps1 會兩種都編）：
 //   ESP32-C3 → ESP32-2424S012（GC9A01 1.28" 240×240 LCD）
 //   ESP32-S3 → Waveshare ESP32-S3-Touch-AMOLED-1.75（CO5300 1.75" 466×466 AMOLED）

@@ -25,6 +25,7 @@ firmware/aimon/fonts466.h  AMOLED 用的放大字型（`fontgen.py 466`）
 firmware/aimon/config.h    兩種板子的腳位、亮度（`#if CONFIG_IDF_TARGET_ESP32S3`）
 firmware/aimon/sensors.h   AMOLED 的觸控、陀螺儀（I2C）
 firmware/aimon/mic.h       AMOLED 的 USB 麥克風（ES7210 + I2S + 自訂 UAC1 class driver，執行中切 TinyUSB）
+firmware/aimon/wifi.h      AMOLED 的 WiFi（掃描、連線、TCP 47323 + 配對金鑰、mDNS aimon-<id 後 6 碼>.local）；1.28 吋不做
 firmware/tools/mic-off.ps1 燒錄前讓麥克風模式的 AMOLED 重開回 hwcdc，輸出新的 COM 埠
 firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁）與大圖（主畫面取代 AI 名稱，AMOLED 的 Claude 仍是 Clawd），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
 firmware/preview/          把 ui.h 渲染成 README 的預覽圖片：build-preview.ps1（zig 編譯，win/ 是不需要 SDL 的平台替身，compose/ 合成圖片）→ docs/images/（用 AMOLED 466 的畫面、透明背景加機身邊框；狀態圖用 Claude，ais.png 是三家 AI 各一張）
@@ -37,6 +38,7 @@ windows/                   Go 程式（Windows only，WebView2）
   providers.js / providers_windows.go   ChatGPT（wham/usage）與 Gemini（gemini.google.com/usage）用量
   ui.js                    設定視窗（注入到 claude.ai 頁面上畫出來，因為要用 claude.ai 的登入 cookie 讀 Claude 用量）
   claudecode*.go           Claude Code hooks（http hook → 127.0.0.1:47322/cc）
+  wifi.go / wifiscreen_windows.go   螢幕的 WiFi：設定指令（wscan / wifi / wforget）、沒插 USB 時用 TCP 連到螢幕（跟 USB 共用 serveScreen）
   codex.go                 Codex 對話紀錄（~/.codex/sessions 的 rollout-*.jsonl）→ cx:<id> 項目，跟 ChatGPT App 畫面項目配對去重
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
   stats.go                 今日統計（stats.json，保留 7 天）；`Week()` 回傳複製的 map（設定視窗解鎖後才編 JSON，共用會並行讀寫、整個程式當掉）
@@ -78,11 +80,13 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.13.43、韌體 1.10.47（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.14.0、韌體 1.11.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
 電腦 → 螢幕：`{ai, st, msg, p5, pw, red, r5, rw, age, now, tz, saver, ss, bri, rot, arot, led, mic, mg, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`note` 只送目前主畫面那家 AI 的重置提醒（別家的不顯示：以前字前面加名字，太長被截成「CHATGPT 5H RESETS ...」，試過放小 LOGO 使用者覺得太複雜）；`saver` = 螢幕保護分鐘數，`ss` = 秒數（設定視窗的「30 秒」：送 `saver:1, ss:30`，韌體 1.10.47 起有 ss 就用它，舊韌體當 1 分鐘）；`red` = 額度幾 % 以上變紅，0 = 不變紅，沒送 = 90；`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`；`mic` 只送給 s3a175：1 = 切成 USB 麥克風、0 = 重開回 hwcdc，也可以單獨一行 `{"mic":0}`；`mg` = 麥克風增益 0-14，ES7210 的暫存器值，10 = 30 dB）
+WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wscan":[[ssid,rssi,0 開放|1 密碼|2 企業版],...]}`（失敗加 `"err":1`）；`{"wset":{"s","p","k"}}` 存進 NVS 並連線（`s` 空白 = 忘記）；
+螢幕回 `{"wst":{"st":0 沒設定|1 連線中|2 已連線|3 密碼可能不對|4 找不到,"ssid","ip","rssi","r"}}`（回 hello 後、狀態變了時送）。WiFi 的 TCP 連線第一行要是 `{"auth":"<配對金鑰>"}`（回 `{"auth":1}`），不對就斷線
 螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"mfx"` 補回幾次 USB 中斷遮罩（見下面麥克風那段）、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
@@ -217,6 +221,14 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
     以前每次整張送（外環 + 整張加光 + 送出），每秒只更新 6-12 次，改成慢慢淡掉後使用者說「很卡」（量法：hello 的 `vgn` 次數、`vgi` 最長間隔、`vgt` 最長一次 ms）。整張重畫中、轉場中不送；螢幕保護時照舊整張送（關掉光）。
     螢幕保護時不亮：Clawd 亂跑用另一張底圖，整張送 g_fb 會留下殘影。所以講話時直接離開螢幕保護（1.10.47，使用者選的）：慢的那條包絡超過 `VG_WAKE`（0.25 ≈ -51 dBFS）就當作有動靜（`g_lastActiveMs`），
     走原本的淡出淡入回主畫面、光暈照常；安靜後照設定的分鐘數再進螢幕保護
+- AMOLED 的 WiFi（2026-11-11，wifi.h / wifi.go / wifiscreen_windows.go）：使用者要「不用一直插著電腦」，只做 AMOLED（C3 單核心、記憶體少）。
+  設定走 USB（設定視窗 WiFi 分頁：螢幕掃描、選 SSID、輸入密碼）；密碼只存在螢幕 NVS，電腦只存配對金鑰 `wkey`、最後回報的 IP `wip`、`wssid`（settings.json screens.<id>）。
+  電腦端每 3 秒看設定過 WiFi、沒插 USB 的螢幕：先連記下的 IP，不行用 mDNS 名稱：**自己送查詢**（wifi.go `mdnsLookup`，QU 單播回應）——Windows 內建解析實測找不到（螢幕有回答，Resolve-DnsName / GetAddrInfo 都說不存在）；連不上 10 → 80 秒退避。
+  WiFi 不能當麥克風：USB 麥克風是 USB 音訊裝置，經 WiFi 要在 Windows 裝虛擬音訊驅動程式才會多一支麥克風（沒做）。
+  同一塊螢幕插著 USB 時 WiFi 那條斷掉（`usbHasID`）。WiFi 連線的 screens key 是 `wifi:<id>`、Port「WiFi <IP>」、`Net = true`：不送 mic / mg、不能一鍵更新韌體（`pickFirmwareTarget` 跳過）。
+  韌體：`WiFi.setSleep(false)`（省電模式收資料晚 100-300 ms）、自己管重連（`setAutoReconnect(false)`，掃描時不能同時在連線）；
+  USB 接的是充電器時寫 Serial 會卡住 → 狀態只在 USB 60 秒內有收到資料時才主動送（`g_usbRxMs`）。沒連上電腦時畫面最下面顯示「WIFI <IP>」等（ui.h `g_netHint`）。
+  已驗證：掃描（實機 17 個 WiFi、開 WiFi 後剩餘記憶體 185 → 169 KB）；實測正常：連線、拔 USB 改接充電器（約 17 秒接上）、插回自動切 USB、WiFi 開著時 USB 麥克風（Win+H）；mDNS 182 ms 找到螢幕
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）
@@ -253,6 +265,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 - 主燈規則（state.go `rank`）：「你沒看到的事」優先——背景需審核 > 正在看的需審核 > 背景錯誤 > 背景完成 >
   背景生成中 > 正在看的生成中 > 背景完成（1 分鐘後降到這裡）> 看過的錯誤 / 完成（8 秒）> 待機。**不跳 Windows 通知**（使用者不要，已移除）。
   正在看的是另一個 AI 時，主燈跟著你看的 AI（需審核、錯誤除外）。
+  跟著你看的 AI 時用那家 AI 裡最需要注意的一項，不是畫面上那一項：以前 Codex 剛在背景完成、你在 Claude App 看著待機的對話、另一個 Claude Code 對話在跑時，主燈變成 Claude 待機、在跑的變小圓點（呼吸燈不亮，1.14.0 修）。
   大家都待命、你切到別的程式 / 網站時，主畫面留在你最後看的 AI（`State.lastView`）：以前同分時照名稱排，`app:chatgpt` 在 `app:claude` 前面，一點別的視窗就跳成 GPT（1.13.32 修）
 - Claude Code hooks 不知道你在看哪個對話：Stop 與 Claude App 停止鈕消失的時間差 4 秒內 = 同一個對話（`matchClaudeApp`），
   只亮一個綠燈、切回 App 一起熄。Claude App 背景任務的「停止此任務」、預覽伺服器的「停止此伺服器」不算生成中（monitor.ps1 `$STOP_NOT_RE`；
@@ -342,5 +355,11 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 ## 待處理
 
+- WiFi 麥克風（使用者 2026-11-11 說先不做）：可行做法是使用者自己裝 VB-CABLE，螢幕經 WiFi 送 16 kHz 單聲道 PCM（約 32 KB/s），AIMonitor 播進「CABLE Input」、
+  Windows 用「CABLE Output」當麥克風。自己寫虛擬麥克風驅動要 EV 憑證 + 微軟簽章，不實際；S3 沒有傳統藍牙，不能當藍牙耳麥。
+  要處理：螢幕不知道有沒有程式在錄音（一直送、光暈只看音量）、插回 USB 時預設麥克風要切回 AIMonitor Mic
+- WiFi 更新韌體（OTA）：AMOLED 分割表有 app0 / app1 兩個 3 MB 區，可以用 Arduino 的 Update 寫另一區再切換。
+  **一定要同時改 flasher.go**：OTA 過一次後從 app1 開機，USB 一鍵更新只寫 0x10000（app0），會「寫成功但還是舊版」→ USB 燒錄時要清掉 otadata（0xe000）。
+  只給配對金鑰驗證過的連線用、比對 SHA256、傳的時候暫停推畫面
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
 - 其他提案：額度跨過門檻當下主動提醒（現在只有到門檻變紅、重置前 5 分鐘 / 重置時的提醒 reminder.go；使用者 2026-11 說先不做）、夜間自動調暗、生成太久提醒

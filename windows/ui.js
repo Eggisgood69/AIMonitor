@@ -160,7 +160,7 @@
   <section data-pane="wifi">
   <div id="wifibox"></div>
   <div class="hint" style="padding:0 4px 12px">設定好 WiFi 之後，螢幕接一般 USB 充電器就能顯示，不用一直插著電腦（電腦和螢幕要在同一個網路）。
-    插著 USB 時優先用 USB。只支援 2.4 GHz WiFi；只有 1.75 吋 AMOLED 有 WiFi。更新螢幕韌體還是要插 USB。</div>
+    插著 USB 時優先用 USB。只支援 2.4 GHz WiFi；只有 1.75 吋 AMOLED 有 WiFi。<b>經 WiFi 連線時麥克風不能用</b>，更新螢幕韌體也要插 USB。</div>
   </section>
 
   <section data-pane="settings">
@@ -487,7 +487,8 @@
           <div class="row sw"><div>外接 LED<div class="hint">單顆 WS2812，${pin}，跟外圈燈號同步</div></div>
             <select data-scr="${k}" data-k="led"><option value="0">關閉</option><option value="10">暗</option><option value="25">中</option>
               <option value="50">亮</option><option value="100">最亮</option></select></div>
-          ${amoled && !x.net ? `<div class="row sw"><div>麥克風<div class="hint">開啟後電腦多一支 USB 麥克風「AIMonitor Mic」（板上兩顆），可以用 Win+H 語音輸入、Claude App 語音模式。開啟、關閉時螢幕會重新連線（關閉要重新開機）</div>
+          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint">開啟後電腦多一支 USB 麥克風「AIMonitor Mic」（板上兩顆），可以用 Win+H 語音輸入、Claude App 語音模式。開啟、關閉時螢幕會重新連線（關閉要重新開機）</div>
+              ${x.net ? `<div class="hint" style="color:#ffd60a">現在經 WiFi 連線，麥克風不能用（要插著電腦的 USB 才是麥克風）。設定會記住，插上 USB 就照這裡的設定</div>` : ""}
               <div class="hint bad" data-micx="${k}" style="display:none">上次開著麥克風時螢幕當機重開，這次先不開；拔掉 USB 再插上後會再試</div></div>
             <select data-scr="${k}" data-k="mic"><option value="0">關閉</option><option value="1">開啟</option></select></div>
           <div class="row sw"><div>麥克風增益<div class="hint">收音太小聲就調高，有雜音或爆音就調低；馬上生效</div></div>
@@ -539,7 +540,9 @@
       else if (w && w.st === 4) st = `<span class="bad">● 找不到 ${H(w.ssid)}</span><div class="hint">確認 WiFi 有開、是 2.4 GHz（5 GHz 螢幕看不到）</div>`;
       else if (conf) st = `${H(conf.ssid)}${conf.err ? `<div class="hint bad">${H(conf.err)}</div>` : `<div class="hint">等待螢幕連線…</div>`}`;
       else st = `<span class="muted">未設定</span>`;
-      if (x && !x.net && w && w.st === 2) st += `<div class="hint">現在可以拔掉電腦的 USB，改接充電器</div>`;
+      const micOn = x && x.set && x.set.mic;
+      if (x && !x.net && w && w.st === 2) st += `<div class="hint">現在可以拔掉電腦的 USB，改接充電器${micOn ? "（拔掉後麥克風不能用）" : ""}</div>`;
+      if (x && x.net && micOn) st += `<div class="hint" style="color:#ffd60a">經 WiFi 連線時麥克風不能用，要用麥克風請插電腦的 USB</div>`;
       const oldFw = x && !x.wf;
       let body = "";
       if (oldFw) {

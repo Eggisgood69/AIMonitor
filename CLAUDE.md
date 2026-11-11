@@ -41,6 +41,7 @@ windows/                   Go 程式（Windows only，WebView2）
   wifi.go / wifiscreen_windows.go   螢幕的 WiFi：設定指令（wscan / wifi / wforget）、沒插 USB 時用 TCP 連到螢幕（跟 USB 共用 serveScreen）
   codex.go                 Codex 對話紀錄（~/.codex/sessions 的 rollout-*.jsonl）→ cx:<id> 項目，跟 ChatGPT App 畫面項目配對去重
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
+  quotahist.go             額度歷史（quotahist.json，7 天；數字變了才記、沒變每 10 分鐘一點），統計分頁的額度曲線（`aimonQuotaHist`，只在那頁開著時每分鐘讀一次）
   stats.go                 今日統計（stats.json，保留 7 天）；`Week()` 回傳複製的 map（設定視窗解鎖後才編 JSON，共用會並行讀寫、整個程式當掉）
   tray_windows.go          系統匣圖示
   appupdate.go / appupdate_windows.go   電腦端新版檢查（GitHub releases/latest）與一鍵更新（下載 + SHA256 驗證；可跨平台的部分有 go test）
@@ -233,6 +234,11 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）
 - Gemini 用量頁是獨立網址 `/usage`；背景 WebView 禁止開新視窗（曾經一直點到「瞭解詳情」跳窗）。
+  登入視窗（設定視窗「開啟 Gemini」，`LoginMode`）踩過三個坑（2026-11-11）：
+  (1) 「登入」鈕是 `window.open("gemini.google.com/signin?...")`，再轉 accounts.google.com：擋新視窗 / 外站連結時要放行這兩個（providers.js `isSignIn`，在同一個視窗開），以前按了沒反應；
+  (2) 登入中 providerLoop 每 10 秒叫頁面讀用量，providers.js 會自己點選單、設定 → 畫面自己動、按不到登入 → 登入中只看登入了沒（`inLogin()`），手動關視窗也算登入結束（`providerClosed`）；
+  (3) **背景視窗的頁面不能 await Go 的綁定函式**：go-webview2 的回覆經 `p.w.Dispatch` 排進那個視窗的佇列，但只有主視窗在跑訊息迴圈，回覆永遠送不到、await 卡死
+  （曾經整個讀不到用量）。要傳給頁面的狀態由 Go 在 `pollProviders` 的 Eval 裡設（`window.__aimonLogin`）；`aimonUsage` 能用是因為沒人等它的回覆
   Gemini 網頁生成時的停止鈕叫「停止回覆」（2026-10 實測燈號正常）
 - 背景 WebView 省記憶體（providers_windows.go 開頭）：完整網頁一個 300-500 MB，平常停在 idle 頁——ChatGPT `robots.txt`
   （同網站的小頁面，providers.js 一樣會注入、帶 cookie 打 API），讀不到才開一次完整頁面（30 分鐘最多一次）；Gemini 讀的時候才開 `/usage`，讀完換 `about:blank`。
@@ -361,5 +367,9 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
 - WiFi 更新韌體（OTA）：AMOLED 分割表有 app0 / app1 兩個 3 MB 區，可以用 Arduino 的 Update 寫另一區再切換。
   **一定要同時改 flasher.go**：OTA 過一次後從 app1 開機，USB 一鍵更新只寫 0x10000（app0），會「寫成功但還是舊版」→ USB 燒錄時要清掉 otadata（0xe000）。
   只給配對金鑰驗證過的連線用、比對 SHA256、傳的時候暫停推畫面
+- Fable 用量（使用者 2026-11-11 說先不加）：Claude 用量回應的 `limits` 陣列裡 `kind: "weekly_scoped"`、`scope.model.display_name: "Fable"` 那一項（`percent`、`resets_at`）；
+  `weekly_scoped_shares` 是它占每週額度的比例（allowance 50%、used）。`seven_day_opus` / `seven_day_sonnet` 是 null。
+  另外 `seven_day_breakdown.rows` 有本週用量依來源分（claude_code / chat / cowork / other 的 %），統計分頁可以用。
+  要加的話：parseClaudeUsage 多讀這一項，額度曲線多一條線、狀態分頁 Claude 額度卡片多一行
 - Cursor Agent 支援：Cursor 有 `~/.cursor/hooks.json`（beforeSubmitPrompt / stop），但沒有「等待允許」事件
 - 其他提案：額度跨過門檻當下主動提醒（現在只有到門檻變紅、重置前 5 分鐘 / 重置時的提醒 reminder.go；使用者 2026-11 說先不做）、夜間自動調暗、生成太久提醒

@@ -1259,11 +1259,13 @@ func main() {
 	go func() { // 新版要取代：結束自己
 		windows.WaitForSingleObject(quitEv, windows.INFINITE)
 		logf("quit requested by new version")
+		state.hist.Save()
 		os.Exit(0)
 	}()
 
 	stats = NewStats(filepath.Join(appDir, "stats.json"))
 	state.LoadQuotas(filepath.Join(appDir, "quota.json")) // 重開前最後讀到的額度（15 分鐘內），重開後第一分鐘也有額度
+	state.hist = NewQuotaHist(filepath.Join(appDir, "quotahist.json"))
 	startClaudeCodeServer()
 	go serialLoop()
 	go wifiLoop()
@@ -1295,6 +1297,15 @@ func main() {
 	wv.Bind("aimonUsage", func(raw string) string { onUsage(raw); return "ok" })
 	wv.Bind("aimonCmd", onCmd)
 	wv.Bind("aimonStatus", func() string { return uiStatusJSON() })
+	// 統計分頁的額度曲線：只在那一頁開著時每分鐘讀一次（資料比較多，不放進每秒的狀態）
+	wv.Bind("aimonQuotaHist", func(ai string, days int) string {
+		if days < 1 || days > 7 {
+			days = 1
+		}
+		now := time.Now()
+		b, _ := json.Marshal(map[string]interface{}{"now": now.Unix(), "samples": state.hist.Get(ai, now.Add(-time.Duration(days)*24*time.Hour))})
+		return string(b)
+	})
 	wv.Init(uiJS)
 	wv.Navigate(restURL)
 
@@ -1332,6 +1343,7 @@ func main() {
 
 	_ = unsafe.Sizeof(0)
 	wv.Run()
+	state.hist.Save()
 	trayRemove()
 	logf("exit")
 }

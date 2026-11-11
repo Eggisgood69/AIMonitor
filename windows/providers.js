@@ -48,11 +48,23 @@
     const steps = [];
     const onUsagePage = () => /^\/(u\/\d+\/)?usage/.test(location.pathname);
     // 背景視窗不要開任何新視窗（例如「瞭解詳情」連到說明中心）
-    try { window.open = () => null; } catch (e) {}
+    const isSignIn = (u) => u.hostname === "accounts.google.com" || (u.hostname === location.hostname && /^\/signin/.test(u.pathname));
+    try {
+      window.open = (url) => {
+        // 登入：同一個視窗開。Gemini 的「登入」鈕是 window.open("gemini.google.com/signin?...")，再轉到 accounts.google.com（2026-11-11 實測）
+        try { const u = new URL(url, location.href); if (isSignIn(u)) location.href = u.href; } catch (e) {}
+        return null;
+      };
+    } catch (e) {}
     document.addEventListener("click", (e) => {
       const a = e.target && e.target.closest && e.target.closest("a[href]");
       if (!a) return;
       let u; try { u = new URL(a.href, location.href); } catch (x) { return; }
+      // Google 登入（右上角「登入」連到 accounts.google.com）要放行，在同一個視窗開：以前一起被擋掉，按了沒反應、登不進去（2026-11-11）
+      if (isSignIn(u)) {
+        if (a.target === "_blank") { e.preventDefault(); e.stopPropagation(); location.href = u.href; }
+        return;
+      }
       if (a.target === "_blank" || u.hostname !== location.hostname) { e.preventDefault(); e.stopPropagation(); }
     }, true);
     function visibleEls(sel) { return [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length); }
@@ -176,8 +188,24 @@
 
     let openedAt = 0;
     const ss = (k, v) => { try { if (v === undefined) return sessionStorage.getItem(k); sessionStorage.setItem(k, v); } catch (e) { return null; } };
+    // 是不是在登入視窗裡：AIMonitor 每次叫它讀的時候設 window.__aimonLogin（登入中每 10 秒一次）。
+    // 頁面重新載入後變數就沒了，所以記下時間：15 秒內說過「在登入」就還算
+    const inLogin = () => {
+      if (window.__aimonLogin === true) { ss("aimonLoginAt", String(Date.now())); return true; }
+      if (window.__aimonLogin === false) return false;
+      return Date.now() - +(ss("aimonLoginAt") || 0) < 15000;
+    };
     window.__aimonPoll = async function () {
       steps.length = 0;
+      // 使用者正在登入視窗裡登入：什麼都不點、不換頁，登入好了就回報（AIMonitor 收到後關掉視窗，之後照常讀用量）
+      try {
+        if (inLogin()) {
+          // 登入好了：看得到帳號頭像，或在 Gemini 自己的頁面（不是 /signin）載入 5 秒以上、「登入」鈕不見了
+          const settled = document.readyState === "complete" && performance.now() > 5000 && !/^\/signin/.test(location.pathname);
+          if (loggedIn() || (settled && !loggedOut())) send({ ai: "gemini", login: true, quota: null });
+          return;
+        }
+      } catch (e) {}
       // 用量頁開著太久，數字可能是舊的：重新整理，載入後會自動再讀一次
       if (openedAt && Date.now() - openedAt > 60000) { location.reload(); return; }
       // 不在用量頁：直接開用量頁（如果帳號沒有用量頁，Google 會轉回首頁，這時改用選單）

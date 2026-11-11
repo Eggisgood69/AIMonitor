@@ -9,6 +9,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -78,6 +79,7 @@ func subclassHide(h uintptr) {
 		hideCB = syscall.NewCallback(func(hw, msg, wp, lp uintptr) uintptr {
 			if msg == wmClose {
 				procShowWindow.Call(hw, swHide)
+				providerClosed(hw)
 				return 0
 			}
 			r, _, _ := procCallWindowPrc.Call(oldProc[hw], hw, msg, wp, lp)
@@ -86,6 +88,24 @@ func subclassHide(h uintptr) {
 	}
 	old, _, _ := procSetWindowLong.Call(h, ^uintptr(3), hideCB)
 	oldProc[h] = old
+}
+
+// 使用者自己關掉登入視窗：當作登入結束，馬上讀一次用量
+// （以前還留在登入模式：頁面不自動找用量頁、也不回 idle 頁，Gemini 一直沒有額度）
+func providerClosed(hw uintptr) {
+	provMu.Lock()
+	ai := ""
+	for k, p := range provs {
+		if p.hwnd == hw && provSt[k] != nil && provSt[k].LoginMode {
+			provSt[k].LoginMode = false
+			ai = k
+		}
+	}
+	provMu.Unlock()
+	if ai != "" {
+		logf("%s: login window closed by user", ai)
+		go pollProviders(ai)
+	}
 }
 
 // 在主執行緒（wv.Run 之前）呼叫
@@ -136,7 +156,11 @@ func pollProviders(only string) {
 			p.goFull("") // Gemini：開用量頁，載入後 providers.js 會自己讀
 			continue
 		}
-		wv.Dispatch(func() { p.w.Eval("window.__aimonPoll && window.__aimonPoll()") })
+		// 順便告訴頁面是不是在登入視窗裡（是的話 providers.js 不自己點選單、換頁，只看登入了沒）。
+		// 不能讓頁面呼叫 Go 函式來問：背景視窗沒有自己的訊息迴圈，綁定函式的回覆永遠送不到，await 會一直卡住
+		login := provSt[ai] != nil && provSt[ai].LoginMode
+		js := fmt.Sprintf("window.__aimonLogin = %v; window.__aimonPoll && window.__aimonPoll()", login)
+		wv.Dispatch(func() { p.w.Eval(js) })
 	}
 }
 
@@ -187,6 +211,13 @@ func showProvider(ai string) {
 		procShowWindow.Call(p.hwnd, swShow)
 		procSetForeground.Call(p.hwnd)
 	})
+	// 頁面載入後 6 秒會自己讀一次：在那之前先告訴它在登入視窗裡（之後每 10 秒 providerLoop 會再說一次）
+	go func() {
+		for _, d := range []time.Duration{2 * time.Second, 2 * time.Second} {
+			time.Sleep(d)
+			pollProviders(ai)
+		}
+	}()
 }
 
 // providers.js 回報的用量（Gemini 在頁面上解析好；ChatGPT 改傳原始回應，在 Go 端解析）

@@ -44,6 +44,9 @@
     chatgpt: `<svg viewBox="0 0 24 24"><path fill="#FFFFFF" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`,
     gemini: `<svg viewBox="0 0 24 24"><defs><linearGradient id="gmg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#4796E3"/><stop offset=".5" stop-color="#9177C7"/><stop offset="1" stop-color="#CA6673"/></linearGradient></defs><path fill="url(#gmg)" d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>`,
   };
+  // 同一頁放好幾個 Gemini 圖示時，漸層的 id 要各自不同：url(#gmg) 會指到第一個，它在隱藏的分頁裡就整個畫不出來
+  let logoN = 0;
+  const logo = (ai) => { const id = "gmg" + ++logoN; return (LOGOS[ai] || "").replace(/gmg/g, id); };
   const ST = { idle: "待命", done: "完成", working: "生成中", review: "需審核", error: "錯誤" };
   const COL = { idle: "#8e8e93", done: "#30d158", working: "#30d158", review: "#ffd60a", error: "#ff453a" };
   const SRC = { app: "桌面 App", web: "瀏覽器", ext: "網頁", cc: "Agent" };   // Claude Code 分不出是 App 的 Code 分頁還是終端機
@@ -133,6 +136,17 @@
   .wap:hover { background: rgba(255,255,255,.04); }
   .wap .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wap .sig { flex: none; color: #8e8e93; font-size: 12.5px; }
+  .qbar { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0 8px; }
+  .seg { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: #1c1c1e; }
+  .seg button { padding: 4px 10px; border-radius: 7px; background: transparent; color: #98989f; font-weight: 600; font-size: 12.5px; display: flex; align-items: center; }
+  .seg button.on { background: #3a3a3c; color: #f5f5f7; }
+  .seg button svg { width: 16px; height: 16px; }
+  .qleg { display: flex; gap: 14px; font-size: 12px; color: #98989f; padding-bottom: 4px; }
+  .qleg i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: 3px; margin-right: 5px; }
+  #qplot { position: relative; padding-bottom: 10px; }
+  #qplot svg { display: block; width: 100%; }
+  #qplot text { font: 11px -apple-system, "Segoe UI", sans-serif; fill: #8e8e93; }
+  .qtip { position: absolute; top: 0; pointer-events: none; background: #2c2c2e; border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.5; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.4); }
 </style></head>
 <body><main>
   <header><div class="logo"></div><div><h1>AI 狀態指示燈</h1><div class="ver" id="ver"></div></div></header>
@@ -157,6 +171,12 @@
 
   <section data-pane="stats">
   <div class="card" id="stats"></div>
+  <div class="card" id="qcard">
+    <div class="row" style="border:0;padding-bottom:2px"><div class="k">額度用量</div></div>
+    <div class="qbar"><div class="seg" id="qai"></div><div class="seg"><button data-qd="1">24 小時</button><button data-qd="7">7 天</button></div></div>
+    <div class="qleg" id="qleg"></div>
+    <div id="qplot"></div>
+  </div>
   </section>
 
   <section data-pane="wifi">
@@ -335,8 +355,7 @@
         const left = fmtLeft(q.p5 >= 0 ? q.r5 : q.rw);
         el.innerHTML = `${label} <b>${Math.round(main)}%</b>${left ? `<span class="muted"> · ${left}後重置</span>` : ""}
           <div class="bar"><i style="width:${Math.min(100, main)}%"></i></div>
-          ${q.p5 >= 0 && q.pw >= 0 && !p.cached ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}
-          ${ai === "chatgpt" ? `<div class="hint">Codex 的用量（ChatGPT 聊天的上限不公開）</div>` : ""}`;
+          ${q.p5 >= 0 && q.pw >= 0 && !p.cached ? `<div class="hint">${wl} ${Math.round(q.pw)}%</div>` : ""}`;
       } else if (p.login === "out") {
         el.innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入
           <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="login:${ai}">登入 ${name}</button></div>`;
@@ -398,6 +417,8 @@
       <code>${esc(s.monitor || "偵測程式尚未回報")}${btns.length ? "<br><br>偵測到的按鈕<br>" + btns.join("<br>") : ""}</code></details>`;
 
     renderStats(s);
+    qStatus = s;
+    if (document.querySelector('[data-pane="stats"]').classList.contains("on")) loadQHist(false);
     const cc = s.claudeCode || {};
     $("cc").classList.toggle("on", !!cc.installed);
     let ccs = "";
@@ -625,6 +646,97 @@
     if (fg && (await ask("要讓螢幕忘記 WiFi 嗎？之後要插著 USB 才會顯示。", "忘記"))) window.aimonCmd("wforget:" + fg.dataset.wforget).then(render);
   });
 
+  // ---------------- 額度用量曲線（統計分頁）----------------
+  // 一張線圖、一個 0-100% 的軸：短週期（5 小時；Gemini / ChatGPT 依各家標籤）實線、品牌色；長週期（本週）虛線、灰色。
+  // 沒有 AIMonitor 在跑的空檔（兩點相隔超過 25 分鐘）斷開不連；額度重置提醒的門檻畫一條淡淡的參考線。滑鼠移上去看那個時間的數字
+  let qAI = "claude", qDays = 1, qData = null, qT = 0, qStatus = null, qHover = null;
+  function loadQHist(force) {
+    if (!force && Date.now() - qT < 60000) return;
+    qT = Date.now();
+    const ai = qAI, days = qDays;
+    window.aimonQuotaHist(ai, days).then((r) => {
+      if (ai !== qAI || days !== qDays) return;
+      try { qData = JSON.parse(r); } catch (_) { qData = null; }
+      drawQ();
+    });
+  }
+  function qLabels(ai) {
+    const p = ((qStatus || {}).providers || {})[ai] || {};
+    return ai === "claude" ? ["5 小時", "本週"] : [p.slabel || "5 小時", p.wlabel || "本週"];
+  }
+  function drawQ() {
+    const seg = document.getElementById("qai");
+    if (!seg.childElementCount) seg.innerHTML = ["claude", "chatgpt", "gemini"].map((ai) => `<button data-qai="${ai}" title="${NAMES[ai]}" aria-label="${NAMES[ai]}">${logo(ai)}</button>`).join("");
+    for (const b of document.querySelectorAll("[data-qai]")) b.classList.toggle("on", b.dataset.qai === qAI);
+    for (const b of document.querySelectorAll("[data-qd]")) b.classList.toggle("on", +b.dataset.qd === qDays);
+    const [l5, lw] = qLabels(qAI), col = BRAND[qAI] || "#8e8e93", grey = "#8e8e93";
+    document.getElementById("qleg").innerHTML = `<span><i style="border-color:${col}"></i>${l5}</span><span><i style="border-color:${grey};border-top-style:dashed"></i>${lw}</span>`;
+    const plot = document.getElementById("qplot");
+    const sm = (qData && qData.samples) || [];
+    if (!sm.length) { plot.innerHTML = `<div class="hint" style="padding:18px 0">還沒有資料（讀到額度後會開始記錄）</div>`; return; }
+    const W = Math.max(260, plot.clientWidth || 420), H = 150, L = 38, R = 40, T = 8, B = 20;
+    const t1 = qData.now, t0 = t1 - qDays * 86400;
+    const x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R), y = (v) => T + (1 - Math.min(100, v) / 100) * (H - T - B);
+    const GAP = 25 * 60;
+    const path = (k) => {
+      let d = "", prev = null;
+      for (const p of sm) {
+        if (p[k] < 0) { prev = null; continue; }
+        d += `${prev && p.t - prev.t <= GAP ? "L" : "M"}${x(p.t).toFixed(1)},${y(p[k]).toFixed(1)}`;
+        prev = p;
+      }
+      return d;
+    };
+    let g = "";
+    for (const v of [0, 50, 100]) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#2c2c2e" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}${v === 100 ? "%" : ""}</text>`;
+    const red = (qStatus || {}).remindAt;
+    if (red > 0 && red < 100) g += `<line x1="${L}" x2="${W - R}" y1="${y(red)}" y2="${y(red)}" stroke="#ff453a" stroke-opacity=".45" stroke-dasharray="3 3"/>`;
+    // 時間刻度：24 小時每 6 小時一格，7 天每天午夜一格（本地時間）
+    const step = qDays === 1 ? 6 * 3600 : 86400, tz = new Date().getTimezoneOffset() * 60;
+    for (let t = Math.ceil((t0 - tz) / step) * step + tz; t <= t1; t += step) {
+      if (t - t0 < 1800) continue;
+      const d = new Date(t * 1000), lab = qDays === 1 ? `${String(d.getHours()).padStart(2, "0")}:00` : `${d.getMonth() + 1}/${d.getDate()}`;
+      g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" stroke="#1c1c1e"/><text x="${x(t)}" y="${H - 5}" text-anchor="middle">${lab}</text>`;
+    }
+    g += `<path d="${path("w")}" fill="none" stroke="${grey}" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    g += `<path d="${path("p")}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    // 線尾直接標數字（兩個太近就錯開）
+    const last = (k) => { for (let i = sm.length - 1; i >= 0; i--) if (sm[i][k] >= 0) return sm[i]; return null; };
+    const a = last("p"), b = last("w");
+    let ya = a ? y(a.p) + 4 : 0, yb = b ? y(b.w) + 4 : 0;
+    if (a && b && Math.abs(ya - yb) < 12) { if (ya <= yb) { ya -= 6; yb += 6; } else { ya += 6; yb -= 6; } }
+    if (a) g += `<text x="${x(a.t) + 6}" y="${ya}" style="fill:#f5f5f7">${Math.round(a.p)}%</text>`;
+    if (b) g += `<text x="${x(b.t) + 6}" y="${yb}">${Math.round(b.w)}%</text>`;
+    g += `<g id="qx" style="display:none"><line y1="${T}" y2="${H - B}" stroke="#636366"/><circle r="4" fill="${col}" stroke="#000" stroke-width="2"/><circle r="4" fill="${grey}" stroke="#000" stroke-width="2"/></g>`;
+    g += `<rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="qhit"/>`;
+    plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">${g}</svg><div class="qtip" style="display:none"></div>`;
+    const hit = plot.querySelector("#qhit"), cross = plot.querySelector("#qx"), tip = plot.querySelector(".qtip");
+    const show = (ev) => {
+      const r = plot.querySelector("svg").getBoundingClientRect(), mx = ((ev.clientX - r.left) / r.width) * W;
+      let best = sm[0];
+      for (const p of sm) if (Math.abs(x(p.t) - mx) < Math.abs(x(best.t) - mx)) best = p;
+      const px = x(best.t), [c1, c2] = cross.querySelectorAll("circle");
+      cross.style.display = "";
+      cross.querySelector("line").setAttribute("x1", px); cross.querySelector("line").setAttribute("x2", px);
+      c1.style.display = best.p >= 0 ? "" : "none"; c1.setAttribute("cx", px); c1.setAttribute("cy", y(Math.max(0, best.p)));
+      c2.style.display = best.w >= 0 ? "" : "none"; c2.setAttribute("cx", px); c2.setAttribute("cy", y(Math.max(0, best.w)));
+      const d = new Date(best.t * 1000), hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      tip.innerHTML = `<div class="muted">${qDays === 1 ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`}</div>` +
+        (best.p >= 0 ? `<div>${l5} <b>${Math.round(best.p)}%</b></div>` : "") + (best.w >= 0 ? `<div>${lw} <b>${Math.round(best.w)}%</b></div>` : "");
+      tip.style.display = "";
+      const left = (px / W) * r.width;
+      tip.style.left = Math.min(r.width - tip.offsetWidth, Math.max(0, left + (left > r.width / 2 ? -tip.offsetWidth - 10 : 10))) + "px";
+    };
+    hit.addEventListener("mousemove", show);
+    hit.addEventListener("mouseleave", () => { cross.style.display = "none"; tip.style.display = "none"; });
+  }
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("[data-qai]"), d = e.target.closest("[data-qd]");
+    if (a) { qAI = a.dataset.qai; qData = null; drawQ(); loadQHist(true); }
+    if (d) { qDays = +d.dataset.qd; qData = null; drawQ(); loadQHist(true); }
+  });
+  window.addEventListener("resize", () => { if (qData) drawQ(); });
+
   const BRAND = { claude: "#f0855a", chatgpt: "#e5e5ea", gemini: "#64a8ff" };
   function fmtDur(sec) {
     sec = Math.round(sec || 0);
@@ -646,7 +758,7 @@
       let tc = 0, ts = 0;
       for (const [ai, c, sec] of today) {
         tc += c; ts += sec;
-        h += `<div class="srow"><div class="nm" title="${NAMES[ai] || H(ai)}" aria-label="${NAMES[ai] || H(ai)}">${LOGOS[ai] || H(NAMES[ai] || ai)}</div><div class="bar"><i style="width:${Math.max(3, (sec / max) * 100)}%;background:${BRAND[ai] || "#8e8e93"}"></i></div><div class="val">${c} 次 · ${fmtDur(sec)}</div></div>`;
+        h += `<div class="srow"><div class="nm" title="${NAMES[ai] || H(ai)}" aria-label="${NAMES[ai] || H(ai)}">${LOGOS[ai] ? logo(ai) : H(NAMES[ai] || ai)}</div><div class="bar"><i style="width:${Math.max(3, (sec / max) * 100)}%;background:${BRAND[ai] || "#8e8e93"}"></i></div><div class="val">${c} 次 · ${fmtDur(sec)}</div></div>`;
       }
       h += `<div class="hint" style="padding:2px 0 8px">合計 ${tc} 次 · ${fmtDur(ts)}</div>`;
     }

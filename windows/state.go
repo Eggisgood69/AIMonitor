@@ -95,8 +95,9 @@ type State struct {
 	done      []Finish
 	items     map[string]*Item
 	quota     map[string]*Quota
-	quotaPath string // 額度存檔（quotastore.go），空的 = 不存
-	lastView  string // 你最後在看的 AI（切到別的程式後，大家都待命時主畫面還是它）
+	quotaPath string     // 額度存檔（quotastore.go），空的 = 不存
+	hist      *QuotaHist // 額度歷史（quotahist.go，統計分頁的曲線），nil = 不記
+	lastView  string     // 你最後在看的 AI（切到別的程式後，大家都待命時主畫面還是它）
 	now       func() time.Time
 }
 
@@ -279,6 +280,7 @@ func (s *State) SetQuota(ai string, q Quota) {
 	defer s.mu.Unlock()
 	q.T = s.now()
 	s.quota[ai] = &q
+	s.hist.Add(ai, q.P5, q.PW)
 	s.saveQuotasLocked()
 }
 

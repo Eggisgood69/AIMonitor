@@ -46,4 +46,4 @@ $img = Join-Path $root 'docs/images'
 New-Item -ItemType Directory -Force $img | Out-Null
 go run "$PSScriptRoot/compose/main.go" $out $img
 if ($LASTEXITCODE) { throw "合成圖片失敗" }
-Write-Host "已更新：docs/images/states-v2.png、ais.png、pages-v6.png、demo-v2.gif"
+Write-Host "已更新：docs/images/states-v2.png、ais.png、pages-v6.png、ota.png、demo-v2.gif"

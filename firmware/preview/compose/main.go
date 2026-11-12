@@ -23,6 +23,7 @@ func main() {
 	grid(in, [][]string{{"review", "working", "done"}, {"error", "idle", "nolink"}}, 300, filepath.Join(outDir, "states-v2.png"))
 	grid(in, [][]string{{"ai_claude", "ai_chatgpt", "ai_gemini"}}, 300, filepath.Join(outDir, "ais.png"))
 	grid(in, [][]string{{"idle", "page1", "page2", "page3"}}, 300, filepath.Join(outDir, "pages-v6.png"))
+	grid(in, [][]string{{"ota"}}, 300, filepath.Join(outDir, "ota.png"))
 	n := animGIF(in, 320, filepath.Join(outDir, "demo-v2.gif"))
 	fmt.Println("frames", n)
 }

@@ -93,6 +93,12 @@ int main() {
     render("saver.ppm");
     g_saver = false;
   }
+  // 經 WiFi 更新韌體（wifi.h wifiOta）
+  {
+    Frame f; g_frame = f; g_ms = 100000; g_lastFrameMs = 0; g_otaPct = 60;
+    render("ota.ppm");
+    g_otaPct = -1;
+  }
   // 動畫：生成中(慢呼吸) → 需審核(快呼吸) → 完成(恆亮) → 錯誤(雙閃)
   {
     struct Seg { const char* ai; St st; float p5; int frames; const char* msg; };

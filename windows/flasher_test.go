@@ -147,6 +147,10 @@ func (f *fakeROM) Write(b []byte) error {
 				f.t.Errorf("FLASH_BEGIN expects 20 bytes on C3 ROM, got %d", len(data))
 			}
 			f.beginOff = binary.LittleEndian.Uint32(data[12:])
+			erase := binary.LittleEndian.Uint32(data[0:]) // 真的 ROM 一開始就擦除整個範圍
+			for i := f.beginOff; i < f.beginOff+erase; i++ {
+				f.flash[i] = 0xFF
+			}
 			f.seq = 0
 			f.reply(op, 0, nil, true)
 		case cmdFlashData:
@@ -246,12 +250,27 @@ func TestFlashRejectsBadImage(t *testing.T) {
 func TestFlashS3(t *testing.T) {
 	rom := newFakeROM(t, true)
 	rom.magic = 0x9
-	img := testImageFor(1500*1024, chipS3) // 比 C3 的 app 分割區大
+	img := testImageFor(1500*1024, chipS3)                    // 比 C3 的 app 分割區大
+	copy(rom.flash[otadataOffset:], []byte{1, 0, 0, 0, 0x55}) // 經 WiFi 更新過：otadata 指到 app1
 	if err := FlashApp(rom, true, img, nil, t.Logf); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(rom.flash[appOffset:appOffset+len(img)], img) {
 		t.Fatal("flash content mismatch")
+	}
+	if !bytes.Equal(rom.flash[otadataOffset:otadataOffset+otadataSize], bytes.Repeat([]byte{0xFF}, otadataSize)) {
+		t.Fatal("otadata should be erased so the bootloader starts app0")
+	}
+}
+
+func TestFlashC3KeepsOtadata(t *testing.T) {
+	rom := newFakeROM(t, true)
+	copy(rom.flash[otadataOffset:], []byte{1, 2, 3})
+	if err := FlashApp(rom, true, testImage(64*1024), nil, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+	if rom.flash[otadataOffset] != 1 {
+		t.Fatal("C3 never updates over WiFi; its otadata should stay as is")
 	}
 }
 

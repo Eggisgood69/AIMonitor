@@ -5,6 +5,8 @@ package main
 import (
 	_ "embed"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,7 @@ var (
 	fwMsg      string
 	fwErr      string
 	fwMicOff   = map[string]bool{} // 更新中的螢幕（key）：麥克風先關掉
+	fwDoneAt   time.Time           // 上次更新完成：「更新完成」只顯示一下，之後設定視窗回到每塊螢幕的版本與按鈕
 )
 
 func micHeldOff(key string) bool {
@@ -101,6 +104,7 @@ func startFirmwareUpdate(port string) {
 		} else {
 			fwMsg = "更新完成，螢幕已重新開機"
 			fwProgress = 100
+			fwDoneAt = time.Now()
 			logf("firmware updated to %s on %s", fwVersion(), fwPort)
 		}
 		fwMu.Unlock()
@@ -124,11 +128,17 @@ func setFw(p int, msg string) {
 func pickFirmwareTarget(port string, scs []serialStatus) (serialStatus, error) {
 	var cand []serialStatus
 	for _, s := range scs {
-		if s.Verified && !s.Net && (port == "" || s.Port == port) { // WiFi 連線不能燒錄
+		// WiFi 連線要韌體 1.12.0 起（ota.go）；更舊的要插 USB 更新一次
+		if s.Verified && (!s.Net || s.OTA) && (port == "" || s.Port == port) {
 			cand = append(cand, s)
 		}
 	}
 	if len(cand) == 0 {
+		for _, s := range scs {
+			if s.Verified && s.Net && !s.OTA && (port == "" || s.Port == port) {
+				return serialStatus{}, errors.New("這塊螢幕的韌體還不能經 WiFi 更新，請插 USB 更新一次")
+			}
+		}
 		if port != "" {
 			return serialStatus{}, errors.New(port + " 的螢幕目前沒有連線，請確認螢幕已連線後再試")
 		}
@@ -149,6 +159,9 @@ func doFirmwareUpdate(port string) error {
 	target, err := pickFirmwareTarget(port, screenList())
 	if err != nil {
 		return err
+	}
+	if target.Net {
+		return wifiFirmwareUpdate(target)
 	}
 	if target.Mic {
 		defer setMicHeldOff(target.Key(), false) // 更新完螢幕重開，照設定再開麥克風
@@ -202,10 +215,77 @@ func doFirmwareUpdate(port string) error {
 	}, logf)
 }
 
+// 經 WiFi 更新（ota.go）：請 WiFi 那條一般連線讓出來，另開一條連線送韌體
+func wifiFirmwareUpdate(target serialStatus) error {
+	img := fwImages[target.Board()]
+	if len(img) == 0 {
+		return errors.New("沒有這種螢幕（" + target.Board() + "）的韌體")
+	}
+	key := target.ID
+	settingsMu.Lock()
+	wkey := ""
+	if s := settings.Screens[key]; s != nil {
+		wkey = s.WKey
+	}
+	settingsMu.Unlock()
+	if wkey == "" || target.IP == "" {
+		return errors.New("找不到這塊螢幕的 WiFi 設定，請插 USB 更新")
+	}
+	fwMu.Lock()
+	fwPort = target.Port
+	fwMu.Unlock()
+	for i := 0; i < 50; i++ {
+		serMu.Lock()
+		_, c := screens["wifi:"+key]
+		serMu.Unlock()
+		if !c {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	setFw(2, "連線到螢幕…")
+	var c net.Conn
+	var err error
+	addr := net.JoinHostPort(target.IP, strconv.Itoa(wifiPort))
+	for i := 0; i < 5; i++ { // 螢幕要看到舊連線斷了才收新的（最多約 20 ms），保險起見多試幾次
+		if c, err = net.DialTimeout("tcp", addr, 3*time.Second); err == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if err != nil {
+		return errors.New("連不上螢幕（" + target.IP + "），請確認螢幕有接電")
+	}
+	defer c.Close()
+	if tc, ok := c.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+	logf("firmware update over wifi: sending %d bytes to %s", len(img), target.Port)
+	setFw(5, "經 WiFi 傳送中…")
+	err = otaSend(c, wkey, img, func(done, total int) {
+		if done < total {
+			setFw(5+done*90/total, "經 WiFi 傳送中…")
+		} else {
+			setFw(96, "螢幕檢查韌體、重新開機…")
+		}
+	})
+	if err == nil { // 螢幕重開、連上 WiFi 約 5 秒：早點再連，不用等退避
+		wifiMu.Lock()
+		wifiFails[key] = 0
+		wifiNext[key] = time.Now().Add(4 * time.Second)
+		wifiMu.Unlock()
+	}
+	return err
+}
+
 func firmwareStatus() map[string]interface{} {
 	fwMu.Lock()
 	defer fwMu.Unlock()
+	msg := fwMsg
+	if !fwRunning && fwErr == "" && time.Since(fwDoneAt) > 15*time.Second { // 以前一直停在「更新完成」，要重開程式才看得到「重新寫入」
+		msg = ""
+	}
 	return map[string]interface{}{
-		"bundled": fwVersion(), "running": fwRunning, "port": fwPort, "progress": fwProgress, "msg": fwMsg, "err": fwErr,
+		"bundled": fwVersion(), "running": fwRunning, "port": fwPort, "progress": fwProgress, "msg": msg, "err": fwErr,
 	}
 }

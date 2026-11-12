@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPickFirmwareTarget(t *testing.T) {
 	cur := fwVersion()
@@ -26,6 +29,16 @@ func TestPickFirmwareTarget(t *testing.T) {
 	}
 	if _, err := pickFirmwareTarget("COM3", []serialStatus{other}); err == nil {
 		t.Fatal("unverified port must not be flashed")
+	}
+	// WiFi 連線：韌體 1.12.0 起（hello 有 ota）才能選，更舊的要說清楚要插 USB
+	wOld := serialStatus{Verified: true, Net: true, Port: "WiFi 10.0.0.5", FW: "1.11.0", HW: "s3a175"}
+	if _, err := pickFirmwareTarget("WiFi 10.0.0.5", []serialStatus{wOld}); err == nil || !strings.Contains(err.Error(), "USB") {
+		t.Fatalf("old wifi firmware: err = %v", err)
+	}
+	wNew := wOld
+	wNew.OTA = true
+	if got, err := pickFirmwareTarget("", []serialStatus{wNew}); err != nil || !got.Net {
+		t.Fatalf("wifi ota pick = %v, %v", got.Port, err)
 	}
 	// 舊韌體不回報型號 = C3
 	if (serialStatus{}).Board() != "c3" || s3.Board() != "s3a175" {

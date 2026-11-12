@@ -78,7 +78,7 @@ func wifiLoop() {
 			}
 		}
 		settingsMu.Unlock()
-		if fwUpdating() { // 燒錄中：螢幕會重開好幾次，不要從 WiFi 插進來
+		if fwUpdating() || fwPausedPort() != "" { // 燒錄中：螢幕會重開好幾次，不要從 WiFi 插進來（更新完還要等 3 秒讓它開機）
 			continue
 		}
 		for _, t := range ts {
@@ -197,6 +197,9 @@ func runWifiScreen(key, wkey, ip string, c net.Conn) (bool, string) {
 	why, openedAt := serveScreen(sc, link, port, false, func() string {
 		if usbHasID(key) {
 			return "screen is on USB now"
+		}
+		if fwPausedPort() == port { // 經 WiFi 更新韌體：另開一條連線（ota.go），這條讓出來
+			return "firmware update"
 		}
 		serMu.Lock()
 		v, id := sc.stat.Verified, sc.stat.ID

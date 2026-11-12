@@ -294,7 +294,8 @@
       // 按鈕送的是 fwupdate:<埠>（指定哪塊螢幕），以前只比對 "fwupdate"，確認框不會出現、一按就開始燒
       if (c === "fwupdate" || c.startsWith("fwupdate:")) {
         const port = c.slice("fwupdate:".length), who = port ? `${scrNames[port] || "螢幕"}（${port}）` : "螢幕";
-        if (!(await ask(`要更新${who}的韌體嗎？更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉 USB。`, "更新"))) return;
+        const viaWifi = port.startsWith("WiFi");
+        if (!(await ask(`要更新${who}的韌體嗎？更新時螢幕會重新開機，大約 30 秒。過程中請不要拔掉${viaWifi ? "螢幕的電源" : " USB"}。`, "更新"))) return;
       }
       window.aimonCmd(c).then(render);
     });
@@ -464,7 +465,7 @@
     const fw = s.firmware || {};
     const less = (a, b) => { const x = (a || "0").split(".").map(Number), y = (b || "0").split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
     if (fw.running) {
-      $("fw").innerHTML = `${fw.port ? fw.port + "：" : ""}${fw.msg || "更新中…"} ${fw.progress}%<div class="bar"><i style="width:${fw.progress}%;background:var(--blue)"></i></div><div class="hint">請不要拔掉 USB</div>`;
+      $("fw").innerHTML = `${fw.port ? fw.port + "：" : ""}${fw.msg || "更新中…"} ${fw.progress}%<div class="bar"><i style="width:${fw.progress}%;background:var(--blue)"></i></div><div class="hint">請不要拔掉${(fw.port || "").startsWith("WiFi") ? "螢幕的電源" : " USB"}</div>`;
     } else if (fw.err) {
       $("fw").innerHTML = `<span class="bad">更新失敗：${fw.err}</span><div class="btns" style="margin-top:8px"><button data-cmd="fwupdate${fw.port ? ":" + fw.port : ""}">再試一次</button></div>`;
     } else if (fw.msg) {
@@ -474,7 +475,7 @@
     } else {
       $("fw").innerHTML = scr.map((x) => {
         const who = scr.length > 1 ? `<span class="muted">${H(x.port)}：</span>` : "", dev = H(x.fw || "");
-        if (x.net) return `<div>${who}${dev}${less(dev, fw.bundled) ? ` <span class="muted">→ 可更新到 ${fw.bundled}</span>` : ""} <span class="muted">· 經 WiFi 連線，更新韌體要插 USB</span></div>`;
+        if (x.net && !x.ota) return `<div>${who}${dev}${less(dev, fw.bundled) ? ` <span class="muted">→ 可更新到 ${fw.bundled}</span>` : ""} <span class="muted">· 這版要插 USB 更新一次，之後可以經 WiFi 更新</span></div>`;
         return !dev || less(dev, fw.bundled)
           ? `<div>${who}${dev ? dev : "舊版"} <span class="muted">→ 可更新到 ${fw.bundled}</span>
               <div class="btns" style="margin:6px 0 4px"><button class="primary" data-cmd="fwupdate:${H(x.port)}">更新${scr.length > 1 ? " " + H(x.port) : "螢幕韌體"}</button></div></div>`

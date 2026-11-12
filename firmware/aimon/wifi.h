@@ -7,6 +7,10 @@
 //   找螢幕：電腦用 USB 時記下螢幕回報的 IP；IP 換了用 mDNS 名稱 aimon-<id 後 6 碼>.local
 //   狀態：{"wst":{"st":0 沒設定 / 1 連線中 / 2 已連線 / 3 密碼可能不對 / 4 找不到這個 WiFi,"ssid","ip","rssi","r":斷線原因}}，
 //         回 hello 之後送一次、狀態變了也送（USB 最近有收到資料才送：接充電器時寫 Serial 會卡住）
+//   更新韌體（1.12.0 起，hello 的 "ota":1）：驗證過的 WiFi 連線送 {"ota":{"n":大小,"sha":"SHA256 hex"}}，
+//         螢幕回 {"ota":"rdy"} 後電腦直接送 n 個位元組的韌體（不是 JSON）。寫進另一個 app 區（app0 / app1 輪流），
+//         SHA256 對、映像檔驗證過才切換開機分割區，回 {"ota":"ok"} 後重開；失敗回 {"ota":"err","why":"..."}、維持舊版。
+//         USB 一鍵更新只寫 app0，所以 USB 燒錄時要清掉 otadata（flasher.go），否則從 app1 開機、還是舊版
 // 1.28 吋（C3）不做：單核心、記憶體少，WiFi 會拖到外環動畫
 
 #define WIFI_TCP_PORT 47323
@@ -26,6 +30,8 @@ static bool g_wScanning = false;
 static Stream* g_wScanTo = nullptr;       // 掃描結果送給誰（USB 或 WiFi 連線）
 static uint32_t g_usbRxMs = 0;            // 上次從 USB 收到資料（aimon.ino loop 更新）
 static char g_wHintBuf[32];
+
+static void wifiOta(Stream* src, JsonObject o);   // 經 WiFi 更新韌體（下面）
 
 static bool wifiUp() { return WiFi.status() == WL_CONNECTED; }
 
@@ -187,7 +193,80 @@ static bool wifiCommand(Stream* src, JsonDocument& doc) {
     wifiSendStatus(src);
     return true;
   }
+  if (doc["ota"].is<JsonObject>()) { wifiOta(src, doc["ota"]); return true; }
   return false;
+}
+
+// ---------------- 經 WiFi 更新韌體 ----------------
+// 收的時候整個 loop 停在這裡（畫面只顯示進度，外環不動）：約 1.3 MB，區網內 10-20 秒
+static void otaFail(Stream* src, const char* why) {
+  Update.abort();
+  char b[96];
+  snprintf(b, sizeof b, "{\"ota\":\"err\",\"why\":\"%s\"}", why);
+  sendLine(src, b);
+  g_otaPct = -1;
+  dirty = true;
+  wifiCloseClient();                                        // 剩下沒讀的是韌體資料，不能再當成 JSON 讀
+}
+
+static void otaShow(int pct) {
+  g_otaPct = pct;
+  g_saver = false;
+  g_fadeDir = 0;
+  g_fadeLv = 1000;
+  showBright();
+  render();
+}
+
+static void wifiOta(Stream* src, JsonObject o) {
+  const uint32_t n = o["n"] | 0UL;
+  const char* sha = o["sha"] | "";
+  if (src != &g_wClient) { sendLine(src, "{\"ota\":\"err\",\"why\":\"wifi only\"}"); return; }   // USB 用 ROM 燒錄（flasher.go）
+  if (strlen(sha) != 64) { otaFail(src, "bad sha"); return; }
+  if (g_micOn) { otaFail(src, "mic on"); return; }
+  if (!n || !Update.begin(n, U_FLASH)) { otaFail(src, "no space"); return; }
+  sendLine(src, "{\"ota\":\"rdy\"}");
+  otaShow(0);
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);
+  static uint8_t buf[4096];
+  uint32_t got = 0, lastRx = millis();
+  int shown = 0;
+  bool ok = true;
+  const char* why = "";
+  while (got < n) {
+    const int av = g_wClient.available();
+    if (av <= 0) {
+      if (!g_wClient.connected()) { ok = false; why = "closed"; break; }
+      if (millis() - lastRx > 15000) { ok = false; why = "timeout"; break; }
+      delay(1);
+      continue;
+    }
+    const int r = g_wClient.read(buf, min((uint32_t)sizeof buf, min((uint32_t)av, n - got)));
+    if (r <= 0) continue;
+    lastRx = millis();
+    mbedtls_sha256_update(&ctx, buf, r);
+    if (Update.write(buf, r) != (size_t)r) { ok = false; why = "write"; break; }
+    got += r;
+    const int pct = (int)((uint64_t)got * 100 / n);
+    if (pct >= shown + 10 && got < n) { shown = pct - pct % 10; otaShow(shown); }   // 整張重畫約 150 ms，每 10% 一次就好
+  }
+  uint8_t dig[32];
+  mbedtls_sha256_finish(&ctx, dig);
+  mbedtls_sha256_free(&ctx);
+  if (!ok) { otaFail(src, why); return; }
+  char hex[65];
+  for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", dig[i]);
+  if (strcasecmp(hex, sha)) { otaFail(src, "sha mismatch"); return; }
+  if (!Update.end()) { otaFail(src, "image invalid"); return; }   // 映像檔驗證（晶片、校驗和），通過才切換開機分割區
+  otaShow(100);
+  sendLine(src, "{\"ota\":\"ok\"}");
+  g_wClient.flush();
+  delay(300);
+  g_wClient.stop();
+  delay(100);
+  esp_restart();
 }
 
 // 沒連上電腦時畫面最下面那行（ui.h g_netHint）

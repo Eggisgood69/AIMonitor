@@ -38,6 +38,8 @@ const (
 
 	flashBlockSize = 0x400 // ROM 模式每包 1KB
 	appOffset      = 0x10000
+	otadataOffset  = 0xe000 // 開機選哪個 app 區（兩種板子的分割表都一樣）
+	otadataSize    = 0x2000
 	flashSize      = 4 * 1024 * 1024 // 兩種板子都至少 4MB；只用來讓 ROM 檢查範圍
 
 	chipDetectReg = 0x40001000 // ROM 的 magic 暫存器，用來分辨晶片（同 esptool）
@@ -352,10 +354,53 @@ func FlashApp(p flashPort, usbJTAG bool, image []byte, progress FlashProgress, l
 	}
 	logf("flash: verified %s", got)
 
+	// AMOLED 經 WiFi 更新過（wifi.h wifiOta）的話是從 app1 開機：只寫 app0 會「寫成功但還是舊版」。
+	// 清掉 otadata（全 0xFF = 兩筆紀錄都無效），bootloader 就從第一個 app 區（0x10000）開機
+	if chip == chipS3 {
+		if err := e.writeRegion(otadataOffset, bytes.Repeat([]byte{0xFF}, otadataSize)); err != nil {
+			return fmt.Errorf("清除開機選擇區：%w", err)
+		}
+		logf("flash: otadata cleared")
+	}
+
 	// 不送 FLASH_END：參數 1 會讓 ROM 直接跳進韌體（沒經過正常開機），螢幕卡在全黑。
 	// 留在燒錄模式，用已驗證的流程重開機
 	rebootToApp(p, usbJTAG)
 	logf("flash: rebooted")
+	return nil
+}
+
+// 寫一小塊（每塊 1KB，FLASH_BEGIN 會先擦除）並用 MD5 驗證；大小要是 1KB 的倍數
+func (e *esp) writeRegion(off uint32, data []byte) error {
+	blocks := len(data) / flashBlockSize
+	if err := e.check(cmdFlashBegin, le32(uint32(len(data)), uint32(blocks), flashBlockSize, off, 0), 15*time.Second); err != nil {
+		return err
+	}
+	for i := 0; i < blocks; i++ {
+		chunk := data[i*flashBlockSize : (i+1)*flashBlockSize]
+		pkt := append(le32(flashBlockSize, uint32(i), 0, 0), chunk...)
+		var werr error
+		for retry := 0; retry < 3; retry++ {
+			if _, _, werr = e.command(cmdFlashData, pkt, checksum(chunk), 5*time.Second); werr == nil {
+				break
+			}
+		}
+		if werr != nil {
+			return werr
+		}
+	}
+	want := md5.Sum(data)
+	_, body, err := e.command(cmdSpiFlashMD5, le32(off, uint32(len(data)), 0, 0), 0, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	got := strings.ToLower(strings.TrimSpace(string(body)))
+	if len(body) == 16 {
+		got = hex.EncodeToString(body)
+	}
+	if got != hex.EncodeToString(want[:]) {
+		return errors.New("MD5 不符")
+	}
 	return nil
 }
 

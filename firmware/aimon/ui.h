@@ -103,6 +103,7 @@ static float g_redAt = 90;             // 額度幾 % 以上變紅：跟著電�
 static uint32_t g_lastFrameMs = 0;
 static bool g_everConnected = false;
 static const char* g_netHint = nullptr;   // 沒連上電腦時最下面那行（AMOLED 的 WiFi 狀態，wifi.h）；nullptr = PLUG IN USB
+static int g_otaPct = -1;                 // 經 WiFi 更新韌體中（wifi.h wifiOta）：畫面只顯示進度；-1 = 沒在更新
 static int32_t g_epochOffset = 0;
 static const uint32_t LINK_TIMEOUT_MS = 20000;
 static uint32_t g_stateSinceMs = 0;
@@ -989,6 +990,16 @@ static void drawTodayPage(uint32_t ms) {
 }
 
 static void drawScene(uint32_t ms) {
+  if (g_otaPct >= 0) {                                      // 經 WiFi 更新韌體：藍色進度環 + 百分比
+    band.fillScreen(C_BG);
+    progressRing(R_USAGE, HW_USAGE, g_otaPct, C_BLUE);
+    char b[8];
+    snprintf(b, sizeof b, "%d", g_otaPct);
+    bigValue(b, true, SI(106));
+    text("UPDATING", CX, SI(145), C_LABEL2, &fLabel.font);
+    text("KEEP POWER ON", CX, SI(172), C_LABEL3, &fTiny.font);
+    return;
+  }
   if (g_saver) { drawClock(ms, false); return; }
   if (g_page == 1 && linkAlive()) { drawUsagePage(ms); return; }
   if (g_page == 2 && linkAlive()) { drawTodayPage(ms); return; }

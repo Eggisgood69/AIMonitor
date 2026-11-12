@@ -48,7 +48,8 @@ windows/                   Go 程式（Windows only，WebView2）
   stats.go                 今日統計（stats.json，保留 7 天）；`Week()` 回傳複製的 map（設定視窗解鎖後才編 JSON，共用會並行讀寫、整個程式當掉）
   tray_windows.go          系統匣圖示
   appupdate.go / appupdate_windows.go   電腦端新版檢查（GitHub releases/latest）與一鍵更新（下載 + SHA256 驗證；可跨平台的部分有 go test）
-  flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符）
+  flasher.go / fwupdate_windows.go  一鍵更新韌體（ESP32 ROM 燒錄協定，只寫 0x10000 的 app；先確認晶片跟韌體相符；S3 寫完再清 otadata）
+  ota.go                   經 WiFi 更新 AMOLED 的韌體（協定在下面；螢幕端 wifi.h `wifiOta`）
   fw/aimon-<hw>.bin, fw/version.txt  內建到 exe 的兩種韌體（c3 / s3a175，build.ps1 會自動更新）
 enclosure/                 3D 列印外殼（使用者自己用 SolidWorks 畫，設計中），每種螢幕一個資料夾：
   lcd128/ amoled175/       原始檔、export/ 匯出檔、reference/ 板子參考模型（amoled175 是 Waveshare 官方 STEP，公開；lcd128 的來源不明，.gitignore 排除）
@@ -84,7 +85,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.15.0、韌體 1.11.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.16.0、韌體 1.12.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -229,10 +230,17 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
   設定走 USB（設定視窗 WiFi 分頁：螢幕掃描、選 SSID、輸入密碼）；密碼只存在螢幕 NVS，電腦只存配對金鑰 `wkey`、最後回報的 IP `wip`、`wssid`（settings.json screens.<id>）。
   電腦端每 3 秒看設定過 WiFi、沒插 USB 的螢幕：先連記下的 IP，不行用 mDNS 名稱：**自己送查詢**（wifi.go `mdnsLookup`，QU 單播回應）——Windows 內建解析實測找不到（螢幕有回答，Resolve-DnsName / GetAddrInfo 都說不存在）；連不上 10 → 80 秒退避。
   WiFi 不能當麥克風：USB 麥克風是 USB 音訊裝置，經 WiFi 要在 Windows 裝虛擬音訊驅動程式才會多一支麥克風（沒做）。
-  同一塊螢幕插著 USB 時 WiFi 那條斷掉（`usbHasID`）。WiFi 連線的 screens key 是 `wifi:<id>`、Port「WiFi <IP>」、`Net = true`：不送 mic / mg、不能一鍵更新韌體（`pickFirmwareTarget` 跳過）。
+  同一塊螢幕插著 USB 時 WiFi 那條斷掉（`usbHasID`）。WiFi 連線的 screens key 是 `wifi:<id>`、Port「WiFi <IP>」、`Net = true`：不送 mic / mg；韌體 1.12.0 起（hello 的 `ota`）一鍵更新韌體改走 WiFi（下面），更舊的 `pickFirmwareTarget` 說要插 USB。
   韌體：`WiFi.setSleep(false)`（省電模式收資料晚 100-300 ms）、自己管重連（`setAutoReconnect(false)`，掃描時不能同時在連線）；
   USB 接的是充電器時寫 Serial 會卡住 → 狀態只在 USB 60 秒內有收到資料時才主動送（`g_usbRxMs`）。沒連上電腦時畫面最下面顯示「WIFI <IP>」等（ui.h `g_netHint`）。
   已驗證：掃描（實機 17 個 WiFi、開 WiFi 後剩餘記憶體 185 → 169 KB）；實測正常：連線、拔 USB 改接充電器（約 17 秒接上）、插回自動切 USB、WiFi 開著時 USB 麥克風（Win+H）；mDNS 182 ms 找到螢幕
+- 經 WiFi 更新韌體（2026-11-12，韌體 1.12.0 / AIMonitor 1.16.0，ota.go、wifi.h `wifiOta`）：設定視窗的更新按鈕對 WiFi 連線的螢幕也能按。
+  電腦先讓 WiFi 那條一般連線斷掉（`fwPort` = 「WiFi <IP>」，runWifiScreen 的 stop 看到就讓出來；`wifiLoop` 在 fwPort 清掉前不重連），另開一條 TCP：
+  auth → `{"ota":{"n","sha"}}` → 螢幕 `Update.begin` 後回 `{"ota":"rdy"}` → 直接送 n 個位元組 → 螢幕比對 SHA256、`Update.end()`（映像檔驗證：晶片 ID、校驗和）→ `{"ota":"ok"}` 後重開。
+  寫進另一個 app 區（app0 / app1 各 3 MB 輪流），驗證沒過不切換、舊版照常開機。收的時候螢幕整個 loop 停在 `wifiOta`（畫面只畫進度：藍色環 + 百分比，每 10% 整張重畫一次，外環不動）；15 秒沒資料就放棄。
+  **USB 一鍵更新只寫 0x10000（app0）**：OTA 過一次後是從 app1 開機，所以 S3 燒完 app0 要把 otadata（0xe000、8 KB）清成 0xFF（flasher.go `writeRegion`），bootloader 才會開 app0（之後 bootloader 自己寫一筆 seq 1、狀態 VALID = app0；2026-11-12 實測：WiFi 更新到 app1 → USB 重新寫入 → 讀 0xe000 是 seq 1）。
+  實測 WiFi 傳 1.3 MB 約 6 秒，重開後約 6 秒經 WiFi 接回。更新完成的訊息 15 秒後收掉（`fwDoneAt`；以前一直蓋住「重新寫入」，要重開程式）
+  arduino-cli / esptool 燒錄會一起寫 boot_app0.bin 到 0xe000，不受影響。只有已驗證配對金鑰的連線能送（wifiGate）
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）
@@ -367,9 +375,6 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
 - WiFi 麥克風（使用者 2026-11-11 說先不做）：可行做法是使用者自己裝 VB-CABLE，螢幕經 WiFi 送 16 kHz 單聲道 PCM（約 32 KB/s），AIMonitor 播進「CABLE Input」、
   Windows 用「CABLE Output」當麥克風。自己寫虛擬麥克風驅動要 EV 憑證 + 微軟簽章，不實際；S3 沒有傳統藍牙，不能當藍牙耳麥。
   要處理：螢幕不知道有沒有程式在錄音（一直送、光暈只看音量）、插回 USB 時預設麥克風要切回 AIMonitor Mic
-- WiFi 更新韌體（OTA）：AMOLED 分割表有 app0 / app1 兩個 3 MB 區，可以用 Arduino 的 Update 寫另一區再切換。
-  **一定要同時改 flasher.go**：OTA 過一次後從 app1 開機，USB 一鍵更新只寫 0x10000（app0），會「寫成功但還是舊版」→ USB 燒錄時要清掉 otadata（0xe000）。
-  只給配對金鑰驗證過的連線用、比對 SHA256、傳的時候暫停推畫面
 - Fable 用量（使用者 2026-11-11 說先不加）：Claude 用量回應的 `limits` 陣列裡 `kind: "weekly_scoped"`、`scope.model.display_name: "Fable"` 那一項（`percent`、`resets_at`）；
   `weekly_scoped_shares` 是它占每週額度的比例（allowance 50%、used）。`seven_day_opus` / `seven_day_sonnet` 是 null。
   另外 `seven_day_breakdown.rows` 有本週用量依來源分（claude_code / chat / cowork / other 的 %），統計分頁可以用。

@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.15.0"
+const version = "1.16.0"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -383,6 +383,7 @@ type serialStatus struct {
 	Net  bool       `json:"net"`            // 這條連線走 WiFi（不是 USB）；Port 是「WiFi <IP>」
 	IP   string     `json:"ip,omitempty"`   // WiFi 連線的對方 IP
 	WF   bool       `json:"wf"`             // 韌體支援 WiFi（hello 的 wf，1.11.0 起）
+	OTA  bool       `json:"ota"`            // 韌體可以經 WiFi 更新（hello 的 ota，1.12.0 起，ota.go）
 	WiFi *wifiState `json:"wifi,omitempty"` // 螢幕回報的 WiFi 狀態
 	Scan *wifiScan  `json:"scan,omitempty"` // 最近一次掃描
 }
@@ -758,6 +759,7 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 			sc.stat.ID = devID(id)
 		}
 		sc.stat.WF = m["wf"] == 1.0
+		sc.stat.OTA = m["ota"] == 1.0
 		mic, micx := m["mic"] == 1.0, m["micx"] == 1.0
 		if mic != sc.stat.Mic || micx != sc.stat.MicX {
 			if mic || micx || sc.stat.Mic {

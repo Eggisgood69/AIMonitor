@@ -19,12 +19,14 @@
 #include <Wire.h>   // AMOLED 的觸控、陀螺儀（sensors.h）；要放在最前面，arduino-cli 才會把它加進來
 #include <WiFi.h>   // AMOLED 的 WiFi（wifi.h）；一樣要放在這裡。1.28 吋沒呼叫，不會連結進去
 #include <ESPmDNS.h>
+#include <Update.h>   // 經 WiFi 更新韌體（wifi.h wifiOta）
+#include <mbedtls/sha256.h>
 #include <ArduinoJson.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.11.0"
+#define FW_VERSION "1.12.0"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -539,7 +541,7 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
            g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs,

@@ -85,7 +85,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.16.0、韌體 1.12.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.16.1、韌體 1.12.1（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -241,6 +241,12 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
   **USB 一鍵更新只寫 0x10000（app0）**：OTA 過一次後是從 app1 開機，所以 S3 燒完 app0 要把 otadata（0xe000、8 KB）清成 0xFF（flasher.go `writeRegion`），bootloader 才會開 app0（之後 bootloader 自己寫一筆 seq 1、狀態 VALID = app0；2026-11-12 實測：WiFi 更新到 app1 → USB 重新寫入 → 讀 0xe000 是 seq 1）。
   實測 WiFi 傳 1.3 MB 約 6 秒，重開後約 6 秒經 WiFi 接回。更新完成的訊息 15 秒後收掉（`fwDoneAt`；以前一直蓋住「重新寫入」，要重開程式）
   arduino-cli / esptool 燒錄會一起寫 boot_app0.bin 到 0xe000，不受影響。只有已驗證配對金鑰的連線能送（wifiGate）
+  - **新版確認有效（1.12.1）**：bootloader 有開回退（S3 sdkconfig `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`），但 Arduino 核心的 initArduino 預設在 setup() 前就
+    `esp_ota_mark_app_valid_cancel_rollback`（1.12.0 被外部審查抓到，新版初始化就當機的話會一直重開、不會退回）。→ aimon.ino 覆寫 `verifyRollbackLater()` 回 true，
+    第一次回 hello 之後才 `otaConfirm`（WiFi 要先過配對金鑰）；確認前重開 → bootloader 開回舊版；開機 2 分鐘還沒確認 → `esp_ota_mark_app_invalid_rollback_and_reboot`。
+    hello 的 `app`（從 app0 / app1 開機）、`pv`（還沒確認；回 hello 之後才確認，所以第一次回的是 1），電腦端紀錄寫成「app1 pending」。
+    2026-11-12 實測（AIMonitor 關掉、用腳本走同一個協定，esptool 的 RTS 重置當作當機 / 斷電）：正常更新 → 第一次 hello pv=1、之後 0，重置後還是新版；
+    更新後 2 分鐘沒電腦 → 自己退回另一區；傳到 50% 重置 → 舊版照常開機；更新完、確認前重置 → 開回舊版。真的拔電源也測過：慢慢送（40 秒），傳到約 40% 時使用者拔掉 USB、插回 → app1、1.12.1、沒有 pending
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）

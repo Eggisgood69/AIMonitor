@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.16.0"
+const version = "1.16.1"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -745,7 +745,14 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		if !sc.stat.Verified {
 			fw, _ := m["fw"].(string)
 			hw, _ := m["hw"].(string)
-			logf("%s: screen answered (fw %s, hw %s)", sc.stat.Port, orDash(devFW(fw)), orDash(devHW(hw)))
+			extra := "" // AMOLED 從哪個 app 區開機、是不是剛經 WiFi 更新還沒確認的新版（韌體 1.12.1 起，除錯用）
+			if app, ok := m["app"].(float64); ok {
+				extra = fmt.Sprintf(", app%d", int(app))
+				if m["pv"] == 1.0 {
+					extra += " pending"
+				}
+			}
+			logf("%s: screen answered (fw %s, hw %s%s)", sc.stat.Port, orDash(devFW(fw)), orDash(devHW(hw)), extra)
 		}
 		sc.stat.Verified = true
 		// 只收韌體真的會送的格式（devinfo.go）：這些字串會顯示在設定視窗

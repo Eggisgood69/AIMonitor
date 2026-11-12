@@ -21,12 +21,13 @@
 #include <ESPmDNS.h>
 #include <Update.h>   // 經 WiFi 更新韌體（wifi.h wifiOta）
 #include <mbedtls/sha256.h>
+#include <esp_ota_ops.h>
 #include <ArduinoJson.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
-#define FW_VERSION "1.12.0"
+#define FW_VERSION "1.12.1"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -529,6 +530,34 @@ static uint32_t g_maxRoamGap = 0;   // 螢幕保護的 Clawd 兩步之間最長�
 static uint32_t g_maxGenGap = 0;    // 「Generating」的光兩次更新之間最長隔多久（正常 40 ms，大了就是停頓）
 static uint32_t g_fullN = 0;        // 上次回報之後整張重畫了幾次
 
+#if BOARD_AMOLED
+// ---------------- 經 WiFi 更新後的新版：確認能用才算數 ----------------
+// Arduino 核心預設在 setup() 之前就把新版標成有效（initArduino 看 verifyRollbackLater），新版初始化時當機的話一直重開、不會退回舊版。
+// 改成：第一次跟電腦打完招呼（hello，WiFi 要先過配對金鑰）才確認；確認前當機 / 重開 → bootloader 自動開回舊版；
+// 開機 2 分鐘還沒有電腦來打招呼 → 自己退回舊版重開（舊版本來就能用，電腦之後可以再更新一次）。
+// USB 燒錄的韌體 otadata 是清掉的，不會是「待確認」，不受影響
+extern "C" {
+bool verifyRollbackLater() { return true; }
+}
+static bool g_otaPending = false;     // 這次開機的是剛經 WiFi 更新、還沒確認的新版
+static int g_appSlot = 0;             // 從哪個 app 區開機（0 = app0、1 = app1），hello 的 app
+static void otaBootCheck() {
+  const esp_partition_t* p = esp_ota_get_running_partition();
+  esp_ota_img_states_t st;
+  if (!p) return;
+  g_appSlot = p->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1 ? 1 : 0;
+  g_otaPending = esp_ota_get_state_partition(p, &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY;
+}
+static void otaConfirm() {
+  if (!g_otaPending) return;
+  g_otaPending = false;
+  esp_ota_mark_app_valid_cancel_rollback();
+}
+static void otaRollbackTick(uint32_t now) {
+  if (g_otaPending && now > 120000) esp_ota_mark_app_invalid_rollback_and_reboot();
+}
+#endif
+
 static void sendHello(Stream* src) {
   char b[640];
   // id：晶片 MAC，電腦端用它分辨每塊螢幕（各自的方向、亮度；換 USB 孔也認得）
@@ -541,11 +570,11 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1,\"app\":%d,\"pv\":%d}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
            g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs,
-           (unsigned long)g_maskFixN);
+           (unsigned long)g_maskFixN, g_appSlot, g_otaPending ? 1 : 0);
   g_vgN = g_vgGap = g_vgMaxMs = 0;
   g_uacPkts = 0;
   g_uacMiss = 0;
@@ -572,7 +601,10 @@ static void handleLine(Stream* src, const String& line) {
 #endif
   lastSource = src;
   if (doc["hello"].is<int>()) {
-    sendHello(src);
+    sendHello(src);                      // 先回（pv = 確認前的狀態，電腦端紀錄看得到「pending」）
+#if BOARD_AMOLED
+    otaConfirm();                        // 經 WiFi 更新後的新版：電腦連得上 = 能用（上面）
+#endif
 #if BOARD_AMOLED
     wifiSendStatus(src);                 // 設定視窗的 WiFi 分頁用
 #endif
@@ -1184,6 +1216,7 @@ static int ringFrameState(uint32_t now, uint32_t lastRing, bool stripWaiting) {
 
 void setup() {
 #if BOARD_AMOLED
+  otaBootCheck();
   micBootCheck();   // 從麥克風模式重開：先把 USB 交回 hwcdc
 #endif
   // 一行畫面資料約 400-600 位元組，預設接收緩衝只有 256：畫一條畫面的期間沒人讀，滿了後面就被丟掉 → 那行解析失敗
@@ -1250,6 +1283,7 @@ void loop() {
   micTick(loopStart);
   if (rdUsb.s->available()) g_usbRxMs = loopStart;   // USB 有電腦在（接充電器時不要寫 Serial）
   wifiTick(loopStart);
+  otaRollbackTick(loopStart);
 #endif
   pollReader(rdUsb);
 #if ARDUINO_USB_CDC_ON_BOOT && LISTEN_UART0

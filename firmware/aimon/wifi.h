@@ -10,7 +10,8 @@
 //   更新韌體（1.12.0 起，hello 的 "ota":1）：驗證過的 WiFi 連線送 {"ota":{"n":大小,"sha":"SHA256 hex"}}，
 //         螢幕回 {"ota":"rdy"} 後電腦直接送 n 個位元組的韌體（不是 JSON）。寫進另一個 app 區（app0 / app1 輪流），
 //         SHA256 對、映像檔驗證過才切換開機分割區，回 {"ota":"ok"} 後重開；失敗回 {"ota":"err","why":"..."}、維持舊版。
-//         USB 一鍵更新只寫 app0，所以 USB 燒錄時要清掉 otadata（flasher.go），否則從 app1 開機、還是舊版
+//         USB 一鍵更新只寫 app0，所以 USB 燒錄時要清掉 otadata（flasher.go），否則從 app1 開機、還是舊版。
+//         新版開機後跟電腦打完招呼才確認有效（aimon.ino otaConfirm），確認前當機或 2 分鐘沒電腦 → 退回舊版
 // 1.28 吋（C3）不做：單核心、記憶體少，WiFi 會拖到外環動畫
 
 #define WIFI_TCP_PORT 47323

@@ -44,146 +44,171 @@
     chatgpt: `<svg viewBox="0 0 24 24"><path fill="#FFFFFF" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`,
     gemini: `<svg viewBox="0 0 24 24"><defs><linearGradient id="gmg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#4796E3"/><stop offset=".5" stop-color="#9177C7"/><stop offset="1" stop-color="#CA6673"/></linearGradient></defs><path fill="url(#gmg)" d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>`,
   };
+  LOGOS.chatgpt = LOGOS.chatgpt.replace('fill="#FFFFFF"', 'style="fill:var(--gpt)"');   // 淺色主題時白色看不到，跟著主題換色
   // 同一頁放好幾個 Gemini 圖示時，漸層的 id 要各自不同：url(#gmg) 會指到第一個，它在隱藏的分頁裡就整個畫不出來
   let logoN = 0;
   const logo = (ai) => { const id = "gmg" + ++logoN; return (LOGOS[ai] || "").replace(/gmg/g, id); };
   const ST = { idle: "待命", done: "完成", working: "生成中", review: "需審核", error: "錯誤" };
-  const COL = { idle: "#8e8e93", done: "#30d158", working: "#30d158", review: "#ffd60a", error: "#ff453a" };
+  const COL = { idle: "var(--mut)", done: "var(--grn)", working: "var(--grn)", review: "var(--yel)", error: "var(--red)" };
   const SRC = { app: "桌面 App", web: "瀏覽器", ext: "網頁", cc: "Agent" };   // Claude Code 分不出是 App 的 Code 分頁還是終端機
 
   function build() {
     document.documentElement.innerHTML = `
 <head><meta charset="utf-8"><title>AI 狀態指示燈</title>
 <style>
-  :root { color-scheme: dark; }
+  /* 淺色 / 深色兩套顏色（右上角或設定分頁切換，記在 localStorage）。版面參考使用者給的淺色元件圖：
+     白色圓角卡片外面再一圈淡灰（box-shadow 外框）、膠囊形分頁、綠色漸層開關、黑色主要按鈕 */
+  :root, html[data-theme=dark] { color-scheme: dark;
+    --bg:#000; --tile:#121214; --card:#1c1c1e; --card2:#2c2c2e; --fg:#f5f5f7; --fg2:#c7c7cc; --mut:#8e8e93; --mut2:#6e6e73;
+    --line:rgba(255,255,255,.08); --track:#2c2c2e; --track2:#242426; --gpt:#e5e5ea; --blue:#0a84ff; --yel:#ffd60a; --red:#ff453a; --grn:#30d158;
+    --pop:#2c2c2e; --shadow:0 0 0 0 transparent; --segon:#3a3a3c; --btn:#2c2c2e; --kbtn:#f5f5f7; --kbtnfg:#000; --grid:#2c2c2e; --grid2:#1c1c1e;
+    --upd:#0a2a4a; --upderr:#3a1715; --hero:#1c1c1e; }
+  html[data-theme=light] { color-scheme: light;
+    --bg:#f4f4f2; --tile:#e9e9e6; --card:#fff; --card2:#f1f1ef; --fg:#1d1d1f; --fg2:#3a3a3c; --mut:#86868b; --mut2:#98989d;
+    --line:#ececea; --track:#e6e6e3; --track2:#ededea; --gpt:#1d1d1f; --blue:#007aff; --yel:#b88a00; --red:#e5342b; --grn:#24a148;
+    --pop:#fff; --shadow:0 1px 2px rgba(0,0,0,.04), 0 4px 14px rgba(0,0,0,.05); --segon:#fff; --btn:#fff; --kbtn:#111; --kbtnfg:#fff; --grid:#e8e8e5; --grid2:#f0f0ee;
+    --upd:#e3eeff; --upderr:#fde8e6; --hero:#111; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #000; color: #f5f5f7; font: 14px/1.5 -apple-system, "Segoe UI Variable", "Segoe UI", "Microsoft JhengHei UI", sans-serif; -webkit-user-select: none; user-select: none; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Segoe UI Variable", "Segoe UI", "Microsoft JhengHei UI", sans-serif; -webkit-user-select: none; user-select: none; }
   main { padding: 22px 20px 28px; max-width: 520px; margin: 0 auto; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-  .logo { width: 40px; height: 40px; border-radius: 50%; border: 3px solid #30d158; display: grid; place-items: center; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .logo { width: 40px; height: 40px; border-radius: 50%; border: 3px solid #30d158; display: grid; place-items: center; flex: none; }
   .logo::after { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 3px solid #f0855a; }
   h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
-  .ver { color: #6e6e73; font-size: 12px; }
+  .ver { color: var(--mut); font-size: 12px; }
   .copy { margin-top: 10px; }
-  /* 液態玻璃方格：背後兩團很淡的光（綠、橘，同 logo 配色）讓模糊有東西可透 */
-  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-                 background: radial-gradient(420px 320px at 15% 20%, rgba(48,209,88,.06), transparent 70%),
-                             radial-gradient(460px 360px at 85% 65%, rgba(240,133,90,.05), transparent 70%); }
-  .card { background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
-          -webkit-backdrop-filter: blur(40px) saturate(140%); backdrop-filter: blur(40px) saturate(140%);
-          border: 0.5px solid rgba(255,255,255,.09); border-radius: 18px; padding: 2px 16px; margin-bottom: 12px;
-          box-shadow: inset 0 0.5px 0 rgba(255,255,255,.14), 0 8px 24px rgba(0,0,0,.35); }
-  .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .themebtn { margin-left: auto; width: 36px; height: 36px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: var(--card); color: var(--fg); box-shadow: var(--shadow); flex: none; }
+  .themebtn svg { width: 18px; height: 18px; }
+  .card { background: var(--card); border-radius: 18px; padding: 2px 16px; margin: 7px 0 21px; box-shadow: 0 0 0 7px var(--tile), var(--shadow); }
+  .row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
   .row:last-child { border-bottom: 0; }
-  .k { color: #98989f; width: 92px; flex: none; }
-  .k.ai { display: flex; align-items: center; gap: 8px; }
+  .k { color: var(--mut); width: 92px; flex: none; }
+  .k.ai { display: flex; align-items: center; gap: 8px; color: var(--fg); font-weight: 600; }
   .k.ai svg { width: 18px; height: 18px; flex: none; }
   .v { flex: 1; min-width: 0; }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: #636366; }
-  .hint { color: #8e8e93; font-size: 12.5px; margin-top: 2px; }
-  .bar { height: 6px; border-radius: 3px; background: #2c2c2e; overflow: hidden; margin-top: 6px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--mut2); }
+  .hint { color: var(--mut); font-size: 12.5px; margin-top: 2px; }
+  .bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; margin-top: 6px; }
   .bar i { display: block; height: 100%; background: #f0855a; border-radius: 3px; }
-  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; background: #2c2c2e; color: #f5f5f7; }
-  button.primary { background: #0a84ff; color: #fff; }
-  button:hover { filter: brightness(1.15); }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 999px; padding: 9px 16px; cursor: pointer; background: var(--btn); color: var(--fg); box-shadow: var(--shadow), inset 0 0 0 1px var(--line); }
+  button.primary { background: var(--kbtn); color: var(--kbtnfg); box-shadow: none; }
+  button:hover { filter: brightness(1.08); }
+  html[data-theme=light] button:hover { filter: brightness(.97); }
   .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-  .items .it { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+  section > .btns button { flex: 1; padding: 12px; }
+  .items .it { padding: 9px 0; border-bottom: 1px solid var(--line); }
   .items .it:last-child { border-bottom: 0; }
-  .muted { color: #6e6e73; }
-  details { margin-top: 6px; color: #8e8e93; font-size: 12px; }
-  details code { color: #c7c7cc; word-break: break-all; }
+  .muted { color: var(--mut2); }
+  details { margin-top: 6px; color: var(--mut); font-size: 12px; }
+  details code { color: var(--fg2); word-break: break-all; }
   .sw { display: flex; align-items: center; justify-content: space-between; }
   .sw > div:first-child { flex: 1; min-width: 0; }
-  .toggle { width: 44px; height: 26px; border-radius: 13px; background: #39393d; position: relative; cursor: pointer; flex: none; }
-  .toggle.on { background: #30d158; }
-  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: left .15s; }
-  .toggle.on::after { left: 20px; }
-  select { font: inherit; color: #f5f5f7; background: #2c2c2e; border: 0; border-radius: 8px; padding: 7px 28px 7px 12px; cursor: pointer;
+  .toggle { width: 46px; height: 28px; border-radius: 14px; background: var(--track); position: relative; cursor: pointer; flex: none; transition: background .15s; }
+  .toggle.on { background: linear-gradient(90deg, #3aa757, #8fd16a); }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: left .15s; }
+  .toggle.on::after { left: 21px; }
+  select { font: inherit; font-weight: 500; color: var(--fg); background: var(--card2); border: 0; border-radius: 999px; padding: 6px 30px 6px 14px; cursor: pointer;
            -webkit-appearance: none; appearance: none;
-           background-image: linear-gradient(45deg, transparent 50%, #8e8e93 50%), linear-gradient(135deg, #8e8e93 50%, transparent 50%);
-           background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
-  input[type=range] { width: 160px; accent-color: #0a84ff; }
+           background-image: linear-gradient(45deg, transparent 50%, var(--mut) 50%), linear-gradient(135deg, var(--mut) 50%, transparent 50%);
+           background-position: calc(100% - 16px) 52%, calc(100% - 11px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
+  select option { background: var(--card); color: var(--fg); }
+  input[type=range] { width: 170px; accent-color: #3aa757; }
   .srow { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
   .srow .nm { width: 20px; height: 20px; flex: none; display: grid; place-items: center; }
   .srow .nm svg { width: 20px; height: 20px; }
   .srow .bar { flex: 1; margin-top: 0; }
-  .srow .val { width: 112px; flex: none; text-align: right; color: #c7c7cc; font-size: 13px; }
+  .srow .val { width: 112px; flex: none; text-align: right; color: var(--fg2); font-size: 13px; }
   /* 最近 7 天：圖拉高、長條細一點、上面寫總時間；滑鼠指著的那天放大、其他天變暗、跳出三家各多久（使用者覺得原本太擠） */
   .whead { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
-  .leg { display: flex; gap: 10px; font-size: 11.5px; color: #8e8e93; }
+  .leg { display: flex; gap: 10px; font-size: 11.5px; color: var(--mut); }
   .leg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
   .week { position: relative; display: flex; align-items: flex-end; gap: 14px; height: 150px; padding: 10px 6px 0; margin-top: 6px; }
-  .week .base { position: absolute; left: 0; right: 0; bottom: 22px; border-top: 1px solid rgba(255,255,255,.08); pointer-events: none; }
+  .week .base { position: absolute; left: 0; right: 0; bottom: 22px; border-top: 1px solid var(--line); pointer-events: none; }
   .week .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 5px; transition: opacity .15s; cursor: default; }
-  .week .stack { width: 18px; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 1px 1px; overflow: hidden; transition: width .15s, box-shadow .15s; }
-  .week .val { font-size: 10.5px; color: #8e8e93; white-space: nowrap; }
-  .week .lbl { font-size: 11px; color: #8e8e93; height: 16px; }
-  .week .col.today .lbl, .week .col.today .val { color: #f5f5f7; }
+  .week .stack { width: 18px; display: flex; flex-direction: column-reverse; border-radius: 5px 5px 2px 2px; overflow: hidden; transition: width .15s, box-shadow .15s; }
+  .week .val { font-size: 10.5px; color: var(--mut); white-space: nowrap; }
+  .week .lbl { font-size: 11px; color: var(--mut); height: 16px; }
+  .week .col.today .lbl, .week .col.today .val { color: var(--fg); }
   .week .col.today .lbl { font-weight: 600; }
   .week:hover .col { opacity: .35; }
   .week .col:hover { opacity: 1; }
-  .week .col:hover .stack { width: 28px; box-shadow: 0 0 0 2px rgba(255,255,255,.2); }
-  .week .col:hover .val { color: #f5f5f7; font-weight: 600; font-size: 12px; }
-  .wtip { position: absolute; top: 4px; z-index: 3; display: none; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.18); border-radius: 10px;
-          padding: 8px 12px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5); white-space: nowrap; pointer-events: none; }
-  .wtip .d { color: #8e8e93; margin-bottom: 4px; }
+  .week .col:hover .stack { width: 28px; box-shadow: 0 0 0 2px var(--line); }
+  .week .col:hover .val { color: var(--fg); font-weight: 600; font-size: 12px; }
+  .wtip { position: absolute; top: 4px; z-index: 3; display: none; background: var(--pop); border: 0.5px solid var(--line); border-radius: 12px;
+          padding: 8px 12px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.18); white-space: nowrap; pointer-events: none; }
+  .wtip .d { color: var(--mut); margin-bottom: 4px; }
   .wtip .r { display: flex; justify-content: space-between; gap: 18px; }
   .wtip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
   /* 額度卡片：週額度也一條細長條（淡一點）＋重置倒數；滑鼠指著顯示精確的重置日期時間 */
-  .bar.wk { height: 3px; margin-top: 4px; background: #242426; }
+  .bar.wk { height: 3px; margin-top: 4px; background: var(--track2); }
   .bar.wk i { opacity: .55; }
-  .wline { margin-top: 8px; font-size: 12.5px; color: #c7c7cc; }
-  .wline b { color: #f5f5f7; font-weight: 600; }
+  .wline { margin-top: 8px; font-size: 12.5px; color: var(--fg2); }
+  .wline b { color: var(--fg); font-weight: 600; }
   .qbox { position: relative; }
-  .rtip { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 3; display: none; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.18);
-          border-radius: 10px; padding: 8px 12px; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.5); white-space: nowrap; pointer-events: none; }
+  .rtip { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 3; display: none; background: var(--pop); border: 0.5px solid var(--line);
+          border-radius: 12px; padding: 8px 12px; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0,0,0,.18); white-space: nowrap; pointer-events: none; }
   .qbox:hover .rtip { display: block; }
-  .rtip .tk { color: #8e8e93; display: inline-block; min-width: 44px; margin-right: 6px; }
-  .ok { color: #30d158; } .bad { color: #ff453a; }
-  footer { color: #6e6e73; font-size: 12px; text-align: center; margin-top: 8px; }
-  .ask { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.6); }
-  .ask .box { width: 100%; max-width: 360px; padding: 18px 18px 14px; border-radius: 16px; background: #1c1c1e; border: 0.5px solid rgba(255,255,255,.12); }
+  .rtip .tk { color: var(--mut); display: inline-block; min-width: 44px; margin-right: 6px; }
+  .ok { color: var(--grn); } .bad { color: var(--red); }
+  footer { color: var(--mut2); font-size: 12px; text-align: center; margin-top: 8px; }
+  .ask { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.45); }
+  .ask .box { width: 100%; max-width: 360px; padding: 20px 18px 14px; border-radius: 20px; background: var(--card); box-shadow: 0 12px 40px rgba(0,0,0,.3); }
   .ask .msg { margin-bottom: 14px; line-height: 1.6; }
   .ask .btns { justify-content: flex-end; }
-  .upd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 14px; background: #0a2a4a; }
-  .upd .v { color: #f5f5f7; }
+  .upd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 14px; border-radius: 16px; background: var(--upd); }
+  .upd.err { background: var(--upderr); }
+  .upd .v { color: var(--fg); }
   .upd button { padding: 7px 14px; flex: none; }
-  .tabs { display: flex; gap: 2px; padding: 2px; margin-bottom: 14px; border-radius: 10px; background: #1c1c1e; }
-  .tabs button { flex: 1; padding: 6px 0; border-radius: 8px; background: transparent; color: #98989f; font-weight: 600; }
-  .tabs button.on { background: #3a3a3c; color: #f5f5f7; }
+  .upd .bar { background: rgba(127,127,127,.2); }
+  .tabs { display: flex; gap: 2px; padding: 4px; margin-bottom: 18px; border-radius: 999px; background: var(--tile); }
+  .tabs button { flex: 1; padding: 7px 0; border-radius: 999px; background: transparent; color: var(--mut); font-weight: 500; box-shadow: none; }
+  .tabs button.on { background: var(--segon); color: var(--fg); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   [data-pane] { display: none; }
   details.list { margin: 0; color: inherit; font-size: inherit; }
-  details.list summary { padding: 11px 0; cursor: pointer; color: #c7c7cc; }
-  details.list[open] summary { border-bottom: 1px solid rgba(255,255,255,.08); }
+  details.list summary { padding: 11px 0; cursor: pointer; color: var(--fg2); }
+  details.list[open] summary { border-bottom: 1px solid var(--line); }
   [data-pane].on { display: block; }
-  input.txt { font: inherit; width: 100%; color: #f5f5f7; background: #2c2c2e; border: 0; border-radius: 8px; padding: 9px 12px; margin-top: 8px; -webkit-user-select: text; user-select: text; }
-  input.txt:focus { outline: 2px solid #0a84ff; }
+  input.txt { font: inherit; width: 100%; color: var(--fg); background: var(--card2); border: 0; border-radius: 12px; padding: 10px 14px; margin-top: 8px; -webkit-user-select: text; user-select: text; }
+  input.txt:focus { outline: 2px solid var(--blue); }
   .wap { cursor: pointer; }
-  .wap:hover { background: rgba(255,255,255,.04); }
+  .wap:hover { background: var(--card2); }
   .wap .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wap .sig { flex: none; color: #8e8e93; font-size: 12.5px; }
+  .wap .sig { flex: none; color: var(--mut); font-size: 12.5px; }
   .qbar { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0 8px; }
-  .seg { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: #1c1c1e; }
-  .seg button { padding: 4px 10px; border-radius: 7px; background: transparent; color: #98989f; font-weight: 600; font-size: 12.5px; display: flex; align-items: center; }
-  .seg button.on { background: #3a3a3c; color: #f5f5f7; }
+  .seg { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--card2); }
+  .seg button { padding: 4px 12px; border-radius: 999px; background: transparent; color: var(--mut); font-weight: 600; font-size: 12.5px; display: flex; align-items: center; box-shadow: none; }
+  .seg button.on { background: var(--segon); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   .seg button svg { width: 16px; height: 16px; }
-  .qleg { display: flex; gap: 14px; font-size: 12px; color: #98989f; padding-bottom: 4px; }
+  .qleg { display: flex; gap: 14px; font-size: 12px; color: var(--mut); padding-bottom: 4px; }
   .qleg i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: 3px; margin-right: 5px; }
   #qplot { position: relative; padding-bottom: 10px; }
   #qplot svg { display: block; width: 100%; }
-  #qplot text { font: 11px -apple-system, "Segoe UI", sans-serif; fill: #8e8e93; }
-  .qtip { position: absolute; top: 0; pointer-events: none; background: #2c2c2e; border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.5; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+  #qplot text { font: 11px -apple-system, "Segoe UI", sans-serif; fill: var(--mut); }
+  .qtip { position: absolute; top: 0; pointer-events: none; background: var(--pop); border: 0.5px solid var(--line); border-radius: 10px; padding: 6px 9px; font-size: 12px; line-height: 1.5; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.18); }
+  /* 狀態分頁最上面：螢幕正在顯示的 AI（黑色卡片，跟螢幕一樣的額度圓環）。兩種主題都是深色底，顏色固定 */
+  .hero { --gpt:#e5e5ea; --grn:#30d158; --yel:#ffd60a; --red:#ff453a; --mut:#8e8e93; --mut2:#8e8e93;
+          display: flex; align-items: center; gap: 18px; background: var(--hero); color: #fff; border-radius: 22px; padding: 16px 18px; margin: 0 0 18px; }
+  html[data-theme=dark] .hero, :root:not([data-theme]) .hero { margin: 7px 0 21px; box-shadow: 0 0 0 7px var(--tile); }
+  .hero .ring { position: relative; width: 92px; height: 92px; flex: none; }
+  .hero .ring svg { position: absolute; inset: 0; }
+  .hero .num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 22px; font-weight: 650; line-height: 1.1; }
+  .hero .num small { font-size: 10.5px; font-weight: 500; color: #9a9a9f; margin-top: 3px; }
+  .hero .nm { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 650; }
+  .hero .nm svg { width: 22px; height: 22px; }
+  .hero .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 10px; margin: 8px 0 4px; font-size: 12px; font-weight: 600; background: rgba(255,255,255,.1); }
+  .hero .pill .dot { width: 7px; height: 7px; margin-right: 6px; vertical-align: 0; }
+  .hero .sub { font-size: 12.5px; color: #9a9a9f; }
 </style></head>
 <body><main>
-  <header><div class="logo"></div><div><h1>AI 狀態指示燈</h1><div class="ver" id="ver"></div></div></header>
+  <header><div class="logo"></div><div><h1>AI 狀態指示燈</h1><div class="ver" id="ver"></div></div><button class="themebtn" id="theme"></button></header>
   <div id="upd"></div>
   <nav class="tabs"><button data-tab="status">狀態</button><button data-tab="stats">統計</button><button data-tab="wifi">WiFi</button><button data-tab="settings">設定</button></nav>
 
   <section data-pane="status">
+  <div class="hero" id="hero"></div>
   <div class="card">
     <div class="row"><div class="k">螢幕</div><div class="v" id="serial"></div></div>
     <div class="row"><div class="k">韌體</div><div class="v" id="fw"></div></div>
-    <div class="row"><div class="k">目前顯示</div><div class="v" id="frame"></div></div>
   </div>
 
   <div class="card">
@@ -223,11 +248,12 @@
         <option value="5">5 分鐘</option><option value="10">10 分鐘</option><option value="15">15 分鐘</option>
         <option value="30">30 分鐘</option><option value="60">1 小時</option>
       </select></div>
-    <div class="row sw"><div>額度重置提醒<div class="hint"><a href="#" data-cmd="toast-test" style="color:#0a84ff;text-decoration:none">測試</a></div></div>
+    <div class="row sw"><div>額度重置提醒<div class="hint"><a href="#" data-cmd="toast-test" style="color:var(--blue);text-decoration:none">測試</a></div></div>
       <select id="remind">
         <option value="0">關閉</option><option value="50">用量 ≥ 50%</option><option value="80">用量 ≥ 80%</option>
         <option value="90">用量 ≥ 90%</option><option value="100">用完時</option>
       </select></div>
+    <div class="row sw"><div>外觀</div><div class="seg"><button data-theme-set="light">淺色</button><button data-theme-set="dark">深色</button></div></div>
     <div class="row sw"><div>開機自動執行</div><div class="toggle" id="auto"></div></div>
     <div class="row sw"><div>檢查更新<div class="hint" id="updst"></div></div><div class="toggle" id="updchk"></div></div>
   </div>
@@ -251,6 +277,11 @@
     let tab = "status";
     try { tab = localStorage.getItem("aimonTab") || tab; } catch (_) {}
     showTab(tab);
+    let th = "dark";
+    try { th = localStorage.getItem("aimonTheme") || th; } catch (_) {}
+    setTheme(th);
+    document.getElementById("theme").onclick = () => setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+    for (const b of document.querySelectorAll("[data-theme-set]")) b.onclick = () => setTheme(b.dataset.themeSet);
     document.getElementById("demo").onclick = () => window.aimonCmd("demo");
     document.getElementById("hide").onclick = () => window.aimonCmd("hide");
     document.getElementById("quit").onclick = async () => { if (await ask("結束後螢幕會停止更新，確定要結束嗎？", "結束")) window.aimonCmd("quit"); };
@@ -293,6 +324,19 @@
   }
 
   var scrNames = {}; // 埠 → 螢幕種類（render 時更新）
+
+  // 淺色 / 深色：顏色都是 CSS 變數，換 html 的 data-theme 就好；額度曲線的 SVG 也用變數，不用重畫
+  const SUN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`;
+  const MOON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>`;
+  function setTheme(t) {
+    t = t === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem("aimonTheme", t); } catch (_) {}
+    const b = document.getElementById("theme");
+    b.innerHTML = t === "light" ? MOON : SUN;
+    b.title = b.ariaLabel = t === "light" ? "切換成深色" : "切換成淺色";
+    for (const x of document.querySelectorAll("[data-theme-set]")) x.classList.toggle("on", x.dataset.themeSet === t);
+  }
 
   // 頁面內的確認框：WebView2 內建的 confirm() 是固定寬度，視窗窄時右半邊（含「確定」）會被切掉
   function ask(msg, ok) {
@@ -339,7 +383,7 @@
   function quotaBlock(ai, sl, p5, r5, wl, pw, rw) {
     const line = (lb, p, r, thin) => {
       const left = fmtLeft(r), tail = left ? `<span class="muted"> · ${left}後重置</span>` : "";
-      const c = qRed > 0 && p >= qRed ? "#ff453a" : BRAND[ai] || "#8e8e93";
+      const c = qRed > 0 && p >= qRed ? "var(--red)" : BRAND[ai] || "var(--mut)";
       return thin
         ? `<div class="wline">${lb} <b>${Math.round(p)}%</b>${tail}</div><div class="bar wk"><i style="width:${Math.min(100, p)}%;background:${c}"></i></div>`
         : `${lb} <b>${Math.round(p)}%</b>${tail}<div class="bar"><i style="width:${Math.min(100, p)}%;background:${c}"></i></div>`;
@@ -363,26 +407,23 @@
     const allScr = s.screens || [], scr = allScr.filter((x) => x.verified);
     scrNames = Object.fromEntries(scr.map((x) => [x.port, BOARD[x.hw || "c3"] || x.hw])); // 更新韌體的確認框用（textContent，不用跳脫）
     $("serial").innerHTML = scr.length
-      ? scr.map((x) => `<div><span class="dot" style="background:#30d158"></span>${H(BOARD[x.hw || "c3"] || x.hw)}（${H(x.port)}）</div>`).join("")
+      ? scr.map((x) => `<div><span class="dot" style="background:var(--grn)"></span>${H(BOARD[x.hw || "c3"] || x.hw)}（${H(x.port)}）</div>`).join("")
       : allScr.length
-        ? `<span class="dot" style="background:#ffd60a"></span>已連線（${H(allScr.map((x) => x.port).join("、"))}）<div class="hint">尚未收到螢幕回覆（已收到 ${allScr.reduce((n, x) => n + (x.rx || 0), 0)} bytes）</div>`
-        : `<span class="dot" style="background:#ff453a"></span>未偵測到<div class="hint">用 USB 線插上螢幕即可，會自動連線。若燒錄工具或 Chrome 擴充功能正在使用序列埠，請先關閉。</div>`;
+        ? `<span class="dot" style="background:var(--yel)"></span>已連線（${H(allScr.map((x) => x.port).join("、"))}）<div class="hint">尚未收到螢幕回覆（已收到 ${allScr.reduce((n, x) => n + (x.rx || 0), 0)} bytes）</div>`
+        : `<span class="dot" style="background:var(--red)"></span>未偵測到<div class="hint">用 USB 線插上螢幕即可，會自動連線。若燒錄工具或 Chrome 擴充功能正在使用序列埠，請先關閉。</div>`;
 
-    const f = s.frame || {};
-    $("frame").innerHTML = f.ai && f.ai !== "none"
-      ? `<span class="dot" style="background:${COL[f.st]}"></span>${NAMES[f.ai] || f.ai} · ${ST[f.st] || f.st}`
-      : `<span class="muted">沒有偵測到 AI App 或 AI 網頁</span>`;
+    renderHero(s);
 
     const q = s.quota;
     if (s.login === "out") {
-      $("quota").innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入
+      $("quota").innerHTML = `<span class="dot" style="background:var(--yel)"></span>尚未登入
         <div class="hint">登入一次就會記住，之後自動在背景查詢額度。建議用 Email 登入（Google 登入在這個視窗可能會被擋）。</div>
         <div class="btns" style="margin-top:10px"><button class="primary" id="login">登入 Claude</button></div>`;
       $("login").onclick = () => window.aimonCmd("login");
     } else if (q && q.p5 >= 0) {
       $("quota").innerHTML = quotaBlock("claude", "5 小時", q.p5, q.r5, "本週", q.pw, q.rw);
     } else if (s.usageErr) {
-      $("quota").innerHTML = `<span class="dot" style="background:#ff453a"></span>讀取失敗
+      $("quota").innerHTML = `<span class="dot" style="background:var(--red)"></span>讀取失敗
         <div class="hint">已登入，但讀不到用量。請把這段截圖給開發者：</div>
         <details open><summary>詳細資訊</summary><code>${s.usageErr.replace(/[<&]/g, "")}</code></details>
         <div class="btns" style="margin-top:8px"><button id="retry">重新讀取</button><button id="login">重新登入</button></div>`;
@@ -407,10 +448,10 @@
         } else if (q.p5 >= 0) el.innerHTML = quotaBlock(ai, p.slabel || "5 小時", q.p5, q.r5, wl, q.pw, q.rw);
         else el.innerHTML = quotaBlock(ai, wl, q.pw, q.rw, "", -1, 0);
       } else if (p.login === "out") {
-        el.innerHTML = `<span class="dot" style="background:#ffd60a"></span>尚未登入
+        el.innerHTML = `<span class="dot" style="background:var(--yel)"></span>尚未登入
           <div class="btns" style="margin-top:8px"><button class="primary" data-cmd="login:${ai}">登入 ${name}</button></div>`;
       } else if (p.err) {
-        el.innerHTML = `<span class="dot" style="background:#ff453a"></span>${p.err}
+        el.innerHTML = `<span class="dot" style="background:var(--red)"></span>${p.err}
           <details><summary>詳細資訊（截圖給開發者）</summary><code>${(p.diag || "").replace(/[<&]/g, "")}</code></details>
           <div class="btns" style="margin-top:8px"><button data-cmd="poll:all">重新讀取</button><button data-cmd="login:${ai}">開啟 ${name}</button></div>`;
       } else {
@@ -423,7 +464,7 @@
     const fw = s.firmware || {};
     const less = (a, b) => { const x = (a || "0").split(".").map(Number), y = (b || "0").split(".").map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
     if (fw.running) {
-      $("fw").innerHTML = `${fw.port ? fw.port + "：" : ""}${fw.msg || "更新中…"} ${fw.progress}%<div class="bar"><i style="width:${fw.progress}%;background:#0a84ff"></i></div><div class="hint">請不要拔掉 USB</div>`;
+      $("fw").innerHTML = `${fw.port ? fw.port + "：" : ""}${fw.msg || "更新中…"} ${fw.progress}%<div class="bar"><i style="width:${fw.progress}%;background:var(--blue)"></i></div><div class="hint">請不要拔掉 USB</div>`;
     } else if (fw.err) {
       $("fw").innerHTML = `<span class="bad">更新失敗：${fw.err}</span><div class="btns" style="margin-top:8px"><button data-cmd="fwupdate${fw.port ? ":" + fw.port : ""}">再試一次</button></div>`;
     } else if (fw.msg) {
@@ -493,14 +534,39 @@
     }
   }
 
+  // 狀態分頁最上面：螢幕正在顯示的那家 AI。圓環 = 主要額度（Claude 5 小時；ChatGPT / Gemini 照各家的短週期，沒有就用長週期）
+  let heroSig = "";
+  function renderHero(s) {
+    const f = s.frame || {}, ai = f.ai, el = document.getElementById("hero");
+    let p = -1, lab = "", r = 0;
+    if (ai === "claude") { const q = s.quota || {}; if (q.p5 >= 0) { p = q.p5; lab = "5 小時"; r = q.r5; } }
+    else if (ai) {
+      const pv = (s.providers || {})[ai] || {}, q = pv.quota || {};
+      if (q.p5 >= 0) { p = q.p5; lab = pv.cached ? "上次用量" : pv.slabel || "5 小時"; r = q.r5; }
+      else if (q.pw >= 0) { p = q.pw; lab = pv.wlabel || "本週"; r = q.rw; }
+    }
+    const left = fmtLeft(r);
+    const sig = JSON.stringify([ai, f.st, Math.round(p * 10), lab, left, qRed]);
+    if (sig === heroSig) return;
+    heroSig = sig;
+    if (!ai || ai === "none") { el.innerHTML = `<div class="sub" style="padding:10px 0">沒有偵測到 AI App 或 AI 網頁</div>`; return; }
+    const R = 40, C = 2 * Math.PI * R, col = qRed > 0 && p >= qRed ? "var(--red)" : BRAND[ai] || "var(--mut)";
+    el.innerHTML = `<div class="ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="${R}" fill="none" style="stroke:#2c2c2e" stroke-width="9"/>
+        ${p > 0 ? `<circle cx="50" cy="50" r="${R}" fill="none" style="stroke:${col}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${(C * Math.min(100, p) / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"/>` : ""}</svg>
+        <div class="num">${p >= 0 ? Math.round(p) + "%" : "--"}${lab ? `<small>${lab}</small>` : ""}</div></div>
+      <div style="min-width:0"><div class="nm">${LOGOS[ai] ? logo(ai) : ""}${NAMES[ai] || H(ai)}</div>
+        <span class="pill"><span class="dot" style="background:${COL[f.st] || "var(--mut)"}"></span>${ST[f.st] || H(f.st)}</span>
+        <div class="sub">螢幕正在顯示${left ? ` · ${left}後重置` : ""}</div></div>`;
+  }
+
   // 網頁版擴充功能：開關、連線狀態、沒裝時的安裝步驟
   function renderExt(x) {
     document.getElementById("ext").classList.toggle("on", !!x.enabled);
-    const link = (cmd, t) => `<a href="#" data-cmd="${cmd}" style="color:#0a84ff;text-decoration:none">${t}</a>`;
+    const link = (cmd, t) => `<a href="#" data-cmd="${cmd}" style="color:var(--blue);text-decoration:none">${t}</a>`;
     let h = "";
     if (!x.enabled) h = "";
     else if (x.connected) h = `<span class="ok">● 擴充功能已連線</span>${x.tabs ? ` · ${x.tabs} 個 AI 分頁` : " · 目前沒有開著 AI 網頁"}`;
-    else h = `<span style="color:#ffd60a">● 還沒裝</span><br>
+    else h = `<span style="color:var(--yel)">● 還沒裝</span><br>
       1. 打開 <b>chrome://extensions</b>，開「開發人員模式」<br>
       2. 「載入未封裝項目」→ 選 ${link("ext-folder", "這個資料夾")}`;
     document.getElementById("extst").innerHTML = h;
@@ -513,9 +579,9 @@
     let h = "";
     if (u.running || u.msg) {
       h = `<div class="upd"><div class="v">更新到 ${esc(u.latest)}：${esc(u.msg || "下載中…")} ${u.progress || 0}%
-        <div class="bar" style="background:#123"><i style="width:${u.progress || 0}%;background:#0a84ff"></i></div></div></div>`;
+        <div class="bar"><i style="width:${u.progress || 0}%;background:var(--blue)"></i></div></div></div>`;
     } else if (u.err) {
-      h = `<div class="upd" style="background:#3a1715"><div class="v"><span class="bad">更新失敗：${esc(u.err)}</span><div class="hint">目前的版本 ${esc(cur)} 照常執行</div></div>
+      h = `<div class="upd err"><div class="v"><span class="bad">更新失敗：${esc(u.err)}</span><div class="hint">目前的版本 ${esc(cur)} 照常執行</div></div>
         ${u.latest ? `<button class="primary" data-cmd="appupdate">再試一次</button>` : ""}</div>`;
     } else if (u.latest) {
       h = `<div class="upd"><div class="v">有新版 <b>${esc(u.latest)}</b><div class="hint">目前 ${esc(cur)} · 設定會保留</div></div>
@@ -526,11 +592,11 @@
     let st = "";
     if (!u.enabled) st = "";
     else if (u.checking) st = "檢查中…";
-    else if (u.checkErr) st = `<span class="bad">上次檢查失敗：${esc(u.checkErr)}</span> · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">再檢查</a>`;
+    else if (u.checkErr) st = `<span class="bad">上次檢查失敗：${esc(u.checkErr)}</span> · <a href="#" data-cmd="appcheck" style="color:var(--blue);text-decoration:none">再檢查</a>`;
     else if (u.checked) {
       const t = new Date(u.checked * 1000);
-      st = `${u.latest ? `有新版 ${esc(u.latest)}` : "已是最新版"} · <a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">檢查</a>`;
-    } else st = `<a href="#" data-cmd="appcheck" style="color:#0a84ff;text-decoration:none">立即檢查</a>`;
+      st = `${u.latest ? `有新版 ${esc(u.latest)}` : "已是最新版"} · <a href="#" data-cmd="appcheck" style="color:var(--blue);text-decoration:none">檢查</a>`;
+    } else st = `<a href="#" data-cmd="appcheck" style="color:var(--blue);text-decoration:none">立即檢查</a>`;
     document.getElementById("updst").innerHTML = st;
   }
 
@@ -557,7 +623,7 @@
           <div class="row sw"><div>螢幕亮度</div><input type="range" data-scr="${k}" data-k="bri" min="10" max="255" step="5"></div>
           <div class="row sw"><div>螢幕方向</div>
             <select data-scr="${k}" data-k="rot">${rot}</select></div>
-          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint" ${x.net ? 'style="color:#ffd60a">WiFi 連線時不能用，要插 USB' : ">Win+H 語音輸入"}</div>
+          ${amoled ? `<div class="row sw"><div>麥克風<div class="hint" ${x.net ? 'style="color:var(--yel)">WiFi 連線時不能用，要插 USB' : ">Win+H 語音輸入"}</div>
               <div class="hint bad" data-micx="${k}" style="display:none">上次當機，這次先不開（重插 USB 再試）</div></div>
             <select data-scr="${k}" data-k="mic"><option value="0">關閉</option><option value="1">開啟</option></select></div>
           <div class="row sw"><div>麥克風增益</div>
@@ -607,13 +673,13 @@
       const where = x ? (x.net ? H(x.port) : `USB ${H(x.port)}`) : `<span class="muted">沒有連線</span>`;
       let st = "";
       if (w && w.st === 2) st = `<span class="ok">● 已連線</span> ${H(w.ssid)}<div class="hint">${H(w.ip)} · ${sigTxt(w.rssi)}（${w.rssi} dBm）</div>`;
-      else if (w && w.st === 1) st = `<span style="color:#ffd60a">● 連線中…</span> ${H(w.ssid)}`;
+      else if (w && w.st === 1) st = `<span style="color:var(--yel)">● 連線中…</span> ${H(w.ssid)}`;
       else if (w && w.st === 3) st = `<span class="bad">● 連不上 ${H(w.ssid)}</span><div class="hint">密碼可能不對</div>`;
       else if (w && w.st === 4) st = `<span class="bad">● 找不到 ${H(w.ssid)}</span><div class="hint">只支援 2.4 GHz</div>`;
       else if (conf) st = `${H(conf.ssid)}${conf.err ? `<div class="hint bad">${H(conf.err)}</div>` : `<div class="hint">等待螢幕連線…</div>`}`;
       else st = `<span class="muted">未設定</span>`;
       const micOn = x && x.set && x.set.mic;
-      if (x && x.net && micOn) st += `<div class="hint" style="color:#ffd60a">麥克風要插 USB 才能用</div>`;
+      if (x && x.net && micOn) st += `<div class="hint" style="color:var(--yel)">麥克風要插 USB 才能用</div>`;
       const oldFw = x && !x.wf;
       let body = "";
       if (oldFw) {
@@ -719,7 +785,7 @@
     if (!seg.childElementCount) seg.innerHTML = ["claude", "chatgpt", "gemini"].map((ai) => `<button data-qai="${ai}" title="${NAMES[ai]}" aria-label="${NAMES[ai]}">${logo(ai)}</button>`).join("");
     for (const b of document.querySelectorAll("[data-qai]")) b.classList.toggle("on", b.dataset.qai === qAI);
     for (const b of document.querySelectorAll("[data-qd]")) b.classList.toggle("on", +b.dataset.qd === qDays);
-    const [l5, lw] = qLabels(qAI), col = BRAND[qAI] || "#8e8e93", grey = col;   // 每週：同色調淡的虛線
+    const [l5, lw] = qLabels(qAI), col = BRAND[qAI] || "var(--mut)", grey = col;   // 每週：同色調淡的虛線
     document.getElementById("qleg").innerHTML = `<span><i style="border-color:${col}"></i>${l5}</span><span style="opacity:.6"><i style="border-color:${grey};border-top-style:dashed"></i>${lw}</span>`;
     const plot = document.getElementById("qplot");
     const sm = (qData && qData.samples) || [];
@@ -738,26 +804,26 @@
       return d;
     };
     let g = "";
-    for (const v of [0, 50, 100]) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#2c2c2e" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}${v === 100 ? "%" : ""}</text>`;
+    for (const v of [0, 50, 100]) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" style="stroke:var(--grid)" stroke-width="1"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}${v === 100 ? "%" : ""}</text>`;
     const red = (qStatus || {}).remindAt;
-    if (red > 0 && red < 100) g += `<line x1="${L}" x2="${W - R}" y1="${y(red)}" y2="${y(red)}" stroke="#ff453a" stroke-opacity=".45" stroke-dasharray="3 3"/>`;
+    if (red > 0 && red < 100) g += `<line x1="${L}" x2="${W - R}" y1="${y(red)}" y2="${y(red)}" style="stroke:var(--red)" stroke-opacity=".45" stroke-dasharray="3 3"/>`;
     // 時間刻度：24 小時每 6 小時一格，7 天每天午夜一格（本地時間）
     const step = qDays === 1 ? 6 * 3600 : 86400, tz = new Date().getTimezoneOffset() * 60;
     for (let t = Math.ceil((t0 - tz) / step) * step + tz; t <= t1; t += step) {
       if (t - t0 < 1800) continue;
       const d = new Date(t * 1000), lab = qDays === 1 ? `${String(d.getHours()).padStart(2, "0")}:00` : `${d.getMonth() + 1}/${d.getDate()}`;
-      g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" stroke="#1c1c1e"/><text x="${x(t)}" y="${H - 5}" text-anchor="middle">${lab}</text>`;
+      g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" style="stroke:var(--grid2)"/><text x="${x(t)}" y="${H - 5}" text-anchor="middle">${lab}</text>`;
     }
-    g += `<path d="${path("w")}" fill="none" stroke="${grey}" stroke-opacity=".55" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"/>`;
-    g += `<path d="${path("p")}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    g += `<path d="${path("w")}" fill="none" style="stroke:${grey}" stroke-opacity=".55" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    g += `<path d="${path("p")}" fill="none" style="stroke:${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
     // 線尾直接標數字（兩個太近就錯開）
     const last = (k) => { for (let i = sm.length - 1; i >= 0; i--) if (sm[i][k] >= 0) return sm[i]; return null; };
     const a = last("p"), b = last("w");
     let ya = a ? y(a.p) + 4 : 0, yb = b ? y(b.w) + 4 : 0;
     if (a && b && Math.abs(ya - yb) < 12) { if (ya <= yb) { ya -= 6; yb += 6; } else { ya += 6; yb -= 6; } }
-    if (a) g += `<text x="${x(a.t) + 6}" y="${ya}" style="fill:#f5f5f7">${Math.round(a.p)}%</text>`;
+    if (a) g += `<text x="${x(a.t) + 6}" y="${ya}" style="fill:var(--fg)">${Math.round(a.p)}%</text>`;
     if (b) g += `<text x="${x(b.t) + 6}" y="${yb}">${Math.round(b.w)}%</text>`;
-    g += `<g id="qx" style="display:none"><line y1="${T}" y2="${H - B}" stroke="#636366"/><circle r="4" fill="${col}" stroke="#000" stroke-width="2"/><circle r="4" fill="${grey}" fill-opacity=".6" stroke="#000" stroke-width="2"/></g>`;
+    g += `<g id="qx" style="display:none"><line y1="${T}" y2="${H - B}" style="stroke:var(--mut2)"/><circle r="4" style="fill:${col};stroke:var(--card)" stroke-width="2"/><circle r="4" style="fill:${grey};stroke:var(--card)" fill-opacity=".6" stroke-width="2"/></g>`;
     g += `<rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="qhit"/>`;
     plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}">${g}</svg><div class="qtip" style="display:none"></div>`;
     const hit = plot.querySelector("#qhit"), cross = plot.querySelector("#qx"), tip = plot.querySelector(".qtip");
@@ -787,7 +853,7 @@
   });
   window.addEventListener("resize", () => { if (qData) drawQ(); });
 
-  const BRAND = { claude: "#f0855a", chatgpt: "#e5e5ea", gemini: "#64a8ff" };
+  const BRAND = { claude: "#f0855a", chatgpt: "var(--gpt)", gemini: "#64a8ff" };   // ChatGPT：深色主題淺灰、淺色主題黑色
   function fmtDur(sec) {
     sec = Math.round(sec || 0);
     if (sec < 60) return sec + " 秒";
@@ -808,7 +874,7 @@
       let tc = 0, ts = 0;
       for (const [ai, c, sec] of today) {
         tc += c; ts += sec;
-        h += `<div class="srow"><div class="nm" title="${NAMES[ai] || H(ai)}" aria-label="${NAMES[ai] || H(ai)}">${LOGOS[ai] ? logo(ai) : H(NAMES[ai] || ai)}</div><div class="bar"><i style="width:${Math.max(3, (sec / max) * 100)}%;background:${BRAND[ai] || "#8e8e93"}"></i></div><div class="val">${c} 次 · ${fmtDur(sec)}</div></div>`;
+        h += `<div class="srow"><div class="nm" title="${NAMES[ai] || H(ai)}" aria-label="${NAMES[ai] || H(ai)}">${LOGOS[ai] ? logo(ai) : H(NAMES[ai] || ai)}</div><div class="bar"><i style="width:${Math.max(3, (sec / max) * 100)}%;background:${BRAND[ai] || "var(--mut)"}"></i></div><div class="val">${c} 次 · ${fmtDur(sec)}</div></div>`;
       }
       h += `<div class="hint" style="padding:2px 0 8px">合計 ${tc} 次 · ${fmtDur(ts)}</div>`;
     }

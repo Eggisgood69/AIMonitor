@@ -770,6 +770,29 @@ static ClawdPose clawdPose(St st, uint32_t ms, int u) {
 
 static const int CLAWD_U = SI(5);                           // 主畫面：一格 5 個設計像素
 static const int CLAWD_SU = SI(3);                          // 螢幕保護：小一點
+
+// 自訂動畫（anim.h，使用者上傳的影片）：放在 Clawd 的位置，主燈是 Claude 時取代 Clawd
+// 畫格的底邊跟 clawdBox 一樣（下面就是大數字），往上伸進圓頂；超出額度環內緣（ANIM_RC）的部分不畫，所以四個角碰不到環
+static const int ANIM_W = 140, ANIM_H = 114;                // 畫格大小（偶數）
+static const int ANIM_Y = ((SI(31) & ~1) + ((10 * CLAWD_U) & ~1) - ANIM_H) & ~1;   // 畫格上緣（沒挪動時）
+static const int ANIM_RC = SI(96);                          // 只畫在這個半徑以內（額度環內緣 98.5，留一點空）
+static const uint16_t* g_animBuf = nullptr;                 // 全部畫格（PSRAM，RGB565）
+static uint16_t g_animN = 0, g_animMs = 66;                 // 幾格、每格幾 ms
+static uint32_t g_animCrc = 0;                              // 螢幕上這份動畫的 CRC32（0 = 沒有）
+static uint32_t g_animWant = 0;                             // 電腦要顯示哪一份（畫面的 "av"，0 = Clawd）
+static bool animOn() { return g_animBuf && g_animN && g_animWant && g_animWant == g_animCrc; }
+
+// 畫一格自訂動畫（一列一列畫，每列只畫圓以內的那段）
+static void animDraw(uint32_t ms) {
+  const uint16_t* fr = g_animBuf + ((ms / g_animMs) % g_animN) * (ANIM_W * ANIM_H);
+  const int x0 = CX - ANIM_W / 2 + g_shX, y0 = ANIM_Y + g_shY, r2 = ANIM_RC * ANIM_RC;
+  for (int r = 0; r < ANIM_H; r++) {
+    const int y = y0 + r, dy = y - CY, rem = r2 - dy * dy;
+    if (rem <= 0) continue;
+    const int hx = (int)sqrtf((float)rem), xa = max(x0, CX - hx), xb = min(x0 + ANIM_W, CX + hx);
+    if (xb > xa) band.pushImage(xa, y - OY, xb - xa, 1, (const lgfx::rgb565_t*)(fr + r * ANIM_W + (xa - x0)));
+  }
+}
 #endif
 
 // 現在要不要畫 Clawd、它可能占到的範圍（偶數對齊，含晃動、跳、防烙印挪動）
@@ -796,6 +819,7 @@ static void clawdDraw(uint32_t ms) {
 #if LCD_W > 240
   int bx, by, bw, bh;
   if (!clawdBox(bx, by, bw, bh)) return;
+  if (animOn()) { animDraw(ms); return; }
   const int u = CLAWD_U;
   drawClawd(CX - 6 * u, by + (bh - 7 * u) / 2 + u / 2, u, clawdPose(g_frame.st, ms, u));
 #else

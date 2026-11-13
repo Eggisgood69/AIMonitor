@@ -241,6 +241,7 @@
     <div class="row sw"><div>網頁版<div class="hint">要裝瀏覽器擴充功能</div><div class="hint" id="extst"></div></div><div class="toggle" id="ext"></div></div>
   </div>
   <div class="card" id="scrset"></div>
+  <div class="card" id="animbox"></div>
   <div class="card">
     <div class="row sw"><div>螢幕保護<div class="hint">待命後顯示時鐘</div></div>
       <select id="saver">
@@ -290,6 +291,7 @@
       if (!b) return;
       e.preventDefault();
       const c = b.getAttribute("data-cmd");
+      if (c.startsWith("anim-del:") && !(await ask("要刪除這個動畫嗎？螢幕會改回 Clawd。", "刪除"))) return;
       if (c === "appupdate" && !(await ask("會下載新版、驗證後自動換掉目前的程式並重新開啟（設定會保留）。要開始嗎？", "更新"))) return;
       // 按鈕送的是 fwupdate:<埠>（指定哪塊螢幕），以前只比對 "fwupdate"，確認框不會出現、一按就開始燒
       if (c === "fwupdate" || c.startsWith("fwupdate:")) {
@@ -483,6 +485,7 @@
       }).join("");
     }
     renderScreenSettings(scr, BOARD);
+    renderAnim(s.anim || {}, scr);
     renderWifi(s, BOARD);
 
     const items = s.items || [];
@@ -654,6 +657,36 @@
         el.value = v;
       }
     }
+  }
+
+  // ---------------- 自訂動畫（AMOLED 主畫面 Clawd 的位置）----------------
+  // 選單：原作者的 Clawd 或上傳過的影片；新增影片用系統的開啟檔案視窗，電腦用 ffmpeg 轉檔後傳到螢幕
+  let animSig = "";
+  function renderAnim(a, scr) {
+    const box = document.getElementById("animbox");
+    const list = a.list || [], sel = a.sel || "";
+    const amoled = scr.filter((x) => x.hw === "s3a175");
+    const prog = Object.entries(a.prog || {}).map(([, v]) => v);
+    const cur = list.find((x) => x.id === sel);
+    const sig = JSON.stringify([list.map((x) => x.id + x.name), sel, a.ffmpeg, a.job, prog, amoled.map((x) => x.key + x.av)]);
+    if (sig === animSig) return;
+    animSig = sig;
+    let st = "";
+    if (a.job) st = a.job.startsWith("轉檔中") ? `<div class="hint">${H(a.job)}</div>`
+      : a.job === "找不到 ffmpeg" ? ""
+      : `<div class="hint bad">${H(a.job)} · <a href="#" data-cmd="anim-clear" style="color:var(--blue);text-decoration:none">知道了</a></div>`;
+    for (const p of prog) st += `<div class="hint ${p.includes("失敗") ? "bad" : ""}">${H(p)}</div>`;
+    if (!st && cur && amoled.some((x) => x.av === cur.crc)) st = `<div class="hint ok">● 已在螢幕上（主燈是 Claude 時顯示）</div>`;
+    const need = !a.ffmpeg ? `<div class="hint" style="color:var(--yel)">新增影片要先安裝 ffmpeg：在 PowerShell 執行 <code>winget install Gyan.FFmpeg</code>，裝好再按一次「新增影片」</div>` : "";
+    box.innerHTML = `<div class="row sw"><div>螢幕角色<div class="hint">主燈是 Claude 時顯示在上方（1.75 吋 AMOLED）</div></div>
+        <select id="animsel"><option value="">Clawd（原作者）</option>${list.map((x) => `<option value="${H(x.id)}">${H(x.name)}</option>`).join("")}</select></div>
+      ${cur ? `<div class="row"><img src="${cur.preview}" width="140" height="114" style="border-radius:8px;background:#000;image-rendering:pixelated">
+        <div class="hint" style="margin-left:10px">${cur.n} 格 · ${(cur.n * cur.ms / 1000).toFixed(1)} 秒循環</div></div>` : ""}
+      <div class="row"><div style="flex:1">${st}${need}<div class="hint">影片會裁成 140×114（上方圓弧外的角不顯示）、最長 8 秒（每秒 15 格），一直循環播放</div></div></div>
+      <div class="btns" style="padding:4px 0 10px"><button data-cmd="anim-add">新增影片…</button>${cur ? `<button data-cmd="anim-del:${H(cur.id)}">刪除這個</button>` : ""}</div>`;
+    const s = document.getElementById("animsel");
+    s.value = sel;
+    s.onchange = (e) => window.aimonCmd("anim-sel:" + e.target.value).then(render);
   }
 
   // ---------------- WiFi 分頁（只有 AMOLED）----------------

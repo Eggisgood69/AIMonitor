@@ -25,6 +25,7 @@ firmware/aimon/fonts466.h  AMOLED 用的放大字型（`fontgen.py 466`）
 firmware/aimon/config.h    兩種板子的腳位、亮度（`#if CONFIG_IDF_TARGET_ESP32S3`）
 firmware/aimon/sensors.h   AMOLED 的觸控、陀螺儀（I2C）
 firmware/aimon/mic.h       AMOLED 的 USB 麥克風（ES7210 + I2S + 自訂 UAC1 class driver，執行中切 TinyUSB）
+firmware/aimon/anim.h      AMOLED 的自訂動畫（取代主畫面的 Clawd；FFat 存檔、PSRAM 播放、收電腦傳來的原始畫格）
 firmware/aimon/wifi.h      AMOLED 的 WiFi（掃描、連線、TCP 47323 + 配對金鑰、mDNS aimon-<id 後 6 碼>.local）；1.28 吋不做
 firmware/tools/mic-off.ps1 燒錄前讓麥克風模式的 AMOLED 重開回 hwcdc，輸出新的 COM 埠
 firmware/aimon/logos.h     三家官方 LOGO 的小圖（今日統計頁）與大圖（主畫面取代 AI 名稱，AMOLED 的 Claude 仍是 Clawd），由 firmware/tools/logogen.py 從 windows/ui.js 的 LOGOS 產生（需要 pip install resvg-py pillow）；使用者要官方 LOGO，不要自己畫
@@ -38,6 +39,7 @@ windows/                   Go 程式（Windows only，WebView2）
   providers.js / providers_windows.go   ChatGPT（wham/usage）與 Gemini（gemini.google.com/usage）用量
   ui.js                    設定視窗（注入到 claude.ai 頁面上畫出來，因為要用 claude.ai 的登入 cookie 讀 Claude 用量）
   claudecode*.go           Claude Code hooks（http hook → 127.0.0.1:47322/cc）
+  anim.go / anim_windows.go   自訂動畫：動畫庫（%LOCALAPPDATA%\AIMonitor\anims，<id>.raw + <id>.json）、ffmpeg 轉檔、選檔視窗、傳給螢幕（serveScreen 裡的 animMaybeUpload）
   wifi.go / wifiscreen_windows.go   螢幕的 WiFi：設定指令（wscan / wifi / wforget）、沒插 USB 時用 TCP 連到螢幕（跟 USB 共用 serveScreen）
   codex.go                 Codex 對話紀錄（~/.codex/sessions 的 rollout-*.jsonl）→ cx:<id> 項目，跟 ChatGPT App 畫面項目配對去重
   reminder.go / notify_windows.go   額度重置提醒 + Windows Toast
@@ -92,6 +94,8 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 電腦 → 螢幕：`{ai, st, msg, p5, pw, red, r5, rw, age, now, tz, saver, ss, bri, rot, arot, led, mic, mg, o:[[ai,st]], d:[[ai,次數,秒]], note, nk}`（`note` 只送目前主畫面那家 AI 的重置提醒（別家的不顯示：以前字前面加名字，太長被截成「CHATGPT 5H RESETS ...」，試過放小 LOGO 使用者覺得太複雜）；`saver` = 螢幕保護分鐘數，`ss` = 秒數（設定視窗的「30 秒」：送 `saver:1, ss:30`，韌體 1.10.47 起有 ss 就用它，舊韌體當 1 分鐘）；`red` = 額度幾 % 以上變紅，0 = 不變紅，沒送 = 90；`led` = 外接 WS2812 亮度 0-100；`arot` = 1 時有陀螺儀的螢幕自動轉向、不理 `rot`；`mic` 只送給 s3a175：1 = 切成 USB 麥克風、0 = 重開回 hwcdc，也可以單獨一行 `{"mic":0}`；`mg` = 麥克風增益 0-14，ES7210 的暫存器值，10 = 30 dB）
 WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wscan":[[ssid,rssi,0 開放|1 密碼|2 企業版],...]}`（失敗加 `"err":1`）；`{"wset":{"s","p","k"}}` 存進 NVS 並連線（`s` 空白 = 忘記）；
 螢幕回 `{"wst":{"st":0 沒設定|1 連線中|2 已連線|3 密碼可能不對|4 找不到,"ssid","ip","rssi","r"}}`（回 hello 後、狀態變了時送）。WiFi 的 TCP 連線第一行要是 `{"auth":"<配對金鑰>"}`（回 `{"auth":1}`），不對就斷線
+自訂動畫（只有 AMOLED）：畫面的 `av` = 要顯示哪一份（CRC32，0 = Clawd），hello 回 `"av"` = 螢幕上存的那份。不一樣就傳：`{"anim":{"w":140,"h":114,"n","ms","crc","len"}}` → 螢幕回 `{"anim":"rdy"}`（第一次要格式化 FFat，可能十幾秒），
+之後這條連線改收 `len` 個位元組的原始 RGB565（不是 JSON），每 16 KB 回 `{"ak":已收}`，電腦收到才送下一段（hwcdc 的接收緩衝滿了會直接丟資料，所以 AMOLED 的 `Serial.setRxBufferSize` 是 24 KB）；收完驗 CRC32 回 `{"anim":"ok","crc","saved"}` 或 `{"anim":"bad","why":"size|mem|crc"}`；5 秒沒資料就放棄、回去收 JSON
 螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"mfx"` 補回幾次 USB 中斷遮罩（見下面麥克風那段）、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）

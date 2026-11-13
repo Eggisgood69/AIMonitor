@@ -87,7 +87,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.17.0、韌體 1.13.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.17.1、韌體 1.13.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -262,7 +262,8 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
   (3) 開始傳就放掉 PSRAM 裡的舊動畫（兩份 3.7 MB 放不下），失敗後要重開機才有、選回舊的還會整份重傳 → `animFail` 從 FFat 讀回（傳的時候寫 /anim.tmp，/anim.bin 不動）；
   (4) 傳的時候才 malloc：8 秒的影片（3.7 MB）有時「螢幕記憶體不夠」、同一份過幾分鐘又成功——PSRAM 總共剩 5 MB，但開機讀回的動畫放掉後空間被切成兩段（之後配置的東西在它後面），湊不出連續 3.7 MB
   → 開機時（wifiInit 之前）就配好一塊最大的 `g_animMem`（120 格），收、播共用，不再配置 / 放掉。開機後 PSRAM 還剩約 1.5 MB（hello 的 `ps` / `psb`）。
-  AMOLED 的 USB 接收緩衝因此是 24 KB（一段 16 KB，hwcdc 滿了直接丟資料）；寫 FFat 時主迴圈會頓、第一次要格式化 FFat 停好幾秒。麥克風模式下不傳
+  AMOLED 的 USB 接收緩衝因此是 24 KB（一段 16 KB，hwcdc 滿了直接丟資料）；寫 FFat 時主迴圈會頓、第一次要格式化 FFat 停好幾秒。麥克風模式下不傳。
+  只傳給支援的韌體（1.17.1）：舊韌體 hello 沒有 `av`、新韌體沒存動畫是 `av:0`，以前兩種都當 AV = 0 照傳，舊韌體不會回 rdy、卡 60 秒顯示 Disconnected、每分鐘重試（外部審查抓到）→ hello 有沒有 `av` 欄位記成 `Anim`（`animDecide`），不支援就不傳、設定視窗提示更新韌體
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）

@@ -91,7 +91,7 @@ func findFFmpeg() string {
 
 var (
 	animStMu  sync.Mutex
-	animJob   string            // 轉檔中 / 上次轉檔失敗的原因（設定視窗顯示）
+	animJob   string                // 轉檔中 / 上次轉檔失敗的原因（設定視窗顯示）
 	animProg  = map[string]string{} // 每塊螢幕（key）的傳送進度
 	animTried = map[string]time.Time{}
 	animSel   uint32 // 選的那份的 CRC（0 = Clawd），受 animStMu 保護
@@ -125,6 +125,15 @@ func setAnimProg(key, s string) {
 		delete(animProg, key)
 	} else {
 		animProg[key] = s
+	}
+	animStMu.Unlock()
+}
+
+// 只在目前顯示的是這句時才收掉（不蓋掉傳送中 / 失敗的訊息）
+func clearAnimProg(key, s string) {
+	animStMu.Lock()
+	if animProg[key] == s {
+		delete(animProg, key)
 	}
 	animStMu.Unlock()
 }
@@ -251,10 +260,18 @@ func animMaybeUpload(sc *screenConn, sp screenLink) bool {
 	serMu.Lock()
 	st := sc.stat
 	serMu.Unlock()
-	if want == 0 || !st.Verified || st.Board() != "s3a175" || st.Mic || st.AV == want {
+	key := st.Key()
+	switch animDecide(want, st.Verified, st.Board(), st.Mic, st.Anim, st.AV) {
+	case animDoOldFW:
+		setAnimProg(key, animOldFWMsg) // 設定視窗提示要更新韌體，不傳
+		return false
+	case animDoSkip:
+		if st.Verified {
+			clearAnimProg(key, animOldFWMsg) // 換回 Clawd、或韌體已更新：收掉上面那句
+		}
 		return false
 	}
-	key := st.Key()
+	clearAnimProg(key, animOldFWMsg)
 	animStMu.Lock()
 	if t, ok := animTried[key+fmt.Sprint(want)]; ok && time.Since(t) < time.Minute {
 		animStMu.Unlock()

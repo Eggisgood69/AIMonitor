@@ -45,3 +45,32 @@ func TestSaveAnimCapsFrames(t *testing.T) {
 		t.Fatal("empty should fail")
 	}
 }
+
+// 舊韌體（hello 沒有 av）跟「新韌體但還沒存動畫」都是 AV = 0：舊的不能傳（不會回 rdy，卡 60 秒）
+func TestAnimDecideOldFirmware(t *testing.T) {
+	const want = 0x1234
+	cases := []struct {
+		name     string
+		want     uint32
+		verified bool
+		board    string
+		mic, sup bool
+		have     uint32
+		expect   int
+	}{
+		{"沒選動畫", 0, true, "s3a175", false, false, 0, animDoSkip},
+		{"1.28 吋", want, true, "c3", false, false, 0, animDoSkip},
+		{"還沒回 hello", want, false, "s3a175", false, false, 0, animDoSkip},
+		{"舊韌體", want, true, "s3a175", false, false, 0, animDoOldFW},
+		{"舊韌體麥克風模式", want, true, "s3a175", true, false, 0, animDoOldFW},
+		{"新韌體沒存", want, true, "s3a175", false, true, 0, animDoUpload},
+		{"新韌體存別份", want, true, "s3a175", false, true, 0x99, animDoUpload},
+		{"新韌體已經有", want, true, "s3a175", false, true, want, animDoSkip},
+		{"新韌體麥克風模式", want, true, "s3a175", true, true, 0, animDoSkip},
+	}
+	for _, c := range cases {
+		if got := animDecide(c.want, c.verified, c.board, c.mic, c.sup, c.have); got != c.expect {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.expect)
+		}
+	}
+}

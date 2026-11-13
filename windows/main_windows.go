@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.17.0"
+const version = "1.17.1"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -381,6 +381,7 @@ type serialStatus struct {
 	Mic       bool   `json:"mic"`  // AMOLED 正在當 USB 麥克風（這時的埠是麥克風模式的 COM 埠，跟平常不同）
 	MicX      bool   `json:"micx"` // 上次在麥克風模式下當機重開：這次開機螢幕不肯再進麥克風模式
 	AV        uint32 `json:"av"`   // AMOLED 上存的自訂動畫（CRC32，0 = 沒有）
+	Anim      bool   `json:"anim"` // 韌體支援自訂動畫（hello 有 av 欄位，1.13.0 起）：舊韌體沒有 av 也是 AV = 0，要分開記
 	RX        int    `json:"rx"`   // 從螢幕收到的位元組數（除錯用）
 	// WiFi（只有 AMOLED，wifi.go）
 	Net  bool       `json:"net"`            // 這條連線走 WiFi（不是 USB）；Port 是「WiFi <IP>」
@@ -779,7 +780,9 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		}
 		sc.stat.WF = m["wf"] == 1.0
 		sc.stat.OTA = m["ota"] == 1.0
-		if v, ok := m["av"].(float64); ok {
+		v, ok := m["av"].(float64)
+		sc.stat.Anim = ok
+		if ok {
 			sc.stat.AV = uint32(v)
 		}
 		mic, micx := m["mic"] == 1.0, m["micx"] == 1.0

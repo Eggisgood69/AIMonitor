@@ -28,6 +28,32 @@ const (
 	animFrameLen  = animW * animH * 2
 )
 
+// 這塊螢幕要不要傳動畫：
+//
+//	animDoSkip     不用傳（沒選動畫、不是 AMOLED、還沒回 hello、麥克風模式、已經有這份）
+//	animDoOldFW    選了動畫但韌體不支援（舊韌體不會回 {"anim":"rdy"}，傳了只會卡 60 秒、螢幕顯示斷線）
+//	animDoUpload   傳
+const (
+	animDoSkip = iota
+	animDoOldFW
+	animDoUpload
+)
+
+const animOldFWMsg = "這塊螢幕的韌體不支援自訂動畫，請先更新螢幕韌體"
+
+func animDecide(want uint32, verified bool, board string, mic, supported bool, have uint32) int {
+	if want == 0 || !verified || board != "s3a175" {
+		return animDoSkip
+	}
+	if !supported {
+		return animDoOldFW
+	}
+	if mic || have == want {
+		return animDoSkip
+	}
+	return animDoUpload
+}
+
 type AnimInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`

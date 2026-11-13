@@ -724,20 +724,38 @@ static LineReader rdUart(&Serial0);
 // 舊畫面往滑的方向推出去、新頁從另一邊滑進來，外圈燈號固定不動（每一格把外環重畫在最上面）。
 // 都在面板座標做（已轉向的整張），轉向時沿面板的另一軸移動，不用每格重新轉向
 static uint16_t* g_fbOld = nullptr;     // 換頁前螢幕上那張
-static uint16_t* g_fbSlide = nullptr;   // 滑動中的這一格
+static uint16_t* g_fbSlide = nullptr;   // 滑動中的格子（兩個輪流用：一個在送、另一個在組下一格）
+static uint16_t* g_fbSlide2 = nullptr;
+static const uint16_t* g_slShown = nullptr;   // 螢幕上正顯示的那一格（滑動中再滑一次時當舊畫面）
 static LGFX_Sprite g_slideSprite(&lcd);
 static const uint16_t* g_slideNew = nullptr;   // 新頁（g_fb 或 g_fbRot）
 static int8_t g_sliding = 0;            // 滑動中：-1 內容往左、1 往右（看到的畫面上）
 static uint32_t g_slideT0 = 0;
 static const uint32_t SLIDE_MS = 280;
+// 下一格在另一個核心（core 0）組，這一格同時在 core 1 畫外環、送出：組一格約 20 ms，外環 8 ms + 送一格 22 ms。
+// 以前一格接一格做（還等 TE）要 50 ms（每秒 20 格，看起來卡），現在約 30 ms。
+// 外環也交給 core 0 試過：core 0 變成 28 ms、兩邊搶 PSRAM，反而比較慢
+static TaskHandle_t g_slideWorker = nullptr;
+static uint16_t* volatile g_swDst = nullptr;
+static volatile int g_swA = 0;
+static volatile bool g_swBusy = false;
+static uint16_t* g_slNext = nullptr;    // 另一個核心組好（或正在組）的下一格；nullptr = 沒有
+static int g_slNextP = 0;               // 那一格的進度（0-1000）
 
 static bool slideReady() { return g_fbOld && g_fbSlide && (g_rot == 0 || g_fbRot); }
 
+static void slideWorkerWait() {
+  const uint32_t t0 = millis();
+  while (g_swBusy && millis() - t0 < 200) delayMicroseconds(50);
+}
+
 // 開始滑動：記下螢幕上的舊畫面，新頁整張畫好、準備好（外環、轉向）
 static void startSlide(int dir, uint32_t now) {
+  slideWorkerWait();   // 另一個核心還在組上一次滑動的格子：等它組完（要讀 g_sliding、g_fbOld）
+  g_slNext = nullptr;
   // 螢幕上那張：滑動中就是正在顯示的那一格；否則是上次送出的那張（0° 是 g_fb，可能已經重畫了幾條，只差在時間數字；
   // 轉向或有說話光暈時是 g_fbRot）
-  const uint16_t* shown = g_sliding ? g_fbSlide : (g_fbOut ? g_fbOut : g_fb);
+  const uint16_t* shown = g_sliding && g_slShown ? g_slShown : (g_fbOut ? g_fbOut : g_fb);
   memcpy(g_fbOld, shown, W * H * 2);
   g_drawSt = g_shownSt = g_frame.st;
   for (OY = 0; OY < H; OY += BAND_H) renderStrip(now);
@@ -748,13 +766,12 @@ static void startSlide(int dir, uint32_t now) {
   g_slideT0 = millis();
 }
 
-// 舊畫面移動 a 像素（0 → W），沿看到的畫面的左右方向
-static void composeSlide(int a) {
+// 舊畫面移動 a 像素（0 → W），沿看到的畫面的左右方向，組到 d
+static void composeSlide(uint16_t* d, int a) {
   // 看到的左右 → 面板的哪一軸、哪個方向（跟 touchToView 相反方向的換算）
   const bool alongY = g_rot == 1 || g_rot == 3;
   const int t = (g_rot >= 2 ? -g_sliding : g_sliding) * a;   // 舊畫面在面板上的位移
   const uint16_t *o = g_fbOld, *n = g_slideNew;
-  uint16_t* d = g_fbSlide;
   const int A = abs(t);
   if (alongY) {                                               // 整列整列搬
     if (t <= 0) { memcpy(d, o + A * W, (H - A) * W * 2); memcpy(d + (H - A) * W, n, A * W * 2); }
@@ -769,21 +786,55 @@ static void composeSlide(int a) {
   }
 }
 
-// 滑動的一格：組好、外環蓋上去、等 TE 送出。回傳 false = 滑完了（最後一格就是新頁）
-static bool slideTick() {
-  const uint32_t el = millis() - g_slideT0;
-  const int p = el >= SLIDE_MS ? 1000 : (int)(el * 1000 / SLIDE_MS);
+static void slideWorkerTask(void*) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    composeSlide(g_swDst, g_swA);
+    g_swBusy = false;
+  }
+}
+
+static void slideWorkerInit() {
+  if (!g_fbSlide2 || g_slideWorker) return;
+  xTaskCreatePinnedToCore(slideWorkerTask, "slide", 6144, nullptr, 1, &g_slideWorker, 0);
+}
+
+// 進度（0-1000，時間）→ 舊畫面移動幾像素。ease-out（三次方）：一開始快、最後慢慢停
+static int slideShift(int p) {
   const int q = 1000 - p;
-  const int e = 1000 - q * q / 1000 * q / 1000;               // ease-out（三次方）：一開始快、最後慢慢停
-  composeSlide(W * e / 1000);
+  return W * (1000 - q * q / 1000 * q / 1000) / 1000;
+}
+static int slideProgress(uint32_t el) { return el >= SLIDE_MS ? 1000 : (int)(el * 1000 / SLIDE_MS); }
+
+// 滑動的一格：組好（或拿另一個核心組好的）、交代下一格、外環蓋上去、等 TE 送出。回傳 false = 滑完了（最後一格就是新頁）
+static bool slideTick() {
+  uint16_t* buf;
+  int p;
+  if (g_slNext) {                                             // 上一輪交代的那一格（送上一格的時候組好了）
+    slideWorkerWait();
+    buf = g_slNext; p = g_slNextP;
+  } else {
+    p = slideProgress(millis() - g_slideT0);
+    buf = g_slShown == g_fbSlide && g_fbSlide2 ? g_fbSlide2 : g_fbSlide;
+    composeSlide(buf, slideShift(p));
+  }
+  g_slNext = nullptr;
+  if (p < 1000 && g_slideWorker) {                            // 下一格交給另一個核心：預估約 30 ms 後送出
+    const int p2 = slideProgress(millis() - g_slideT0 + 30);   // 預估約 30 ms 後送出
+    g_slNext = buf == g_fbSlide ? g_fbSlide2 : g_fbSlide;
+    g_slNextP = p2;
+    g_swDst = g_slNext; g_swA = slideShift(p2); g_swBusy = true;
+    xTaskNotifyGive(g_slideWorker);
+  }
   const uint32_t ms = millis();
+  g_slideSprite.setBuffer(buf, W, H, 16);
   ringDraw(g_slideSprite, 0, H, ms);
   g_ringShownMs = ms;
-  const uint32_t t0 = millis();
-  while (g_teUs && micros() - g_teUs > 2000 && micros() - g_teUs < 100000 && millis() - t0 < 20) {}   // 等 TE（最多一格）
+  // 不等 TE：送一格（21 ms）本來就比面板掃一次（16.7 ms）久，等 TE 也避不開撕裂，只會把每格拉長到 33 ms
   lcd.startWrite();
-  lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)g_fbSlide);
+  lcd.pushImage(0, 0, W, H, (const lgfx::swap565_t*)buf);
   lcd.endWrite();
+  g_slShown = buf;
   if (p < 1000) return true;
   g_sliding = 0;
   return false;
@@ -1263,6 +1314,8 @@ void setup() {
     g_fbBg = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);   // 螢幕保護 Clawd 亂跑用的底圖
     g_roamTmp = (uint16_t*)heap_caps_malloc(W * BAND_H * 2, MALLOC_CAP_SPIRAM);
     if (g_fbSlide) g_slideSprite.setBuffer(g_fbSlide, W, H, 16);
+    g_fbSlide2 = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);   // 滑動的第二格（另一個核心組下一格用）
+    slideWorkerInit();
     vgInit();
   }
 #endif
@@ -1340,6 +1393,7 @@ void loop() {
           if (g_fadeDir >= 0) g_fadeOutBright = lastSaver ? SAVER_BRIGHT : brightness;
           g_fadeDir = -1;
           g_sliding = 0;
+          slideWorkerWait(); g_slNext = nullptr;   // 另一個核心可能還在組 / 畫外環
           strip = -1; g_framePending = g_frameReady = false; dirty = true;
         }
       }

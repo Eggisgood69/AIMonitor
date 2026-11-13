@@ -39,7 +39,7 @@ if ($Release) {
     Copy-Item $exe (Join-Path $out 'AIMonitor.exe') -Force
     $hash = (Get-FileHash (Join-Path $out 'AIMonitor.exe') -Algorithm SHA256).Hash.ToLower()
     [IO.File]::WriteAllText((Join-Path $out 'AIMonitor.exe.sha256'), "$hash  AIMonitor.exe`n")
-    # 完整韌體（含開機程式，從 0x0 燒）：新板子第一次燒錄用（README「一、燒錄韌體」）
+    # 完整韌體（含開機程式，從 0x0 燒）：新板子第一次燒錄用（README「開始使用」）
     $fws = @('aimon-usb-esp32c3.bin', 'aimon-usb-esp32s3-amoled175.bin') | ForEach-Object {
       $f = Join-Path $root "firmware\$_"
       if (-not (Test-Path $f)) { throw "找不到 firmware\$_：先 ./build.ps1" }
@@ -47,7 +47,7 @@ if ($Release) {
     }
     if (-not $Notes) { $Notes = (git log -1 --format=%B) -join "`n" }
     $fwVer = (Get-Content (Join-Path $root 'windows\fw\version.txt') -Raw).Trim()
-    $Notes += "`n`n---`n新板子第一次燒錄：下載 ``aimon-usb-esp32c3.bin``（1.28 吋 LCD）或 ``aimon-usb-esp32s3-amoled175.bin``（1.75 吋 AMOLED），韌體 $fwVer，從 **0x0** 燒錄（見 README「一、燒錄韌體」）。已經燒過的螢幕不用下載，AIMonitor 會提示一鍵更新。"
+    $Notes += "`n`n---`n新板子第一次燒錄：下載 ``aimon-usb-esp32c3.bin``（1.28 吋 LCD）或 ``aimon-usb-esp32s3-amoled175.bin``（1.75 吋 AMOLED），韌體 $fwVer，從 **0x0** 燒錄（見 README「開始使用」）。已經燒過的螢幕不用下載，AIMonitor 會提示一鍵更新。"
     Write-Host "== 發佈 $tag（SHA256 $hash，韌體 $fwVer）==" -ForegroundColor Cyan
     gh release create $tag (Join-Path $out 'AIMonitor.exe') (Join-Path $out 'AIMonitor.exe.sha256') @fws --target (git rev-parse HEAD) --title "AIMonitor $ver" --notes $Notes
     if ($LASTEXITCODE) { throw '建立 Release 失敗' }

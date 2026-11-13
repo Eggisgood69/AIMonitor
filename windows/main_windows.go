@@ -72,6 +72,8 @@ type Settings struct {
 	NoAutostart bool `json:"noAutostart"`
 	// 每塊螢幕自己的方向 / 亮度 / LED（screenset.go）；上面四項是沒設過的螢幕用的共用值
 	Screens map[string]*ScreenSet `json:"screens,omitempty"`
+	// AMOLED 主畫面 Clawd 位置的自訂動畫（anims 資料夾裡的 id），空的 = 原作者的 Clawd（anim*.go）
+	Anim string `json:"anim,omitempty"`
 }
 
 var (
@@ -378,6 +380,7 @@ type serialStatus struct {
 	ID        string `json:"id"`   // 晶片 MAC（韌體 1.10.6 起回報），每塊螢幕的設定用它當 key
 	Mic       bool   `json:"mic"`  // AMOLED 正在當 USB 麥克風（這時的埠是麥克風模式的 COM 埠，跟平常不同）
 	MicX      bool   `json:"micx"` // 上次在麥克風模式下當機重開：這次開機螢幕不肯再進麥克風模式
+	AV        uint32 `json:"av"`   // AMOLED 上存的自訂動畫（CRC32，0 = 沒有）
 	RX        int    `json:"rx"`   // 從螢幕收到的位元組數（除錯用）
 	// WiFi（只有 AMOLED，wifi.go）
 	Net  bool       `json:"net"`            // 這條連線走 WiFi（不是 USB）；Port 是「WiFi <IP>」
@@ -612,6 +615,11 @@ func serveScreen(sc *screenConn, sp screenLink, port string, multi bool, stop fu
 		if !ok {
 			break
 		}
+		// AMOLED 上沒有選的那份自訂動畫：傳過去（傳的時候螢幕不回 hello，傳完算有回應）
+		if ver && animMaybeUpload(sc, sp) {
+			lastAnswer, sent = time.Now(), 0
+			continue
+		}
 		n, err := sp.Read(buf)
 		if err != nil {
 			why = "read: " + err.Error()
@@ -767,6 +775,9 @@ func handleDeviceLine(sc *screenConn, l string) (answered bool) {
 		}
 		sc.stat.WF = m["wf"] == 1.0
 		sc.stat.OTA = m["ota"] == 1.0
+		if v, ok := m["av"].(float64); ok {
+			sc.stat.AV = uint32(v)
+		}
 		mic, micx := m["mic"] == 1.0, m["micx"] == 1.0
 		if mic != sc.stat.Mic || micx != sc.stat.MicX {
 			if mic || micx || sc.stat.Mic {
@@ -859,6 +870,10 @@ func queueFrameEach(f Frame) {
 		}
 		// 麥克風只有 AMOLED 有；一鍵更新前先關掉（螢幕重開回一般 USB 才能燒錄）。
 		// WiFi 連線不送：USB 麥克風要插著電腦才有用，接充電器時切過去沒意義
+		if t.board == "s3a175" { // 自訂動畫：要顯示哪一份（0 = Clawd）
+			av := animWant()
+			g.AV = &av
+		}
 		if t.board == "s3a175" && !t.net {
 			mic := 0
 			if e.Mic && !micHeldOff(t.key) {
@@ -1156,6 +1171,9 @@ func onCmd(cmd string) string {
 				sendFrameNow()
 			}
 		}
+		if animCmd(cmd) { // 自訂動畫（anim_windows.go）
+			return "ok"
+		}
 		if r, ok := wifiCmd(cmd); ok { // WiFi 分頁（wifiscreen_windows.go）
 			return r
 		}
@@ -1251,7 +1269,7 @@ func uiStatusJSON() string {
 		"items": state.Snapshot(), "frame": lf, "autostart": autostartEnabled(),
 		"monitor": md, "usageErr": ue, "saverMin": saverMin(), "saverSec": saverSec(), "brightness": brightness(), "remindAt": int(remindThreshold()), "today": statsToday(), "week": statsWeek(), "claudeCode": claudeCodeStatus(), "rotation": rotation(), "autoRot": autoRot(), "led": ledPct(),
 		"providers": providersStatus(), "firmware": firmwareStatus(), "appUpdate": appUpdateStatus(), "extension": extensionStatus(),
-		"wifi": wifiStatusList(),
+		"wifi": wifiStatusList(), "anim": animStatus(),
 	})
 	return string(b)
 }
@@ -1259,6 +1277,7 @@ func uiStatusJSON() string {
 func main() {
 	welcome, updated := installAndMaybeExit()
 	loadSettings()
+	refreshAnimSel()
 	logf("start v%s welcome=%v updated=%v", version, welcome, updated)
 
 	evName, _ := windows.UTF16PtrFromString(showEventName)

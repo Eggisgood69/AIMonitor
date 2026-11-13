@@ -27,6 +27,7 @@
 #include <LovyanGFX.hpp>
 #include "config.h"
 #include <Preferences.h>
+#include <FFat.h>        // AMOLED 自訂動畫存檔（anim.h）
 #define FW_VERSION "1.12.2"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
@@ -468,6 +469,10 @@ static void sendLine(Stream* s, const char* line) {
 
 static Stream* lastSource = nullptr;
 
+#if BOARD_AMOLED
+#include "anim.h"   // 自訂動畫（取代 Clawd；要用到上面的 sendLine）
+#endif
+
 // ---------------- 外接 WS2812（RX 腳）----------------
 // 顏色、亮度跟外環一樣（ringParams），每 16 ms 更新一次，值沒變就不送。
 static int g_ledPct = 0;          // 0 = 關閉，1-100 = 最大亮度 %
@@ -559,7 +564,7 @@ static void otaRollbackTick(uint32_t now) {
 #endif
 
 static void sendHello(Stream* src) {
-  char b[640];
+  char b[768];
   // id：晶片 MAC，電腦端用它分辨每塊螢幕（各自的方向、亮度；換 USB 孔也認得）
   const uint64_t mac = ESP.getEfuseMac();
   snprintf(b, sizeof b, "{\"aimon\":2,\"fw\":\"" FW_VERSION "\",\"hw\":\"" BOARD_ID "\",\"id\":\"%04x%08lx\",\"up\":%lu,\"loop\":%lu,\"strip\":%lu,\"bad\":%lu,\"long\":%lu,\"heap\":%lu,\"gen\":%lu,\"full\":%lu}",
@@ -570,11 +575,11 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1,\"app\":%d,\"pv\":%d}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1,\"app\":%d,\"pv\":%d,\"av\":%lu}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
            g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs,
-           (unsigned long)g_maskFixN, g_appSlot, g_otaPending ? 1 : 0);
+           (unsigned long)g_maskFixN, g_appSlot, g_otaPending ? 1 : 0, (unsigned long)g_animCrc);
   g_vgN = g_vgGap = g_vgMaxMs = 0;
   g_uacPkts = 0;
   g_uacMiss = 0;
@@ -615,6 +620,8 @@ static void handleLine(Stream* src, const String& line) {
 #endif
   if (doc["bright"].is<int>()) brightness = doc["bright"].as<int>();
 #if BOARD_AMOLED
+  if (doc["anim"].is<JsonObject>()) { animBegin(src, doc["anim"].as<JsonObject>()); return; }   // 傳自訂動畫過來
+  if (!doc["av"].isNull()) g_animWant = doc["av"].as<uint32_t>();                           // 要顯示哪一份動畫（0 = Clawd）
   // 麥克風（電腦端的開關，跟畫面一起送；也可以單獨一行 {"mic":0}）：1 = 切成 USB 麥克風、0 = 重開回 hwcdc
   if (doc["mg"].is<int>()) micSetGain(doc["mg"].as<int>());   // 麥克風增益（先設，開麥克風時才用得到）
   if (doc["mic"].is<int>()) {
@@ -697,7 +704,13 @@ static void handleLine(Stream* src, const String& line) {
 }
 
 static void pollReader(LineReader& r) {
+#if BOARD_AMOLED
+  if (g_upSrc == r.s) { animRecv(r.s); if (g_upSrc == r.s) return; }   // 這條連線正在傳動畫：收原始資料
+#endif
   while (r.s->available()) {
+#if BOARD_AMOLED
+    if (g_upSrc == r.s) { animRecv(r.s); if (g_upSrc == r.s) return; continue; }   // 這一行剛開始傳動畫
+#endif
     char c = r.s->read();
     if (c == '\n' || c == '\r') {
       if (r.buf.length()) handleLine(r.s, r.buf);
@@ -1053,8 +1066,18 @@ static void clawdTick(uint32_t now) {
   int bx, by, bw, bh;
   if (!g_fb || now - last < 50) return;
   if (g_saver) { last = now; roamTick(now); return; }
+  if (animOn() && now / g_animMs == last / g_animMs) return;   // 自訂動畫：換格時才重畫
   if (!clawdBox(bx, by, bw, bh) || bw * bh > W * BAND_H) return;
   last = now;
+  if (animOn()) {   // 自訂動畫：比 Clawd 的範圍高（往上伸進圓頂），只重畫它那一塊、不先塗黑（四個角在額度環上）
+    const int ax = (CX - ANIM_W / 2 + g_shX) & ~1, ay = (ANIM_Y + g_shY) & ~1, aw = ANIM_W + 2, ah = (ANIM_H + 2) & ~1;
+    OY = ay;
+    band.setBuffer(g_fb + ay * W, W, ah, 16);
+    animDraw(now);
+    OY = 0;
+    pushFbRect(ax, ay, aw, ah);
+    return;
+  }
   OY = by;
   band.setBuffer(g_fb + by * W, W, bh, 16);
   band.fillRect(bx, 0, bw, bh, C_BG);
@@ -1271,7 +1294,7 @@ void setup() {
   micBootCheck();   // 從麥克風模式重開：先把 USB 交回 hwcdc
 #endif
   // 一行畫面資料約 400-600 位元組，預設接收緩衝只有 256：畫一條畫面的期間沒人讀，滿了後面就被丟掉 → 那行解析失敗
-  Serial.setRxBufferSize(2048);
+  Serial.setRxBufferSize(BOARD_AMOLED ? 24576 : 2048);   // AMOLED：自訂動畫一次傳 16 KB（anim.h），緩衝滿了 hwcdc 會直接丟資料
 #if BOARD_AMOLED
   Serial.setTxBufferSize(1536);   // hello 一行 400 多位元組，快超過預設的緩衝（超過的後半截會被丟掉）
 #endif
@@ -1317,6 +1340,7 @@ void setup() {
     g_fbSlide2 = (uint16_t*)heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);   // 滑動的第二格（另一個核心組下一格用）
     slideWorkerInit();
     vgInit();
+    animLoad();   // 上次存的自訂動畫
   }
 #endif
   if (!g_fb) {
@@ -1336,6 +1360,7 @@ void loop() {
   micTick(loopStart);
   if (rdUsb.s->available()) g_usbRxMs = loopStart;   // USB 有電腦在（接充電器時不要寫 Serial）
   wifiTick(loopStart);
+  animTimeout(loopStart);
   otaRollbackTick(loopStart);
 #endif
   pollReader(rdUsb);

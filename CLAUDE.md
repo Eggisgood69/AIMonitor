@@ -85,7 +85,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.16.1、韌體 1.12.1（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.16.2、韌體 1.12.2（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -160,8 +160,12 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
     `pollTouch`：左右滑換頁（看到的畫面的左右，`touchToView` 依 g_rot 換算；水平移動 > 30 設計像素、比垂直多 1.5 倍、1 秒內）、
     按住不動 0.7 秒 = 標為已讀、點一下只叫醒螢幕保護（使用者不要點一下就換頁）。觸控原始座標兩軸跟面板相反（`TP_MIRROR_X/Y`）
   - 換頁滑動（`startSlide` / `slideTick`，BOOT 鍵換頁也是）：舊畫面複製到 `g_fbOld`，新頁整張畫好（約 150 ms），
-    每格在面板座標組合（轉向時沿面板的另一軸，不用每格轉向）、外環重畫在上面（固定不動）、等 TE 送出，280 ms ease-out。
-    轉向、螢幕保護、自動回首頁還是淡出淡入（`g_slideDir = 0`）。PSRAM 多兩張 434 KB
+    每格在面板座標組合（轉向時沿面板的另一軸，不用每格轉向）、外環重畫在上面（固定不動）、送出，280 ms ease-out。
+    轉向、螢幕保護、自動回首頁還是淡出淡入（`g_slideDir = 0`）。PSRAM 多三張 434 KB。
+    以前一格接一格做（組合 20 ms + 外環 6.5 ms + 等 TE + 送出 20.5 ms ≈ 50 ms，一次只有 7 格，看起來卡）→ 韌體 1.12.2（PR #4，外部貢獻）：
+    兩張滑動緩衝輪流用（`g_fbSlide` / `g_fbSlide2`），core 0 的 `slideWorkerTask` 組下一格、core 1 同時畫外環並送出這一格；滑動時**不等 TE**
+    （送一格 21 ms 比面板掃一次 16.7 ms 久，等了也避不開撕裂），每格約 33 ms、一次約 10 格，實機看不到撕裂。外環交給 core 0 試過：兩邊搶 PSRAM 反而慢。
+    滑動中再滑、或被淡出打斷時要先 `slideWorkerWait`（core 0 還在讀 `g_fbOld` / 寫緩衝）
   - 陀螺儀 QMI8658（0x6B）：USB 朝左 = x 正 = 0°、朝下 = y 正 = 90°、朝右 = 180°、朝上 = 270°（`imuOrientation`）；傾斜不到約 25° 當平放、維持原方向；
     同一方向 0.8 秒才轉。自動轉向開著時不理電腦送的 rot、也不存 NVS（開機時先讀一次）
   - `#include <Wire.h>` 要放在 aimon.ino 最前面：放在 LovyanGFX 之後或只在 sensors.h 裡，arduino-cli 偵測不到 Wire 函式庫（`'Wire' was not declared`）

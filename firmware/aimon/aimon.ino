@@ -28,7 +28,7 @@
 #include "config.h"
 #include <Preferences.h>
 #include <FFat.h>        // AMOLED 自訂動畫存檔（anim.h）
-#define FW_VERSION "1.12.2"
+#define FW_VERSION "1.13.0"
 
 // arduino-cli 自動產生的函式原型會插在第一個函式之前，先宣告 pollReader 參數用到的型別
 struct LineReader;
@@ -575,11 +575,13 @@ static void sendHello(Stream* src) {
 #if BOARD_AMOLED
   // tp / imu：有沒有找到觸控、陀螺儀；arot：自動轉向；acc：加速度（8192 = 1 g）；fb：整張畫面緩衝有沒有配置到
   // mic：麥克風模式中；micx：上次在麥克風模式下當機重開，這次開機不再進；mpk / mgap / mms：麥克風送了幾包、兩包最長間隔 ms、錯過幾包
-  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1,\"app\":%d,\"pv\":%d,\"av\":%lu}",
+  snprintf(b + strlen(b) - 1, sizeof b - strlen(b) + 1, ",\"te\":%lu,\"ring\":%lu,\"push\":%lu,\"prep\":%lu,\"fb\":%d,\"tp\":%d,\"imu\":%d,\"arot\":%d,\"rot\":%d,\"acc\":[%d,%d,%d],\"roam\":%lu,\"mic\":%d,\"micx\":%d,\"mpk\":%lu,\"mgap\":%lu,\"mms\":%lu,\"mg\":%d,\"vgn\":%lu,\"vgi\":%lu,\"vgt\":%lu,\"mfx\":%lu,\"wf\":1,\"ota\":1,\"app\":%d,\"pv\":%d,\"av\":%lu,\"ps\":%lu,\"psb\":%lu}",
            (unsigned long)g_teN, (unsigned long)g_maxRingMs, (unsigned long)g_maxPushMs, (unsigned long)g_maxPrepMs, g_fb ? 1 : 0,
            g_hasTouch ? 1 : 0, g_hasImu ? 1 : 0, g_autoRot ? 1 : 0, g_rot, g_accX, g_accY, g_accZ, (unsigned long)g_maxRoamGap,
            g_micOn ? 1 : 0, g_micBlocked ? 1 : 0, (unsigned long)g_uacPkts, (unsigned long)g_uacMaxGap, (unsigned long)g_uacMiss, g_micGain, (unsigned long)g_vgN, (unsigned long)g_vgGap, (unsigned long)g_vgMaxMs,
-           (unsigned long)g_maskFixN, g_appSlot, g_otaPending ? 1 : 0, (unsigned long)g_animCrc);
+           (unsigned long)g_maskFixN, g_appSlot, g_otaPending ? 1 : 0, (unsigned long)g_animCrc,
+           // ps / psb：PSRAM 剩多少、最大一塊（KB）。自訂動畫最長一份 3.7 MB，放不放得下看這個
+           (unsigned long)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
   g_vgN = g_vgGap = g_vgMaxMs = 0;
   g_uacPkts = 0;
   g_uacMiss = 0;
@@ -1375,6 +1377,11 @@ void loop() {
   uint32_t now = millis();
   bool alive = linkAlive();
   if (alive != lastAlive) { lastAlive = alive; dirty = true; if (!alive) g_lastActiveMs = now; }
+#if BOARD_AMOLED
+  // 自訂動畫 ↔ Clawd（換選擇、開始傳、傳完）：動畫比 Clawd 寬、往上伸進圓頂，clawdTick 只清 Clawd 那塊 → 整張重畫，不然留下殘影
+  static bool lastAnim = false;
+  if (animOn() != lastAnim) { lastAnim = !lastAnim; dirty = true; }
+#endif
 
   // 螢幕保護：進入時調暗背光，離開時恢復（亮度在下面的 showBright / fadeTick 套用）
   bool want = saverWanted();

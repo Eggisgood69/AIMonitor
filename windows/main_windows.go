@@ -28,7 +28,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const version = "1.16.2"
+const version = "1.17.0"
 const releaseYear = "2026"
 const author = "Jeff Lee"
 const appTitle = "AI 狀態指示燈"
@@ -716,7 +716,11 @@ func noteScreenStats(port string, m map[string]interface{}) {
 		scr.winHeap = heap
 	}
 	if !scr.have || time.Since(scr.lastSummary) >= 10*time.Minute {
-		logf("%s: screen load: max loop %.0fms, max strip %.0fms, min free heap %.0fKB, up %s", port, scr.winLoop, scr.winStrip, scr.winHeap/1024, time.Duration(up)*time.Second)
+		ps := ""
+		if _, ok := m["ps"]; ok { // AMOLED（韌體 1.13.0 起）：PSRAM 剩多少、最大一塊，自訂動畫放不放得下看這個
+			ps = fmt.Sprintf(", PSRAM free %.0fKB (largest %.0fKB)", num("ps"), num("psb"))
+		}
+		logf("%s: screen load: max loop %.0fms, max strip %.0fms, min free heap %.0fKB%s, up %s", port, scr.winLoop, scr.winStrip, scr.winHeap/1024, ps, time.Duration(up)*time.Second)
 		scr.winLoop, scr.winStrip, scr.winHeap, scr.lastSummary = 0, 0, 0, time.Now()
 	}
 	scr.have = true

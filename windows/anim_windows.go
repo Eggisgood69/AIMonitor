@@ -330,6 +330,10 @@ func animUpload(sc *screenConn, sp screenLink, a AnimInfo, raw []byte, prog func
 			why, _ := m["why"].(string)
 			switch why {
 			case "mem":
+				if ps, ok := m["ps"].(float64); ok { // 韌體 1.13.0 起回報 PSRAM 剩多少（KB），寫進紀錄方便查
+					psb, _ := m["psb"].(float64)
+					return fmt.Errorf("螢幕記憶體不夠（PSRAM 剩 %.0f KB、最大一塊 %.0f KB，這份要 %d KB）", ps, psb, len(raw)/1024)
+				}
 				return fmt.Errorf("螢幕記憶體不夠")
 			case "crc":
 				return fmt.Errorf("資料傳壞了")

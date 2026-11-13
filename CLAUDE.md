@@ -87,7 +87,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.16.2、韌體 1.12.2（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.17.0、韌體 1.13.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -96,7 +96,7 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
 螢幕回 `{"wst":{"st":0 沒設定|1 連線中|2 已連線|3 密碼可能不對|4 找不到,"ssid","ip","rssi","r"}}`（回 hello 後、狀態變了時送）。WiFi 的 TCP 連線第一行要是 `{"auth":"<配對金鑰>"}`（回 `{"auth":1}`），不對就斷線
 自訂動畫（只有 AMOLED）：畫面的 `av` = 要顯示哪一份（CRC32，0 = Clawd），hello 回 `"av"` = 螢幕上存的那份。不一樣就傳：`{"anim":{"w":140,"h":114,"n","ms","crc","len"}}` → 螢幕回 `{"anim":"rdy"}`（第一次要格式化 FFat，可能十幾秒），
 之後這條連線改收 `len` 個位元組的原始 RGB565（不是 JSON），每 16 KB 回 `{"ak":已收}`，電腦收到才送下一段（hwcdc 的接收緩衝滿了會直接丟資料，所以 AMOLED 的 `Serial.setRxBufferSize` 是 24 KB）；收完驗 CRC32 回 `{"anim":"ok","crc","saved"}` 或 `{"anim":"bad","why":"size|mem|crc"}`；5 秒沒資料就放棄、回去收 JSON
-螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"mfx"` 補回幾次 USB 中斷遮罩（見下面麥克風那段）、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
+螢幕 → 電腦：`{"aimon":2,"fw":"x.y.z","hw":"c3|s3a175","id":"晶片 MAC","up":開機秒數,"loop":最長迴圈ms,"strip":最長一條重畫ms,"bad":解析失敗行數,"long":過長丟掉行數,"heap":剩餘記憶體,"gen":Generating 的光兩次更新最長間隔 ms,"full":整張重畫次數}`（回應 `{"hello":1}`，最長值回報後歸零；AMOLED 另有 `"te"` TE 脈衝數、`"ring"` 最長一格外環 ms、`"push"` 最長一次整張送出 ms（只算 SPI）、`"prep"` 送出前準備 ms（外環、轉向）、`"fb"` 整張緩衝、`"tp"` / `"imu"` 有沒有找到觸控 / 陀螺儀、`"arot"`、`"rot"` 目前方向、`"acc"` 加速度（8192 = 1 g）、`"roam"` 螢幕保護的 Clawd 兩步之間最長 ms（正常 50）、`"mic"` 麥克風模式中、`"micx"` 上次在麥克風模式下當機（這次不進）、`"mpk"` / `"mgap"` / `"mms"` 麥克風送了幾包（正常每秒約 1000）/ 兩包最長間隔 ms / 錯過幾包、`"mg"` 目前的麥克風增益、`"mfx"` 補回幾次 USB 中斷遮罩（見下面麥克風那段）、`"vgn"` / `"vgi"` / `"vgt"` 說話光暈更新幾次 / 最長間隔 ms / 最長一次 ms、`"ps"` / `"psb"` PSRAM 剩多少 / 最大一塊 KB（韌體 1.13.0 起，AIMonitor 紀錄的 screen load 那行）；韌體 1.9.0 前沒有 `hw` = c3；`id` 韌體 1.10.6 起才有）、`{"ev":"btn"}`（長按 BOOT）
 
 ## 重要實作細節（踩過的坑）
 
@@ -255,6 +255,14 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
     hello 的 `app`（從 app0 / app1 開機）、`pv`（還沒確認；回 hello 之後才確認，所以第一次回的是 1），電腦端紀錄寫成「app1 pending」。
     2026-11-12 實測（AIMonitor 關掉、用腳本走同一個協定，esptool 的 RTS 重置當作當機 / 斷電）：正常更新 → 第一次 hello pv=1、之後 0，重置後還是新版；
     更新後 2 分鐘沒電腦 → 自己退回另一區；傳到 50% 重置 → 舊版照常開機；更新完、確認前重置 → 開回舊版。真的拔電源也測過：慢慢送（40 秒），傳到約 40% 時使用者拔掉 USB、插回 → app1、1.12.1、沒有 pending
+- AMOLED 自訂動畫（2026-11-13，韌體 1.13.0 / AIMonitor 1.17.0，PR #5 外部貢獻，anim.h / anim*.go）：主燈是 Claude 時用使用者的影片（140×114、15 fps、最長 8 秒）取代 Clawd，協定在上面。
+  動畫比 Clawd（約 128×90）寬、往上伸進圓頂（超過額度環內緣 96 的部分不畫），螢幕保護亂跑的還是 Clawd。合併時補修的（PR 原本的問題，使用者實測看到前兩個）：
+  (1) 傳的時候收的是原始資料、不更新 `g_lastFrameMs`，傳超過 20 秒螢幕顯示 Disconnected（實測 1.8 MB 就要 24 秒）→ `animKeepLink`；
+  (2) 換回 Clawd 時 clawdTick 只清 Clawd 那塊、`av` 不在 frameKey，留下殘影 → loop 看 `animOn()` 變了就整張重畫；
+  (3) 開始傳就放掉 PSRAM 裡的舊動畫（兩份 3.7 MB 放不下），失敗後要重開機才有、選回舊的還會整份重傳 → `animFail` 從 FFat 讀回（傳的時候寫 /anim.tmp，/anim.bin 不動）；
+  (4) 傳的時候才 malloc：8 秒的影片（3.7 MB）有時「螢幕記憶體不夠」、同一份過幾分鐘又成功——PSRAM 總共剩 5 MB，但開機讀回的動畫放掉後空間被切成兩段（之後配置的東西在它後面），湊不出連續 3.7 MB
+  → 開機時（wifiInit 之前）就配好一塊最大的 `g_animMem`（120 格），收、播共用，不再配置 / 放掉。開機後 PSRAM 還剩約 1.5 MB（hello 的 `ps` / `psb`）。
+  AMOLED 的 USB 接收緩衝因此是 24 KB（一段 16 KB，hwcdc 滿了直接丟資料）；寫 FFat 時主迴圈會頓、第一次要格式化 FFat 停好幾秒。麥克風模式下不傳
 - 外接 WS2812 接背面 4-pin 排座（GND / 3.3V / TX / RX）的 RX（GPIO20，不用旁邊的 IO8 焊點：它是 strapping pin，被拉低會讓一鍵更新進不了燒錄模式）。
   韌體同時聽 USB 與 UART0（CH340 板），所以只有從內建 USB 收到 `led>0` 才 `Serial0.end()` 接管 RX；
   顏色亮度照 `ringParams()`（gamma 2），但綠 / 紅換成純色 0x00FF00 / 0xFF0000（系統色在 LED 上偏藍、偏粉紅），待命 / 沒連線熄燈，用 `neopixelWrite()`（RMT）

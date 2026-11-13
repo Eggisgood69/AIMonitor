@@ -680,7 +680,7 @@
     const need = !a.ffmpeg ? `<div class="hint" style="color:var(--yel)">新增影片要先安裝 ffmpeg：在 PowerShell 執行 <code>winget install Gyan.FFmpeg</code>，裝好再按一次「新增影片」</div>` : "";
     box.innerHTML = `<div class="row sw"><div>螢幕角色<div class="hint">主燈是 Claude 時顯示在上方（1.75 吋 AMOLED）</div></div>
         <select id="animsel"><option value="">Clawd（原作者）</option>${list.map((x) => `<option value="${H(x.id)}">${H(x.name)}</option>`).join("")}</select></div>
-      ${cur ? `<div class="row"><img src="${cur.preview}" width="140" height="114" style="border-radius:8px;background:#000;image-rendering:pixelated">
+      ${cur ? `<div class="row"><img src="${H(cur.preview)}" width="140" height="114" style="border-radius:8px;background:#000;image-rendering:pixelated">
         <div class="hint" style="margin-left:10px">${cur.n} 格 · ${(cur.n * cur.ms / 1000).toFixed(1)} 秒循環</div></div>` : ""}
       <div class="row"><div style="flex:1">${st}${need}<div class="hint">影片會裁成 140×114（上方圓弧外的角不顯示）、最長 8 秒（每秒 15 格），一直循環播放</div></div></div>
       <div class="btns" style="padding:4px 0 10px"><button data-cmd="anim-add">新增影片…</button>${cur ? `<button data-cmd="anim-del:${H(cur.id)}">刪除這個</button>` : ""}</div>`;

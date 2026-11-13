@@ -14,6 +14,12 @@ static uint16_t g_upN = 0, g_upMs = 0;
 static File g_upFile;
 
 static const uint32_t ANIM_ACK = 16384;   // 電腦每送這麼多就等回覆（要小於 Serial 的接收緩衝）
+// 收、播共用一塊開機時（WiFi 之前）就配好的最大緩衝：最長 120 格 = 8 秒（跟電腦端 animMaxFrames 一樣），約 3.7 MB。
+// 以前傳的時候才 malloc：開機讀回的動畫在 WiFi 之前配置，WiFi 之後又在它後面配了 PSRAM，放掉舊的之後空間被切成兩段，
+// 總共剩 5 MB 也配不到連續的 3.7 MB（2026-11-13 實測：螢幕上是開機讀回的 1.8 MB 動畫時，傳 8 秒的失敗；剛傳完的那份在最後面時又成功）
+static const uint32_t ANIM_MAX_FRAMES = 120;
+static const uint32_t ANIM_MAX = (uint32_t)ANIM_W * ANIM_H * 2 * ANIM_MAX_FRAMES;
+static uint8_t* g_animMem = nullptr;
 
 static uint32_t animCrc32(const uint8_t* p, uint32_t n) {
   uint32_t c = 0xFFFFFFFFu;
@@ -26,15 +32,13 @@ static uint32_t animCrc32(const uint8_t* p, uint32_t n) {
 
 static void animFreeUpload() {
   if (g_upFile) g_upFile.close();
-  if (g_upBuf) heap_caps_free(g_upBuf);
-  g_upBuf = nullptr;
+  g_upBuf = nullptr;   // 指向 g_animMem，不用放掉
   g_upSrc = nullptr;
 }
 
-// 開機時讀回上次存的動畫
-static void animLoad() {
-  g_ffat = FFat.begin(false);   // 不格式化（第一次傳動畫時才格式化，要好幾秒）
-  if (!g_ffat) return;
+// 讀回 FFat 裡存的那份（/anim.bin）放進 g_animMem
+static void animReadFile() {
+  if (!g_ffat || g_animBuf || !g_animMem) return;
   File f = FFat.open("/anim.bin", "r");
   if (!f) return;
   uint8_t h[16];
@@ -42,29 +46,53 @@ static void animLoad() {
   const uint16_t w = h[4] | h[5] << 8, hh = h[6] | h[7] << 8, n = h[8] | h[9] << 8, ms = h[10] | h[11] << 8;
   const uint32_t crc = h[12] | h[13] << 8 | h[14] << 16 | (uint32_t)h[15] << 24;
   const uint32_t len = (uint32_t)w * hh * 2 * n;
-  if (w != ANIM_W || hh != ANIM_H || !n || len + 16 != f.size()) { f.close(); return; }
-  uint8_t* b = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-  if (!b) { f.close(); return; }
-  const bool ok = f.read(b, len) == len;
+  if (w != ANIM_W || hh != ANIM_H || !n || len > ANIM_MAX || len + 16 != f.size()) { f.close(); return; }
+  const bool ok = f.read(g_animMem, len) == len;
   f.close();
-  if (!ok || animCrc32(b, len) != crc) { heap_caps_free(b); return; }
-  g_animBuf = (const uint16_t*)b;
+  if (!ok || animCrc32(g_animMem, len) != crc) return;
+  g_animBuf = (const uint16_t*)g_animMem;
   g_animN = n;
   g_animMs = ms < 20 ? 20 : ms;
   g_animCrc = crc;
+}
+
+// 開機時讀回上次存的動畫
+static void animLoad() {
+  g_animMem = (uint8_t*)heap_caps_malloc(ANIM_MAX, MALLOC_CAP_SPIRAM);   // 要在 wifiInit 之前（見 ANIM_MAX）
+  g_ffat = FFat.begin(false);   // 不格式化（第一次傳動畫時才格式化，要好幾秒）
+  animReadFile();
+}
+
+// 傳失敗：收的時候蓋掉了 g_animMem 裡的舊動畫（兩份放不下），從 FFat 讀回來（/anim.tmp 沒改名，/anim.bin 還是舊的）。
+// 不讀回的話要重開機才有，選回舊的那份時電腦也會以為螢幕上沒有、整份重傳
+static void animFail(Stream* src, const char* line) {
+  animFreeUpload();
+  animReadFile();
+  if (src) sendLine(src, line);
+}
+
+// 傳的時候收的是原始資料、不是畫面：沒更新連線時間的話 20 秒後螢幕顯示 Disconnected（傳一份常要 20-60 秒）
+static void animKeepLink() {
+  if (g_lastFrameMs) g_lastFrameMs = millis();
 }
 
 static void animBegin(Stream* src, JsonObject a) {
   animFreeUpload();
   const uint16_t w = a["w"] | 0, h = a["h"] | 0, n = a["n"] | 0, ms = a["ms"] | 0;
   const uint32_t crc = a["crc"] | 0UL, len = a["len"] | 0UL;
-  if (w != ANIM_W || h != ANIM_H || !n || len != (uint32_t)w * h * 2 * n) { sendLine(src, "{\"anim\":\"bad\",\"why\":\"size\"}"); return; }
-  // 舊的先放掉（兩份同時放不下），傳完之前顯示 Clawd
-  if (g_animBuf) { const uint16_t* old = g_animBuf; g_animBuf = nullptr; g_animN = 0; g_animCrc = 0; heap_caps_free((void*)old); }
-  if (len + 512 * 1024 > heap_caps_get_free_size(MALLOC_CAP_SPIRAM)) { sendLine(src, "{\"anim\":\"bad\",\"why\":\"mem\"}"); return; }
-  g_upBuf = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-  if (!g_upBuf) { sendLine(src, "{\"anim\":\"bad\",\"why\":\"mem\"}"); return; }
+  if (w != ANIM_W || h != ANIM_H || !n || len != (uint32_t)w * h * 2 * n || len > ANIM_MAX) { sendLine(src, "{\"anim\":\"bad\",\"why\":\"size\"}"); return; }
+  if (!g_animMem) {   // 開機時就沒配到（PSRAM 不夠）
+    char mem[96];
+    snprintf(mem, sizeof mem, "{\"anim\":\"bad\",\"why\":\"mem\",\"ps\":%lu,\"psb\":%lu}",
+             (unsigned long)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+    sendLine(src, mem);
+    return;
+  }
+  // 收進同一塊緩衝：舊的停止播放（傳完之前顯示 Clawd），失敗時 animFail 從 FFat 讀回
+  g_animBuf = nullptr; g_animN = 0; g_animCrc = 0;
+  g_upBuf = g_animMem;
   if (!g_ffat) g_ffat = FFat.begin(true);   // 第一次：格式化（幾秒，畫面會停一下）
+  animKeepLink();
   if (g_ffat) {
     g_upFile = FFat.open("/anim.tmp", "w");
     if (g_upFile) {
@@ -83,8 +111,7 @@ static void animFinish() {
   Stream* src = g_upSrc;
   char b[64];
   if (animCrc32(g_upBuf, g_upLen) != g_upCrc) {
-    animFreeUpload();
-    sendLine(src, "{\"anim\":\"bad\",\"why\":\"crc\"}");
+    animFail(src, "{\"anim\":\"bad\",\"why\":\"crc\"}");
     return;
   }
   bool saved = false;
@@ -113,6 +140,7 @@ static void animRecv(Stream* s) {
     if (g_upFile && g_upFile.write(g_upBuf + g_upGot, n) != n) g_upFile.close();   // 存不進去：只放 PSRAM（重開機要再傳）
     g_upGot += n;
     g_upLastMs = millis();
+    animKeepLink();
     if (g_upGot == g_upLen) { animFinish(); return; }
     if (g_upGot - g_upAcked >= ANIM_ACK) {
       char b[32];
@@ -125,5 +153,5 @@ static void animRecv(Stream* s) {
 
 // 傳到一半斷了：5 秒沒資料就放棄，回到收 JSON
 static void animTimeout(uint32_t now) {
-  if (g_upSrc && (int32_t)(now - g_upLastMs) > 5000) animFreeUpload();
+  if (g_upSrc && (int32_t)(now - g_upLastMs) > 5000) animFail(nullptr, nullptr);
 }

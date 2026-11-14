@@ -56,6 +56,8 @@
 ## 偵測得到什麼
 
 - **桌面 App**：Claude、ChatGPT（含 Codex）、Gemini，不用另外設定。
+  - Claude App 5.x 在 **Code 模式**時讀不到一般聊天的狀態，那段時間聊天的燈不亮；切回聊天模式後照側邊欄補上（還在跑 = 生成中、出現藍點 = 完成）。
+    新對話剛送出就切走時，App 自己也不會標狀態，這種偵測不到。
 - **Claude Code**：設定視窗打開「連接 Claude Code」（會在 `~/.claude/settings.json` 加入 hooks，關掉就移除）。
 - **網頁版**（claude.ai、chatgpt.com、gemini.google.com）：要裝附的瀏覽器擴充功能。
   Chrome 開 `chrome://extensions` → 開「開發人員模式」→「載入未封裝項目」→ 選 `%LOCALAPPDATA%\AIMonitor\extension`（設定視窗有按鈕直接打開）。

@@ -87,7 +87,7 @@ extension-mac-legacy/      舊的 Chrome 擴充功能（Mac 選用，直接連 U
 
 - 韌體：`firmware/aimon/aimon.ino` 的 `FW_VERSION`。電腦端會比對 `fw/version.txt`，不同就顯示「可更新」
 - 電腦端：`windows/main_windows.go` 的 `const version`
-- 目前：AIMonitor 1.17.2、韌體 1.13.0（兩種螢幕共用版本號）
+- 目前：AIMonitor 1.17.3、韌體 1.13.0（兩種螢幕共用版本號）
 
 ## 序列埠協定（115200，每行一個 JSON）
 
@@ -138,6 +138,7 @@ WiFi（只有 AMOLED，韌體 1.11.0 起）：`{"wscan":1}` → 螢幕回 `{"wsc
 - AMOLED 切換 AI 時淡出淡入（跟換頁同一套 `fadeTick`），以前直接整張送看得到撕裂；換 AI 時額度照樣捲（使用者喜歡從上一家捲到這一家）
 - 額度變紅的門檻 = 設定視窗「額度重置提醒」的門檻（frame 的 `red`，`redThreshold()`；提醒關閉時送 0 = 不變紅，韌體 `g_redAt` 預設 90 給舊版電腦端）。
   顏色看目標值 `f.p5`、**不看捲動中的 `p5View()`**：以前捲過 90 才在 gaugeTick 設 dirty 整張重畫成紅色，切換 AI（例如 GPT 白 → 紅）時看得到跳色、撕裂
+- 重置提醒（reminder.go `ResetWatcher`）：用量到門檻的時窗在重置前 5 分鐘、重置當下各提醒一次（螢幕最下面黃字「5H RESETS IN 5M」）。**時窗換了（重置時間差 2 分鐘以上，例如用了重置券）就把舊的作廢，不管新時窗用量多少**：以前只在用量超過門檻時才看，用券後新時窗用量低就跳過，照舊時窗的時間跳出「5H RESETS IN 2M」（1.17.3）
 - AMOLED（CO5300，LovyanGFX 1.2.33 的 `Panel_CO5300` + `Bus_SPI` 四線）：
   - 直接寫到螢幕的範圍 x、y、寬、高都要是**偶數**（`LCD_EVEN`）：x / 寬奇數 LovyanGFX 會整段丟掉，y / 高奇數面板會亂掉（全白）。
     外環兩列一組推（`RING_ROWS`，兩列取聯集、每個像素照實際距離查色），sprite 每條 40 列；所以外環也畫進 sprite（`g_ringDirect = false`），不用透明色挖空

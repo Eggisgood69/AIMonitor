@@ -41,14 +41,19 @@ func (r *ResetWatcher) Observe(ai string, q Quota, threshold float64, now time.T
 		p     float64
 		reset int64
 	}{{"5", q.P5, q.R5}, {"w", q.PW, q.RW}} {
-		if x.p < threshold || x.reset <= now.Unix() {
-			continue
-		}
 		k := ai + "/" + x.win
 		cur := r.w[k]
 		// 重置時間有時會跳動幾秒：差 2 分鐘以內視為同一個時窗
-		if cur != nil && abs64(cur.reset-x.reset) < 120 {
+		if cur != nil && x.reset > 0 && abs64(cur.reset-x.reset) < 120 {
 			cur.reset = x.reset
+			continue
+		}
+		// 換了時窗（例如用了重置券，提早開新的時窗）：舊時窗的提醒作廢，不管新時窗用量多少。
+		// 以前只在用量超過門檻時才看，新時窗用量低就跳過，照舊時窗的時間提醒「5H RESETS IN 5M」（2026-11-15）
+		if cur != nil && x.reset > 0 {
+			delete(r.w, k)
+		}
+		if x.p < threshold || x.reset <= now.Unix() {
 			continue
 		}
 		r.w[k] = &watch{reset: x.reset, soon: time.Unix(x.reset, 0).Sub(now) <= remindLead}

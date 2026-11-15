@@ -48,3 +48,26 @@ func TestResetWatcher(t *testing.T) {
 		t.Fatalf("gemini reset: %v", ev)
 	}
 }
+
+// 用了重置券：時窗提早換掉、新時窗用量低。舊時窗的「再 5 分鐘重置」不能照舊時間跳出來
+func TestResetWatcherVoucherDropsOldWindow(t *testing.T) {
+	r := NewResetWatcher()
+	t0 := time.Date(2026, 11, 15, 20, 0, 0, 0, time.UTC)
+	oldReset := t0.Add(2 * time.Hour).Unix() // 22:00
+	r.Observe("claude", Quota{P5: 95, R5: oldReset, PW: 30, RW: t0.Add(100 * time.Hour).Unix()}, 90, t0)
+	// 21:30 用了重置券：新時窗 02:00 重置、用量 10%
+	t1 := t0.Add(90 * time.Minute)
+	r.Observe("claude", Quota{P5: 10, R5: t0.Add(6 * time.Hour).Unix(), PW: 2, RW: t0.Add(100 * time.Hour).Unix()}, 90, t1)
+	for _, at := range []time.Duration{115, 120, 121} { // 21:55、22:00、22:01
+		if ev := r.Tick(t0.Add(at * time.Minute)); len(ev) != 0 {
+			t.Fatalf("舊時窗的提醒還在：%+v", ev)
+		}
+	}
+	// 沒讀到資料（reset = 0）時不要清掉
+	r2 := NewResetWatcher()
+	r2.Observe("claude", Quota{P5: 95, R5: oldReset}, 90, t0)
+	r2.Observe("claude", Quota{}, 90, t1)
+	if ev := r2.Tick(t0.Add(115 * time.Minute)); len(ev) != 1 || ev[0].Kind != "soon" {
+		t.Fatalf("沒資料時提醒不該消失：%+v", ev)
+	}
+}
